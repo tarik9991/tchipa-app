@@ -15,7 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 // ============================================
 // CONFIGURATION
 // ============================================
-const String OPENROUTER_API_KEY = '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';
+const String OPENROUTER_API_KEY = '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';
 const String OPENROUTER_MODEL = 'google/gemma-2-9b-it:free';
 const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;

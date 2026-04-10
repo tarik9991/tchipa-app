@@ -16,7 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 // CONFIGURATION
 // ============================================
 const String OPENROUTER_API_KEY = String.fromEnvironment('OPENROUTER_API_KEY');
-const String OPENROUTER_MODEL = 'mistralai/mistral-7b-instruct:free';
+const String OPENROUTER_MODEL = 'google/gemma-2-9b-it';
 const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;
 

@@ -16,11 +16,14 @@ import 'package:url_launcher/url_launcher.dart';
 // CONFIGURATION
 // ============================================
 const String OPENROUTER_API_KEY = String.fromEnvironment('OPENROUTER_API_KEY');
-const String OPENROUTER_MODEL = 'google/gemma-2-9b-it:free';
+const String OPENROUTER_MODEL = 'mistralai/mistral-7b-instruct:free';
 const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;
 
 void main() {
+  if (OPENROUTER_API_KEY.isEmpty) {
+    debugPrint('WARNING: OPENROUTER_API_KEY is not set. Build with --dart-define=OPENROUTER_API_KEY=your_key');
+  }
   runApp(const TchipaApp());
 }
 
@@ -252,10 +255,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
         _showAIAdviceDialog();
       } else {
-        _showToast("Erreur IA: ${response.statusCode}");
+        debugPrint('OpenRouter error [analyzeWithAI]: ${response.statusCode} ${response.body}');
+        String errorMsg;
+        if (response.statusCode == 401) {
+          errorMsg = "Clé API invalide ou manquante";
+        } else if (response.statusCode == 429) {
+          errorMsg = "Limite de requêtes atteinte, réessayez plus tard";
+        } else if (response.statusCode == 402) {
+          errorMsg = "Crédits OpenRouter épuisés";
+        } else {
+          errorMsg = "Erreur IA: ${response.statusCode}";
+        }
+        _showToast(errorMsg);
       }
     } catch (e) {
-      _showToast("Erreur de connexion IA");
+      debugPrint('OpenRouter exception [analyzeWithAI]: $e');
+      _showToast("Erreur de connexion IA: $e");
     } finally {
       setState(() => _isAnalyzing = false);
     }
@@ -943,17 +958,26 @@ class _AIScreenState extends State<AIScreen> {
           _messages.add(ChatMessage(text: aiResponse, isUser: false));
         });
       } else {
+        debugPrint('OpenRouter error [sendMessage]: ${response.statusCode} ${response.body}');
+        String errorMsg;
+        if (response.statusCode == 401) {
+          errorMsg = "Clé API invalide ou manquante. Vérifiez la configuration.";
+        } else if (response.statusCode == 429) {
+          errorMsg = "Limite de requêtes atteinte. Réessayez dans quelques secondes.";
+        } else if (response.statusCode == 402) {
+          errorMsg = "Crédits OpenRouter épuisés.";
+        } else {
+          errorMsg = "Erreur ${response.statusCode}. Réessayez.";
+        }
         setState(() {
-          _messages.add(ChatMessage(
-            text: "Désolé, je ne peux pas répondre pour le moment.",
-            isUser: false,
-          ));
+          _messages.add(ChatMessage(text: errorMsg, isUser: false));
         });
       }
     } catch (e) {
+      debugPrint('OpenRouter exception [sendMessage]: $e');
       setState(() {
         _messages.add(ChatMessage(
-          text: "Erreur de connexion. Réessayez.",
+          text: "Erreur de connexion: $e",
           isUser: false,
         ));
       });

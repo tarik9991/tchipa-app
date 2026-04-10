@@ -15,7 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 // ============================================
 // CONFIGURATION
 // ============================================
-const String OPENROUTER_API_KEY = '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';
+const String OPENROUTER_API_KEY = String.fromEnvironment('OPENROUTER_API_KEY');
 const String OPENROUTER_MODEL = 'google/gemma-2-9b-it:free';
 const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;
@@ -34,7 +34,7 @@ class TchipaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Tchipa',
+      title: 'henini',
       theme: ThemeData(
         scaffoldBackgroundColor: const Color(0xFF0A0E21),
         primaryColor: const Color(0xFF00FF87),

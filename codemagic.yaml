@@ -1,0 +1,17 @@
+workflows:
+  android-release:
+    name: Android Release
+    max_build_duration: 60
+    environment:
+      vars:
+        OPENROUTER_API_KEY: $OPENROUTER_API_KEY
+      flutter: stable
+    scripts:
+      - name: Get packages
+        script: flutter pub get
+      - name: Build APK
+        script: |
+          flutter build apk --release \
+            --dart-define=OPENROUTER_API_KEY=$OPENROUTER_API_KEY
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk

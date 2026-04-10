@@ -43,3 +43,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Build outputs
+*.apk
+*.aab
+*.apks
+*.jar
+tchipa_apk/
+tchipa_signed/
+]

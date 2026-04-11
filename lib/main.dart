@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 // ============================================
 const String OPENROUTER_API_KEY = String.fromEnvironment('OPENROUTER_API_KEY');
 const String OPENROUTER_MODEL = 'google/gemma-2-9b-it';
+const String OPENROUTER_VISION_MODEL = 'google/gemini-flash-1.5';
 const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;
 
@@ -225,11 +226,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           'HTTP-Referer': 'https://tchipa.app',
         },
         body: json.encode({
-          'model': OPENROUTER_MODEL,
+          'model': OPENROUTER_VISION_MODEL,
           'messages': [
             {
               'role': 'system',
-              'content': '''Tu es un expert en e-commerce spécialisé dans l'analyse de produits AliExpress et Temu. 
+              'content': '''Tu es un expert en e-commerce spécialisé dans l'analyse de produits AliExpress et Temu.
               Tu aides les acheteurs algériens à faire les bons choix.
               Réponds de manière concise et en français.
               Donne des conseils sur:

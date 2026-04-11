@@ -230,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           'HTTP-Referer': 'https://tchipa.app',
         },
         body: json.encode({
-          'model': OPENROUTER_VISION_MODEL,
+          'model': OPENROUTER_MODEL,
           'messages': [
             {
               'role': 'system',
@@ -264,6 +264,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         String errorMsg;
         if (response.statusCode == 401) {
           errorMsg = "Clé API invalide ou manquante";
+        } else if (response.statusCode == 404) {
+          errorMsg = "Modèle IA introuvable (404)";
         } else if (response.statusCode == 429) {
           errorMsg = "Limite de requêtes atteinte, réessayez plus tard";
         } else if (response.statusCode == 402) {
@@ -318,13 +320,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   'type': 'text',
                   'text':
                       'Analyse cette capture d\'écran de produit AliExpress ou Temu. '
-                      'Extrais le nom du produit et son prix en USD. '
-                      'Réponds UNIQUEMENT en JSON avec ce format: {"name": "...", "price": 0.00}',
+                      'Extrais les informations suivantes:\n'
+                      '1. Le nom du produit\n'
+                      '2. Le prix en USD\n'
+                      '3. L\'URL complète visible dans la barre d\'adresse ou sur la page (si présente)\n'
+                      '4. L\'identifiant (item ID) du produit AliExpress: c\'est le nombre dans l\'URL '
+                      'après "/item/" ou dans le paramètre "id=" (ex: https://www.aliexpress.com/item/1005006123456789.html → item_id = "1005006123456789")\n'
+                      'Réponds UNIQUEMENT en JSON avec ce format exact: '
+                      '{"name": "...", "price": 0.00, "url": "...", "item_id": "..."}. '
+                      'Si une valeur est introuvable, utilise null pour ce champ.',
                 },
               ],
             }
           ],
-          'max_tokens': 200,
+          'max_tokens': 400,
         }),
       ).timeout(const Duration(seconds: 45));
 
@@ -335,6 +344,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final jsonMatch = RegExp(r'\{.*\}', dotAll: true).firstMatch(content);
         if (jsonMatch != null) {
           final parsed = json.decode(jsonMatch.group(0)!);
+          final extractedUrl = parsed['url']?.toString() ?? '';
+          final extractedItemId = parsed['item_id']?.toString() ?? '';
+
+          // If item_id not directly extracted, try to parse it from the URL
+          String itemId = extractedItemId;
+          if (itemId.isEmpty && extractedUrl.isNotEmpty) {
+            final itemMatch = RegExp(r'/item/(\d+)').firstMatch(extractedUrl);
+            itemId = itemMatch?.group(1) ?? '';
+            if (itemId.isEmpty) {
+              final idParam = RegExp(r'[?&]id=(\d+)').firstMatch(extractedUrl);
+              itemId = idParam?.group(1) ?? '';
+            }
+          }
+
           setState(() {
             _productName = parsed['name']?.toString() ?? '';
             final price = parsed['price'];
@@ -342,8 +365,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               _priceController.text = price.toString();
               _calculate();
             }
+            if (extractedUrl.isNotEmpty && _linkController.text.isEmpty) {
+              _linkController.text = extractedUrl;
+            }
           });
-          _showToast("Produit extrait depuis l'image !");
+
+          String toast = "Produit extrait depuis l'image !";
+          if (itemId.isNotEmpty) toast += " (ID: $itemId)";
+          _showToast(toast);
         } else {
           _showToast("Impossible d'extraire le produit. Réessayez.");
         }
@@ -352,6 +381,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         String errorMsg;
         if (response.statusCode == 401) {
           errorMsg = "Clé API invalide ou manquante";
+        } else if (response.statusCode == 404) {
+          errorMsg = "Modèle vision introuvable (404)";
         } else if (response.statusCode == 429) {
           errorMsg = "Limite de requêtes atteinte, réessayez plus tard";
         } else if (response.statusCode == 402) {

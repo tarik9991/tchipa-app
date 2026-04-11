@@ -824,59 +824,104 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildProductCard() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            const Color(0xFF00FF87).withOpacity(0.1),
-            const Color(0xFF60EFFF).withOpacity(0.05),
-          ],
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProductDetailScreen(
+              productName: _productName,
+              productImage: _productImage,
+              priceUSD: _originalPrice,
+              priceUSDT: _totalUsdt,
+              priceDZD: _totalDzd,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF00FF87).withOpacity(0.1),
+              const Color(0xFF60EFFF).withOpacity(0.05),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF00FF87).withOpacity(0.3)),
         ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF00FF87).withOpacity(0.3)),
-      ),
-      padding: const EdgeInsets.all(15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.shopping_bag, color: Color(0xFF00FF87), size: 20),
-              const SizedBox(width: 8),
-              const Text(
-                "Produit détecté",
-                style: TextStyle(
-                  color: Color(0xFF00FF87),
-                  fontWeight: FontWeight.bold,
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.shopping_bag, color: Color(0xFF00FF87), size: 20),
+                const SizedBox(width: 8),
+                const Text(
+                  "Produit détecté",
+                  style: TextStyle(
+                    color: Color(0xFF00FF87),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                const Icon(Icons.chevron_right, color: Colors.white38, size: 20),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _productName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (_productImage.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(
+                  _productImage,
+                  height: 100,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox(),
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _productName,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-            ),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-          ),
-          if (_productImage.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.network(
-                _productImage,
-                height: 100,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox(),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.visibility_rounded, color: Colors.black, size: 16),
+                  SizedBox(width: 6),
+                  Text(
+                    "Voir le détail",
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
-        ],
+        ),
       ),
     ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1);
   }
@@ -1428,6 +1473,344 @@ class HistoryScreen extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================
+// ECRAN DÉTAIL PRODUIT
+// ============================================
+class ProductDetailScreen extends StatefulWidget {
+  final String productName;
+  final String productImage;
+  final double priceUSD;
+  final double priceUSDT;
+  final double priceDZD;
+
+  const ProductDetailScreen({
+    super.key,
+    required this.productName,
+    required this.productImage,
+    required this.priceUSD,
+    required this.priceUSDT,
+    required this.priceDZD,
+  });
+
+  @override
+  State<ProductDetailScreen> createState() => _ProductDetailScreenState();
+}
+
+class _ProductDetailScreenState extends State<ProductDetailScreen>
+    with SingleTickerProviderStateMixin {
+  bool _addedToCart = false;
+  late AnimationController _btnController;
+  late Animation<double> _btnScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _btnController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 150),
+      lowerBound: 0.93,
+      upperBound: 1.0,
+      value: 1.0,
+    );
+    _btnScale = _btnController;
+  }
+
+  @override
+  void dispose() {
+    _btnController.dispose();
+    super.dispose();
+  }
+
+  void _addToCart() async {
+    await _btnController.reverse();
+    await _btnController.forward();
+    setState(() => _addedToCart = true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Color(0xFF00FF87)),
+            SizedBox(width: 10),
+            Text("Ajouté au panier !", style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        backgroundColor: const Color(0xFF1A1F3D),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0E21),
+      body: CustomScrollView(
+        slivers: [
+          // App bar avec image hero
+          SliverAppBar(
+            expandedHeight: 320,
+            pinned: true,
+            backgroundColor: const Color(0xFF0A0E21),
+            leading: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                margin: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.arrow_back, color: Colors.white),
+              ),
+            ),
+            flexibleSpace: FlexibleSpaceBar(
+              background: widget.productImage.isNotEmpty
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Image.network(
+                          widget.productImage,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                        ),
+                        // Gradient overlay bottom
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 120,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [
+                                  const Color(0xFF0A0E21),
+                                  Colors.transparent,
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : _imagePlaceholder(),
+            ),
+          ),
+
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 100),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Nom produit
+                  Text(
+                    widget.productName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      height: 1.4,
+                    ),
+                  ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+
+                  const SizedBox(height: 24),
+
+                  // Carte prix
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFF1A1F3D),
+                          const Color(0xFF0A0E21),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.08),
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        _buildPriceRow(
+                          icon: Icons.attach_money,
+                          iconColor: Colors.white54,
+                          label: "Prix USD",
+                          value: "\$${widget.priceUSD.toStringAsFixed(2)}",
+                          valueColor: Colors.white70,
+                          fontSize: 16,
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Divider(color: Colors.white10, height: 1),
+                        ),
+                        _buildPriceRow(
+                          icon: Icons.currency_bitcoin,
+                          iconColor: const Color(0xFF26A17B),
+                          label: "USDT",
+                          value: "${widget.priceUSDT.toStringAsFixed(2)} USDT",
+                          valueColor: const Color(0xFF26A17B),
+                          fontSize: 22,
+                          bold: true,
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 14),
+                          child: Divider(color: Colors.white10, height: 1),
+                        ),
+                        _buildPriceRow(
+                          icon: Icons.flag_rounded,
+                          iconColor: const Color(0xFF006233),
+                          label: "DZD",
+                          value: "~ ${widget.priceDZD.toStringAsFixed(0)} دج",
+                          valueColor: const Color(0xFF60EFFF),
+                          fontSize: 22,
+                          bold: true,
+                        ),
+                      ],
+                    ),
+                  ).animate().fadeIn(duration: 500.ms, delay: 100.ms).slideY(begin: 0.15),
+
+                  const SizedBox(height: 16),
+
+                  // Note taux
+                  Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 13, color: Colors.white24),
+                      const SizedBox(width: 6),
+                      Text(
+                        "Taux indicatif · 1 USDT = $EXCHANGE_RATE DZD",
+                        style: const TextStyle(color: Colors.white24, fontSize: 12),
+                      ),
+                    ],
+                  ).animate().fadeIn(duration: 400.ms, delay: 200.ms),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+
+      // Bouton panier flottant
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0A0E21),
+          border: Border(
+            top: BorderSide(color: Colors.white.withOpacity(0.06)),
+          ),
+        ),
+        child: ScaleTransition(
+          scale: _btnScale,
+          child: GestureDetector(
+            onTap: _addedToCart ? null : _addToCart,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              height: 58,
+              decoration: BoxDecoration(
+                gradient: _addedToCart
+                    ? const LinearGradient(
+                        colors: [Color(0xFF1A1F3D), Color(0xFF1A1F3D)],
+                      )
+                    : const LinearGradient(
+                        colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                      ),
+                borderRadius: BorderRadius.circular(18),
+                border: _addedToCart
+                    ? Border.all(color: const Color(0xFF00FF87), width: 1.5)
+                    : null,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _addedToCart
+                        ? Icons.check_circle_rounded
+                        : Icons.shopping_cart_rounded,
+                    color: _addedToCart
+                        ? const Color(0xFF00FF87)
+                        : Colors.black,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _addedToCart ? "Ajouté au panier" : "Ajouter au panier",
+                    style: TextStyle(
+                      color: _addedToCart
+                          ? const Color(0xFF00FF87)
+                          : Colors.black,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPriceRow({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+    required Color valueColor,
+    required double fontSize,
+    bool bold = false,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: iconColor, size: 18),
+        ),
+        const SizedBox(width: 14),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white54,
+            fontSize: 14,
+          ),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor,
+            fontSize: fontSize,
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _imagePlaceholder() {
+    return Container(
+      color: const Color(0xFF1A1F3D),
+      child: const Center(
+        child: Icon(
+          Icons.shopping_bag_outlined,
+          size: 80,
+          color: Colors.white12,
         ),
       ),
     );

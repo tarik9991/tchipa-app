@@ -18,7 +18,7 @@ import 'package:url_launcher/url_launcher.dart';
 const String OPENROUTER_API_KEY = String.fromEnvironment('OPENROUTER_API_KEY');
 const String OPENROUTER_MODEL = 'google/gemma-2-9b-it';
 const String OPENROUTER_VISION_MODEL = 'google/gemini-flash-1.5';
-const String VPS_SERVER_IP = 'YOUR_SERVER_IP_HERE'; // Remplace par ton IP VPS
+const String VPS_SERVER_IP = '76.13.255.239'; // Remplace par ton IP VPS
 const double EXCHANGE_RATE = 242.0;
 
 void main() {

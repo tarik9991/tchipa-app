@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'dart:math';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -11,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
 
 // ============================================
 // CONFIGURATION
@@ -136,6 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   
   bool _isLoading = false;
   bool _isAnalyzing = false;
+  bool _isPickingImage = false;
   double _originalPrice = 0.0;
   double _totalUsdt = 0.0;
   double _totalDzd = 0.0;
@@ -143,6 +146,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _productName = "";
   String _productImage = "";
   String _aiAdvice = "";
+  Uint8List? _pickedImageBytes;
   
   late AnimationController _flagController;
   late Animation<double> _flagAnimation;
@@ -274,6 +278,94 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _showToast("Erreur de connexion IA: $e");
     } finally {
       setState(() => _isAnalyzing = false);
+    }
+  }
+
+  // --- ANALYSE IMAGE (VISION) ---
+  Future<void> _pickImageAndAnalyze() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    if (picked == null) return;
+
+    final bytes = await picked.readAsBytes();
+    setState(() {
+      _pickedImageBytes = bytes;
+      _isPickingImage = true;
+    });
+
+    try {
+      final base64Image = base64Encode(bytes);
+      final response = await http.post(
+        Uri.parse('https://openrouter.ai/api/v1/chat/completions'),
+        headers: {
+          'Authorization': 'Bearer $OPENROUTER_API_KEY',
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://tchipa.app',
+        },
+        body: json.encode({
+          'model': OPENROUTER_VISION_MODEL,
+          'messages': [
+            {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'image_url',
+                  'image_url': {
+                    'url': 'data:image/jpeg;base64,$base64Image',
+                  },
+                },
+                {
+                  'type': 'text',
+                  'text':
+                      'Analyse cette capture d\'écran de produit AliExpress ou Temu. '
+                      'Extrais le nom du produit et son prix en USD. '
+                      'Réponds UNIQUEMENT en JSON avec ce format: {"name": "...", "price": 0.00}',
+                },
+              ],
+            }
+          ],
+          'max_tokens': 200,
+        }),
+      ).timeout(const Duration(seconds: 45));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final content = data['choices'][0]['message']['content'] as String;
+        // Extract JSON from the response (model may wrap it in markdown)
+        final jsonMatch = RegExp(r'\{.*\}', dotAll: true).firstMatch(content);
+        if (jsonMatch != null) {
+          final parsed = json.decode(jsonMatch.group(0)!);
+          setState(() {
+            _productName = parsed['name']?.toString() ?? '';
+            final price = parsed['price'];
+            if (price != null) {
+              _priceController.text = price.toString();
+              _calculate();
+            }
+          });
+          _showToast("Produit extrait depuis l'image !");
+        } else {
+          _showToast("Impossible d'extraire le produit. Réessayez.");
+        }
+      } else {
+        debugPrint('OpenRouter vision error: ${response.statusCode} ${response.body}');
+        String errorMsg;
+        if (response.statusCode == 401) {
+          errorMsg = "Clé API invalide ou manquante";
+        } else if (response.statusCode == 429) {
+          errorMsg = "Limite de requêtes atteinte, réessayez plus tard";
+        } else if (response.statusCode == 402) {
+          errorMsg = "Crédits OpenRouter épuisés";
+        } else {
+          errorMsg = "Erreur vision IA: ${response.statusCode}";
+        }
+        _showToast(errorMsg);
+      }
+    } catch (e) {
+      debugPrint('Vision exception: $e');
+      _showToast("Erreur d'analyse image: $e");
+    } finally {
+      setState(() => _isPickingImage = false);
     }
   }
 
@@ -615,6 +707,43 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
             ),
           ),
+          const SizedBox(height: 12),
+          // Bouton import screenshot galerie
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isPickingImage ? null : _pickImageAndAnalyze,
+              icon: _isPickingImage
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF60EFFF)),
+                    )
+                  : const Icon(Icons.image_search, color: Color(0xFF60EFFF)),
+              label: Text(
+                _isPickingImage ? "Analyse en cours..." : "Importer un screenshot",
+                style: const TextStyle(color: Color(0xFF60EFFF)),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF60EFFF), width: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              ),
+            ),
+          ),
+          // Aperçu de l'image choisie
+          if (_pickedImageBytes != null) ...[
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                _pickedImageBytes!,
+                height: 120,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ],
           const SizedBox(height: 15),
           // Prix manuel
           TextField(

@@ -1,0 +1,12 @@
+{
+  "name": "tchipa-scraper",
+  "version": "1.0.0",
+  "description": "AliExpress scraper with Puppeteer for Tchipa app",
+  "main": "apply_session.js",
+  "scripts": {
+    "apply-session": "node apply_session.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  }
+}

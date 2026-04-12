@@ -52,3 +52,8 @@ app.*.map.json
 tchipa_apk/
 tchipa_signed/
 ]
+
+# Scraper — ignore session data and installed packages
+scraper/cookies.json
+scraper/user_data/
+scraper/node_modules/

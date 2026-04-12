@@ -176,21 +176,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _showToast("Veuillez entrer un lien produit");
       return;
     }
-    
+
     setState(() => _isLoading = true);
-    
+
     try {
       final response = await http.get(
-        Uri.parse('http://$VPS_SERVER_IP:3000/get-price?url=${Uri.encodeComponent(url)}')
-      ).timeout(const Duration(seconds: 30));
-      
+        Uri.parse('http://$VPS_SERVER_IP:3000/browse?url=${Uri.encodeComponent(url)}')
+      ).timeout(const Duration(seconds: 60));
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        final name = data['productName']?.toString() ?? '';
+        final price = (data['priceUSD'] as num?)?.toDouble() ?? 0.0;
+        final image = data['imageUrl']?.toString() ?? '';
+
+        if (name.isEmpty && price == 0) {
+          _showToast("Produit non trouvé. Entrez le prix manuellement.");
+          return;
+        }
+
         setState(() {
-          _productName = data['productName'] ?? 'Produit';
-          _productImage = data['productImage'] ?? '';
-          _priceController.text = data['originalPrice']?.toString() ?? '0';
-          _calculate();
+          _productName = name.isNotEmpty ? name : 'Produit AliExpress';
+          _productImage = image;
+          _priceController.text = price > 0 ? price.toStringAsFixed(2) : '';
+          if (price > 0) _calculate();
         });
         _showToast("Produit détecté !");
       } else {
@@ -200,6 +209,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _showToast("Erreur de connexion. Entrez le prix manuellement.");
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  // Auto-fetch when user pastes/types an AliExpress URL
+  void _onLinkChanged(String value) {
+    final trimmed = value.trim();
+    if ((trimmed.contains('aliexpress.com/item/') ||
+         trimmed.contains('aliexpress.com/i/')) &&
+        !_isLoading) {
+      _fetchPriceFromScraper();
     }
   }
 
@@ -703,6 +722,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           TextField(
             controller: _linkController,
             style: const TextStyle(color: Colors.white),
+            onChanged: _onLinkChanged,
             decoration: InputDecoration(
               hintText: "Collez le lien AliExpress ou Temu",
               hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),

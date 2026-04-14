@@ -1,4 +1,4 @@
-package com.example.myapp
+package com.nearpay.app
 
 import io.flutter.embedding.android.FlutterActivity
 

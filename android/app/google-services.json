@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:449552833446:android:9b4877317c62d9af60cd67",
         "android_client_info": {
-          "package_name": "com.example.myapp"
+          "package_name": "com.nearpay.app"
         }
       },
       "oauth_client": [],

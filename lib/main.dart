@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ============================================
 // CONFIGURATION
@@ -33,6 +34,20 @@ class CartItem {
 
   double get lineUSDT => priceUSD * 1.25 * quantity;
   double get lineDZD => lineUSDT * EXCHANGE_RATE;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'image': image,
+        'priceUSD': priceUSD,
+        'quantity': quantity,
+      };
+
+  factory CartItem.fromJson(Map<String, dynamic> j) => CartItem(
+        name: j['name'] as String,
+        image: j['image'] as String,
+        priceUSD: (j['priceUSD'] as num).toDouble(),
+        quantity: (j['quantity'] as num?)?.toInt() ?? 1,
+      );
 }
 
 class Cart {
@@ -45,10 +60,30 @@ class Cart {
     for (final cb in _listeners) {
       cb();
     }
+    save();
+  }
+
+  static Future<void> save() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = items.map((i) => jsonEncode(i.toJson())).toList();
+    await prefs.setStringList('cart_items', encoded);
+  }
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = prefs.getStringList('cart_items') ?? [];
+    items.clear();
+    for (final s in encoded) {
+      try {
+        items.add(CartItem.fromJson(jsonDecode(s) as Map<String, dynamic>));
+      } catch (_) {}
+    }
   }
 
   static void add(CartItem newItem) {
-    final idx = items.indexWhere((i) => i.name == newItem.name);
+    // Match on name + image so different variants (colors/sizes) are separate entries
+    final idx = items.indexWhere(
+        (i) => i.name == newItem.name && i.image == newItem.image);
     if (idx >= 0) {
       items[idx].quantity++;
     } else {
@@ -80,31 +115,229 @@ class Cart {
   static double get totalDZD => totalUSDT * EXCHANGE_RATE;
 }
 
-void main() {
-  runApp(const TchipaApp());
+// ============================================
+// USER PROFILE
+// ============================================
+class UserProfile {
+  static String name = '';
+  static String phone = '';
+  static String email = '';
+  static String address = '';
+  static double balance = 0.0; // USDT credit balance
+
+  static bool get isEmpty => name.trim().isEmpty || phone.trim().isEmpty;
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    name    = prefs.getString('profile_name')    ?? '';
+    phone   = prefs.getString('profile_phone')   ?? '';
+    email   = prefs.getString('profile_email')   ?? '';
+    address = prefs.getString('profile_address') ?? '';
+    balance = prefs.getDouble('profile_balance') ?? 0.0;
+  }
+
+  static Future<void> save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('profile_name',    name);
+    await prefs.setString('profile_phone',   phone);
+    await prefs.setString('profile_email',   email);
+    await prefs.setString('profile_address', address);
+    await prefs.setDouble('profile_balance', balance);
+  }
+
+  /// Fetch balance from server and update local cache.
+  /// Silent — never throws; returns true if synced successfully.
+  static Future<bool> syncBalance() async {
+    if (phone.trim().isEmpty) return false;
+    try {
+      final uri = Uri.parse(
+          'http://$VPS_SERVER_IP:3000/balance?phone=${Uri.encodeComponent(phone.trim())}');
+      final response =
+          await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        balance = (data['balance'] as num?)?.toDouble() ?? balance;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setDouble('profile_balance', balance);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Future.wait([Cart.load(), UserProfile.load()]);
+  runApp(const NearPayApp());
 }
 
 // ============================================
 // APP PRINCIPALE
 // ============================================
-class TchipaApp extends StatelessWidget {
-  const TchipaApp({super.key});
+class NearPayApp extends StatelessWidget {
+  const NearPayApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'henini',
+      title: 'NearPay',
       theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFF0A0E21),
-        primaryColor: const Color(0xFF00FF87),
+        scaffoldBackgroundColor: const Color(0xFF0D1117),
+        primaryColor: const Color(0xFF00D4FF),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00FF87),
+          seedColor: const Color(0xFF00D4FF),
           brightness: Brightness.dark,
         ),
         fontFamily: 'SF Pro Display',
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFF0F1923),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
+          ),
+        ),
       ),
-      home: const MainScreen(),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+// ============================================
+// SPLASH SCREEN
+// ============================================
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _fade;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _fade  = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
+    _scale = Tween<double>(begin: 0.75, end: 1.0)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+    _ctrl.forward();
+    Future.delayed(const Duration(milliseconds: 2400), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const MainScreen(),
+          transitionDuration: const Duration(milliseconds: 500),
+          transitionsBuilder: (_, anim, __, child) =>
+              FadeTransition(opacity: anim, child: child),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117),
+      body: Center(
+        child: FadeTransition(
+          opacity: _fade,
+          child: ScaleTransition(
+            scale: _scale,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Logo with layered neon glow
+                Container(
+                  width: 130,
+                  height: 130,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(32),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00D4FF).withOpacity(0.6),
+                        blurRadius: 40,
+                        spreadRadius: 8,
+                      ),
+                      BoxShadow(
+                        color: const Color(0xFF8B5CF6).withOpacity(0.4),
+                        blurRadius: 70,
+                        spreadRadius: 18,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(32),
+                    child: Image.network(
+                      'https://i.ibb.co/6R2N7B1X/1000022003.jpg',
+                      width: 130,
+                      height: 130,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Image.asset(
+                        'assets/nearpay_logo.png',
+                        width: 130,
+                        height: 130,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                ShaderMask(
+                  shaderCallback: (bounds) => const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                  ).createShader(bounds),
+                  child: const Text(
+                    'NEARPAY',
+                    style: TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      letterSpacing: 6,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Smart Checkout · AliExpress & Temu',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.45),
+                    fontSize: 13,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 48),
+                SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      const Color(0xFF00D4FF).withOpacity(0.7),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -126,12 +359,34 @@ class _MainScreenState extends State<MainScreen> {
     const HomeScreen(),
     const CartScreen(),
     const HistoryScreen(),
+    const ProfileScreen(),
   ];
 
   @override
   void initState() {
     super.initState();
     Cart.addListener(_onCartChanged);
+    // If profile is incomplete, redirect to Profile tab after first frame
+    if (UserProfile.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        setState(() => _currentIndex = 3);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(children: [
+              Icon(Icons.person_outline, color: Color(0xFF00D4FF)),
+              SizedBox(width: 10),
+              Text('Complétez votre profil pour commencer',
+                  style: TextStyle(color: Colors.white)),
+            ]),
+            backgroundColor: const Color(0xFF0F1923),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      });
+    }
   }
 
   @override
@@ -149,7 +404,7 @@ class _MainScreenState extends State<MainScreen> {
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [Color(0xFF1A1F3D), Color(0xFF0A0E21)],
+            colors: [Color(0xFF0F1923), Color(0xFF0D1117)],
           ),
           boxShadow: [
             BoxShadow(
@@ -164,7 +419,7 @@ class _MainScreenState extends State<MainScreen> {
           onTap: (i) => setState(() => _currentIndex = i),
           backgroundColor: Colors.transparent,
           elevation: 0,
-          selectedItemColor: const Color(0xFF00FF87),
+          selectedItemColor: const Color(0xFF00D4FF),
           unselectedItemColor: Colors.white38,
           items: [
             const BottomNavigationBarItem(
@@ -184,6 +439,14 @@ class _MainScreenState extends State<MainScreen> {
             const BottomNavigationBarItem(
               icon: Icon(Icons.history_rounded),
               label: 'Historique',
+            ),
+            BottomNavigationBarItem(
+              icon: Badge(
+                isLabelVisible: UserProfile.isEmpty,
+                label: const Text('!'),
+                child: const Icon(Icons.person_rounded),
+              ),
+              label: 'Profil',
             ),
           ],
         ),
@@ -227,6 +490,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     )..repeat();
     _flagAnimation =
         Tween<double>(begin: 0, end: 2 * pi).animate(_flagController);
+    // Sync balance from server in the background after the frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final synced = await UserProfile.syncBalance();
+      if (synced && mounted) setState(() {});
+    });
   }
 
   @override
@@ -295,7 +563,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _originalPrice = double.tryParse(_priceController.text) ?? 0.0;
       _totalUsdt = _originalPrice * 1.25;
       _totalDzd = _totalUsdt * EXCHANGE_RATE;
-      _orderID = "TC-${Random().nextInt(9000) + 1000}";
+      _orderID = "NP-${Random().nextInt(9000) + 1000}";
     });
   }
 
@@ -311,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       builder: (context) => BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: AlertDialog(
-          backgroundColor: const Color(0xFF1A1F3D),
+          backgroundColor: const Color(0xFF0F1923),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           content: Column(
@@ -325,8 +593,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        const Color(0xFF00FF87).withOpacity(0.1),
-                        const Color(0xFF60EFFF).withOpacity(0.1),
+                        const Color(0xFF00D4FF).withOpacity(0.1),
+                        const Color(0xFF8B5CF6).withOpacity(0.1),
                       ],
                     ),
                     borderRadius: BorderRadius.circular(20),
@@ -340,9 +608,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           _buildMiniAlgerianFlag(),
                           const SizedBox(width: 10),
                           const Text(
-                            "TCHIPA PAY",
+                            "NEARPAY",
                             style: TextStyle(
-                              color: Color(0xFF00FF87),
+                              color: Color(0xFF00D4FF),
                               fontWeight: FontWeight.bold,
                               fontSize: 18,
                             ),
@@ -357,13 +625,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: QrImageView(
-                          data:
-                              "TCHIPA|$_orderID|${_totalUsdt.toStringAsFixed(2)}|USDT",
+                          data: "NEARPAY|$_orderID"
+                              "|${_totalUsdt.toStringAsFixed(2)}|USDT"
+                              "|NOM:${UserProfile.name}"
+                              "|TEL:${UserProfile.phone}",
                           version: QrVersions.auto,
                           size: 180,
                           eyeStyle: const QrEyeStyle(
                             eyeShape: QrEyeShape.square,
-                            color: Color(0xFF00FF87),
+                            color: Color(0xFF00D4FF),
                           ),
                         ),
                       ),
@@ -381,7 +651,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         style: const TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF00FF87),
+                          color: Color(0xFF00D4FF),
                         ),
                       ),
                       Text(
@@ -408,7 +678,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               icon: const Icon(Icons.share),
               label: const Text("Partager"),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00FF87),
+                backgroundColor: const Color(0xFF00D4FF),
                 foregroundColor: Colors.black,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(15)),
@@ -426,10 +696,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await Share.shareXFiles(
         [
           XFile.fromData(image,
-              name: 'tchipa_coupon.png', mimeType: 'image/png')
+              name: 'nearpay_coupon.png', mimeType: 'image/png')
         ],
         text:
-            'TchipaPay - Commande $_orderID - ${_totalUsdt.toStringAsFixed(2)} USDT',
+            'NearPay - Commande $_orderID - ${_totalUsdt.toStringAsFixed(2)} USDT',
       );
     }
   }
@@ -438,7 +708,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: const Color(0xFF1A1F3D),
+        backgroundColor: const Color(0xFF0F1923),
         behavior: SnackBarBehavior.floating,
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -455,9 +725,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF0A0E21),
-              Color(0xFF1A1F3D),
-              Color(0xFF0A0E21),
+              Color(0xFF0D1117),
+              Color(0xFF0F1923),
+              Color(0xFF0D1117),
             ],
           ),
         ),
@@ -487,56 +757,140 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildHeader() {
     return Column(
       children: [
-        SizedBox(
-          height: 60,
-          width: 90,
-          child: AnimatedBuilder(
-            animation: _flagAnimation,
-            builder: (context, child) {
-              return CustomPaint(
-                painter: AlgerianFlagPainter(_flagAnimation.value),
-              );
-            },
+        // NearPay logo — layered neon cyan glow ring
+        Container(
+          width: 104,
+          height: 104,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            // Outer diffuse purple halo
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF00D4FF).withOpacity(0.70),
+                blurRadius: 36,
+                spreadRadius: 6,
+              ),
+              BoxShadow(
+                color: const Color(0xFF8B5CF6).withOpacity(0.45),
+                blurRadius: 64,
+                spreadRadius: 16,
+              ),
+            ],
           ),
-        ).animate().fadeIn(duration: 600.ms).slideY(begin: -0.3),
-        const SizedBox(height: 15),
+          child: Stack(
+            children: [
+              // Cyan neon border ring
+              Container(
+                width: 104,
+                height: 104,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(28),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+              ),
+              // Inner logo (3 px inset from the border)
+              Positioned(
+                top: 3,
+                left: 3,
+                right: 3,
+                bottom: 3,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(25),
+                  child: Image.network(
+                    'https://i.ibb.co/6R2N7B1X/1000022003.jpg',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Image.asset(
+                      'assets/nearpay_logo.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ).animate().fadeIn(duration: 600.ms).scale(begin: const Offset(0.8, 0.8)),
+        const SizedBox(height: 14),
         ShaderMask(
           shaderCallback: (bounds) => const LinearGradient(
-            colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+            colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
           ).createShader(bounds),
           child: const Text(
-            "TCHIPA",
+            "NEARPAY",
             style: TextStyle(
-              fontSize: 42,
+              fontSize: 38,
               fontWeight: FontWeight.bold,
               color: Colors.white,
-              letterSpacing: 4,
+              letterSpacing: 5,
             ),
           ),
         ).animate().fadeIn(duration: 800.ms, delay: 200.ms),
-        const SizedBox(height: 5),
+        const SizedBox(height: 4),
         Text(
-          "Vérificateur de produits AliExpress & Temu",
+          "Smart Checkout · AliExpress & Temu",
           style: TextStyle(
-            color: Colors.white.withOpacity(0.6),
-            fontSize: 14,
+            color: Colors.white.withOpacity(0.5),
+            fontSize: 13,
+            letterSpacing: 0.5,
           ),
         ).animate().fadeIn(duration: 800.ms, delay: 400.ms),
+        if (!UserProfile.isEmpty) ...[
+          const SizedBox(height: 14),
+          _buildBalanceChip(),
+        ],
       ],
     );
   }
 
+  Widget _buildBalanceChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF00D4FF).withOpacity(0.15),
+            const Color(0xFF8B5CF6).withOpacity(0.08),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: const Color(0xFF00D4FF).withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.account_balance_wallet_rounded,
+              color: Color(0xFF00D4FF), size: 16),
+          const SizedBox(width: 8),
+          Text(
+            "Solde : ${UserProfile.balance.toStringAsFixed(2)} USDT",
+            style: const TextStyle(
+              color: Color(0xFF00D4FF),
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 500.ms, delay: 600.ms);
+  }
+
   Widget _buildMiniAlgerianFlag() {
-    return SizedBox(
-      height: 20,
-      width: 30,
-      child: AnimatedBuilder(
-        animation: _flagAnimation,
-        builder: (context, child) {
-          return CustomPaint(
-            painter: AlgerianFlagPainter(_flagAnimation.value, isMini: true),
-          );
-        },
+    // Mini NearPay logo for QR dialog header
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: Image.asset(
+        'assets/nearpay_logo.png',
+        width: 24,
+        height: 24,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(
+          Icons.bolt_rounded,
+          color: Color(0xFF00D4FF),
+          size: 20,
+        ),
       ),
     );
   }
@@ -572,7 +926,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(15),
                 borderSide: BorderSide.none,
               ),
-              prefixIcon: const Icon(Icons.link, color: Color(0xFF00FF87)),
+              prefixIcon: const Icon(Icons.link, color: Color(0xFF00D4FF)),
               suffixIcon: _isLoading
                   ? Container(
                       width: 20,
@@ -580,7 +934,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       margin: const EdgeInsets.all(12),
                       child: const CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF00FF87),
+                        color: Color(0xFF00D4FF),
                       ),
                     )
                   : IconButton(
@@ -588,7 +942,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                            colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
                           ),
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -617,7 +971,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 borderSide: BorderSide.none,
               ),
               prefixIcon:
-                  const Icon(Icons.attach_money, color: Color(0xFF00FF87)),
+                  const Icon(Icons.attach_money, color: Color(0xFF00D4FF)),
             ),
           ),
         ],
@@ -647,13 +1001,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              const Color(0xFF00FF87).withOpacity(0.1),
-              const Color(0xFF60EFFF).withOpacity(0.05),
+              const Color(0xFF00D4FF).withOpacity(0.1),
+              const Color(0xFF8B5CF6).withOpacity(0.05),
             ],
           ),
           borderRadius: BorderRadius.circular(20),
           border:
-              Border.all(color: const Color(0xFF00FF87).withOpacity(0.3)),
+              Border.all(color: const Color(0xFF00D4FF).withOpacity(0.3)),
         ),
         padding: const EdgeInsets.all(15),
         child: Column(
@@ -662,12 +1016,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Row(
               children: [
                 const Icon(Icons.shopping_bag,
-                    color: Color(0xFF00FF87), size: 20),
+                    color: Color(0xFF00D4FF), size: 20),
                 const SizedBox(width: 8),
                 const Text(
                   "Produit détecté",
                   style: TextStyle(
-                    color: Color(0xFF00FF87),
+                    color: Color(0xFF00D4FF),
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -702,7 +1056,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
                 ),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -738,13 +1092,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                const Color(0xFF00FF87).withOpacity(0.15),
-                const Color(0xFF60EFFF).withOpacity(0.1),
+                const Color(0xFF00D4FF).withOpacity(0.15),
+                const Color(0xFF8B5CF6).withOpacity(0.1),
               ],
             ),
             borderRadius: BorderRadius.circular(30),
             border: Border.all(
-                color: const Color(0xFF00FF87).withOpacity(0.3)),
+                color: const Color(0xFF00D4FF).withOpacity(0.3)),
           ),
           padding: const EdgeInsets.all(25),
           child: Column(
@@ -790,7 +1144,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF00FF87),
+                                color: const Color(0xFF00D4FF),
                                 borderRadius: BorderRadius.circular(5),
                               ),
                               child: const Text(
@@ -806,7 +1160,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             Text(
                               _totalUsdt.toStringAsFixed(2),
                               style: const TextStyle(
-                                color: Color(0xFF00FF87),
+                                color: Color(0xFF00D4FF),
                                 fontSize: 32,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -817,7 +1171,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                     const Icon(
                       Icons.trending_up,
-                      color: Color(0xFF00FF87),
+                      color: Color(0xFF00D4FF),
                       size: 40,
                     ),
                   ],
@@ -834,7 +1188,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Text(
                     "~ ${_totalDzd.toStringAsFixed(0)} DA",
                     style: const TextStyle(
-                      color: Color(0xFF60EFFF),
+                      color: Color(0xFF8B5CF6),
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
@@ -864,7 +1218,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: Ink(
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
                 ),
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -912,7 +1266,7 @@ class _CartScreenState extends State<CartScreen> {
   void initState() {
     super.initState();
     Cart.addListener(_onCartChanged);
-    _orderID = "TC-${Random().nextInt(9000) + 1000}";
+    _orderID = "NP-${Random().nextInt(9000) + 1000}";
   }
 
   @override
@@ -928,7 +1282,7 @@ class _CartScreenState extends State<CartScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text("Le panier est vide"),
-          backgroundColor: const Color(0xFF1A1F3D),
+          backgroundColor: const Color(0xFF0F1923),
           behavior: SnackBarBehavior.floating,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -937,14 +1291,14 @@ class _CartScreenState extends State<CartScreen> {
       return;
     }
 
-    _orderID = "TC-${Random().nextInt(9000) + 1000}";
+    _orderID = "NP-${Random().nextInt(9000) + 1000}";
 
     showDialog(
       context: context,
       builder: (context) => BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: AlertDialog(
-          backgroundColor: const Color(0xFF1A1F3D),
+          backgroundColor: const Color(0xFF0F1923),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
           content: SingleChildScrollView(
@@ -956,8 +1310,8 @@ class _CartScreenState extends State<CartScreen> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      const Color(0xFF00FF87).withOpacity(0.1),
-                      const Color(0xFF60EFFF).withOpacity(0.1),
+                      const Color(0xFF00D4FF).withOpacity(0.1),
+                      const Color(0xFF8B5CF6).withOpacity(0.1),
                     ],
                   ),
                   borderRadius: BorderRadius.circular(20),
@@ -968,9 +1322,9 @@ class _CartScreenState extends State<CartScreen> {
                   children: [
                     // Header
                     const Text(
-                      "TCHIPA PAY",
+                      "NEARPAY",
                       style: TextStyle(
-                        color: Color(0xFF00FF87),
+                        color: Color(0xFF00D4FF),
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
                         letterSpacing: 2,
@@ -991,13 +1345,16 @@ class _CartScreenState extends State<CartScreen> {
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: QrImageView(
-                        data:
-                            "TCHIPA|$_orderID|${Cart.totalUSDT.toStringAsFixed(2)}|USDT|${Cart.items.length}items",
+                        data: "NEARPAY|$_orderID"
+                            "|${Cart.totalUSDT.toStringAsFixed(2)}|USDT"
+                            "|${Cart.items.length}articles"
+                            "|NOM:${UserProfile.name}"
+                            "|TEL:${UserProfile.phone}",
                         version: QrVersions.auto,
                         size: 200,
                         eyeStyle: const QrEyeStyle(
                           eyeShape: QrEyeShape.square,
-                          color: Color(0xFF00FF87),
+                          color: Color(0xFF00D4FF),
                         ),
                       ),
                     ),
@@ -1010,7 +1367,7 @@ class _CartScreenState extends State<CartScreen> {
                               Text(
                                 "×${item.quantity}",
                                 style: const TextStyle(
-                                    color: Color(0xFF00FF87),
+                                    color: Color(0xFF00D4FF),
                                     fontWeight: FontWeight.bold,
                                     fontSize: 12),
                               ),
@@ -1041,14 +1398,14 @@ class _CartScreenState extends State<CartScreen> {
                       style: const TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF00FF87),
+                        color: Color(0xFF00D4FF),
                       ),
                     ),
                     // Total DZD
                     Text(
                       "≈ ${Cart.totalDZD.toStringAsFixed(0)} DZD",
                       style: const TextStyle(
-                          color: Color(0xFF60EFFF), fontSize: 15),
+                          color: Color(0xFF8B5CF6), fontSize: 15),
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -1075,18 +1432,18 @@ class _CartScreenState extends State<CartScreen> {
                   await Share.shareXFiles(
                     [
                       XFile.fromData(image,
-                          name: 'tchipa_panier.png',
+                          name: 'nearpay_panier.png',
                           mimeType: 'image/png')
                     ],
                     text:
-                        'TchipaPay - Commande $_orderID - ${Cart.totalUSDT.toStringAsFixed(2)} USDT',
+                        'NearPay - Commande $_orderID - ${Cart.totalUSDT.toStringAsFixed(2)} USDT',
                   );
                 }
               },
               icon: const Icon(Icons.share),
               label: const Text("Partager"),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00FF87),
+                backgroundColor: const Color(0xFF00D4FF),
                 foregroundColor: Colors.black,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(15)),
@@ -1105,7 +1462,7 @@ class _CartScreenState extends State<CartScreen> {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0A0E21), Color(0xFF1A1F3D)],
+          colors: [Color(0xFF0D1117), Color(0xFF0F1923)],
         ),
       ),
       child: Scaffold(
@@ -1119,7 +1476,7 @@ class _CartScreenState extends State<CartScreen> {
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
-                    colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
                   ),
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -1138,7 +1495,7 @@ class _CartScreenState extends State<CartScreen> {
                   Text(
                     "${Cart.items.length} article${Cart.items.length != 1 ? 's' : ''}",
                     style: const TextStyle(
-                        color: Color(0xFF00FF87), fontSize: 11),
+                        color: Color(0xFF00D4FF), fontSize: 11),
                   ),
                 ],
               ),
@@ -1177,8 +1534,8 @@ class _CartScreenState extends State<CartScreen> {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
-                  const Color(0xFF00FF87).withOpacity(0.15),
-                  const Color(0xFF60EFFF).withOpacity(0.1),
+                  const Color(0xFF00D4FF).withOpacity(0.15),
+                  const Color(0xFF8B5CF6).withOpacity(0.1),
                 ],
               ),
               shape: BoxShape.circle,
@@ -1186,7 +1543,7 @@ class _CartScreenState extends State<CartScreen> {
             child: const Icon(
               Icons.shopping_cart_outlined,
               size: 56,
-              color: Color(0xFF00FF87),
+              color: Color(0xFF00D4FF),
             ),
           ).animate().scale(duration: 600.ms),
           const SizedBox(height: 20),
@@ -1288,7 +1645,7 @@ class _CartScreenState extends State<CartScreen> {
                       Text(
                         "${item.lineUSDT.toStringAsFixed(2)} USDT",
                         style: const TextStyle(
-                          color: Color(0xFF00FF87),
+                          color: Color(0xFF00D4FF),
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1296,7 +1653,7 @@ class _CartScreenState extends State<CartScreen> {
                       Text(
                         "≈ ${item.lineDZD.toStringAsFixed(0)} DZD",
                         style: const TextStyle(
-                            color: Color(0xFF60EFFF), fontSize: 11),
+                            color: Color(0xFF8B5CF6), fontSize: 11),
                       ),
                     ],
                   ),
@@ -1317,8 +1674,8 @@ class _CartScreenState extends State<CartScreen> {
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
                             colors: [
-                              Color(0xFF00FF87),
-                              Color(0xFF60EFFF)
+                              Color(0xFF00D4FF),
+                              Color(0xFF8B5CF6)
                             ],
                           ),
                           borderRadius: BorderRadius.circular(8),
@@ -1366,7 +1723,7 @@ class _CartScreenState extends State<CartScreen> {
     return Container(
       width: 58,
       height: 58,
-      color: const Color(0xFF1A1F3D),
+      color: const Color(0xFF0F1923),
       child: const Icon(Icons.shopping_bag_outlined,
           color: Colors.white12, size: 28),
     );
@@ -1376,7 +1733,7 @@ class _CartScreenState extends State<CartScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A0E21),
+        color: const Color(0xFF0D1117),
         border: Border(
           top: BorderSide(color: Colors.white.withOpacity(0.06)),
         ),
@@ -1407,7 +1764,7 @@ class _CartScreenState extends State<CartScreen> {
                   Text(
                     "${Cart.totalUSDT.toStringAsFixed(2)} USDT",
                     style: const TextStyle(
-                      color: Color(0xFF00FF87),
+                      color: Color(0xFF00D4FF),
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                     ),
@@ -1415,7 +1772,7 @@ class _CartScreenState extends State<CartScreen> {
                   Text(
                     "≈ ${Cart.totalDZD.toStringAsFixed(0)} DZD",
                     style: const TextStyle(
-                        color: Color(0xFF60EFFF), fontSize: 13),
+                        color: Color(0xFF8B5CF6), fontSize: 13),
                   ),
                 ],
               ),
@@ -1433,7 +1790,7 @@ class _CartScreenState extends State<CartScreen> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [Color(0xFF00FF87), Color(0xFF60EFFF)],
+                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
                 ),
                 borderRadius: BorderRadius.circular(18),
               ),
@@ -1473,7 +1830,7 @@ class HistoryScreen extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF0A0E21), Color(0xFF1A1F3D)],
+          colors: [Color(0xFF0D1117), Color(0xFF0F1923)],
         ),
       ),
       child: Scaffold(
@@ -1579,13 +1936,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
       SnackBar(
         content: const Row(
           children: [
-            Icon(Icons.check_circle, color: Color(0xFF00FF87)),
+            Icon(Icons.check_circle, color: Color(0xFF00D4FF)),
             SizedBox(width: 10),
             Text("Ajouté au panier !",
                 style: TextStyle(color: Colors.white)),
           ],
         ),
-        backgroundColor: const Color(0xFF1A1F3D),
+        backgroundColor: const Color(0xFF0F1923),
         behavior: SnackBarBehavior.floating,
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1597,13 +1954,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0E21),
+      backgroundColor: const Color(0xFF0D1117),
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
             expandedHeight: 320,
             pinned: true,
-            backgroundColor: const Color(0xFF0A0E21),
+            backgroundColor: const Color(0xFF0D1117),
             leading: GestureDetector(
               onTap: () => Navigator.pop(context),
               child: Container(
@@ -1636,7 +1993,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
                                 begin: Alignment.bottomCenter,
                                 end: Alignment.topCenter,
                                 colors: [
-                                  const Color(0xFF0A0E21),
+                                  const Color(0xFF0D1117),
                                   Colors.transparent,
                                 ],
                               ),
@@ -1669,7 +2026,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
                       gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Color(0xFF1A1F3D), Color(0xFF0A0E21)],
+                        colors: [Color(0xFF0F1923), Color(0xFF0D1117)],
                       ),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
@@ -1713,7 +2070,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
                           label: "DZD",
                           value:
                               "~ ${widget.priceDZD.toStringAsFixed(0)} دج",
-                          valueColor: const Color(0xFF60EFFF),
+                          valueColor: const Color(0xFF8B5CF6),
                           fontSize: 22,
                           bold: true,
                         ),
@@ -1742,7 +2099,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
       bottomNavigationBar: Container(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
         decoration: BoxDecoration(
-          color: const Color(0xFF0A0E21),
+          color: const Color(0xFF0D1117),
           border: Border(
               top: BorderSide(color: Colors.white.withOpacity(0.06))),
         ),
@@ -1756,13 +2113,13 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
               decoration: BoxDecoration(
                 gradient: _addedToCart
                     ? const LinearGradient(
-                        colors: [Color(0xFF1A1F3D), Color(0xFF1A1F3D)])
+                        colors: [Color(0xFF0F1923), Color(0xFF0F1923)])
                     : const LinearGradient(
-                        colors: [Color(0xFF00FF87), Color(0xFF60EFFF)]),
+                        colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
                 borderRadius: BorderRadius.circular(18),
                 border: _addedToCart
                     ? Border.all(
-                        color: const Color(0xFF00FF87), width: 1.5)
+                        color: const Color(0xFF00D4FF), width: 1.5)
                     : null,
               ),
               child: Row(
@@ -1773,7 +2130,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
                         ? Icons.check_circle_rounded
                         : Icons.shopping_cart_rounded,
                     color: _addedToCart
-                        ? const Color(0xFF00FF87)
+                        ? const Color(0xFF00D4FF)
                         : Colors.black,
                     size: 22,
                   ),
@@ -1784,7 +2141,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
                         : "Ajouter au panier",
                     style: TextStyle(
                       color: _addedToCart
-                          ? const Color(0xFF00FF87)
+                          ? const Color(0xFF00D4FF)
                           : Colors.black,
                       fontWeight: FontWeight.bold,
                       fontSize: 17,
@@ -1836,11 +2193,420 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
 
   Widget _imagePlaceholder() {
     return Container(
-      color: const Color(0xFF1A1F3D),
+      color: const Color(0xFF0F1923),
       child: const Center(
         child: Icon(Icons.shopping_bag_outlined,
             size: 80, color: Colors.white12),
       ),
+    );
+  }
+}
+
+// ============================================
+// ECRAN PROFIL
+// ============================================
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _phoneCtrl;
+  late final TextEditingController _emailCtrl;
+  late final TextEditingController _addressCtrl;
+  bool _saving = false;
+  bool _syncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl    = TextEditingController(text: UserProfile.name);
+    _phoneCtrl   = TextEditingController(text: UserProfile.phone);
+    _emailCtrl   = TextEditingController(text: UserProfile.email);
+    _addressCtrl = TextEditingController(text: UserProfile.address);
+    // Sync balance when profile screen opens
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncBalance());
+  }
+
+  Future<void> _syncBalance() async {
+    if (UserProfile.phone.trim().isEmpty) return;
+    setState(() => _syncing = true);
+    await UserProfile.syncBalance();
+    if (mounted) setState(() => _syncing = false);
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _addressCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    UserProfile.name = _nameCtrl.text.trim();
+    UserProfile.phone = _phoneCtrl.text.trim();
+    UserProfile.email = _emailCtrl.text.trim();
+    UserProfile.address = _addressCtrl.text.trim();
+    await UserProfile.save();
+    setState(() => _saving = false);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(children: [
+          Icon(Icons.check_circle, color: Color(0xFF00D4FF)),
+          SizedBox(width: 10),
+          Text('Profil enregistré !', style: TextStyle(color: Colors.white)),
+        ]),
+        backgroundColor: const Color(0xFF0F1923),
+        behavior: SnackBarBehavior.floating,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D1117), Color(0xFF0F1923)],
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child:
+                    const Icon(Icons.person_rounded, color: Colors.black),
+              ),
+              const SizedBox(width: 12),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Mon Profil',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold)),
+                  Text('Informations personnelles',
+                      style:
+                          TextStyle(color: Color(0xFF00D4FF), fontSize: 11)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                // Avatar
+                Container(
+                  width: 90,
+                  height: 90,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      UserProfile.name.isNotEmpty
+                          ? UserProfile.name[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 38,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ).animate().scale(duration: 500.ms),
+
+                // Balance card
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 24),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 18),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        const Color(0xFF00D4FF).withOpacity(0.12),
+                        const Color(0xFF8B5CF6).withOpacity(0.06),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: const Color(0xFF00D4FF).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color:
+                              const Color(0xFF00D4FF).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                            Icons.account_balance_wallet_rounded,
+                            color: Color(0xFF00D4FF),
+                            size: 24),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Solde USDT',
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 12)),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${UserProfile.balance.toStringAsFixed(2)} USDT',
+                              style: const TextStyle(
+                                color: Color(0xFF00D4FF),
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              '≈ ${(UserProfile.balance * EXCHANGE_RATE).toStringAsFixed(0)} DZD',
+                              style: const TextStyle(
+                                  color: Color(0xFF8B5CF6), fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Refresh button
+                      GestureDetector(
+                        onTap: _syncing ? null : _syncBalance,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: _syncing
+                              ? const SizedBox(
+                                  key: ValueKey('spin'),
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF00D4FF),
+                                  ),
+                                )
+                              : const Icon(
+                                  key: ValueKey('icon'),
+                                  Icons.refresh_rounded,
+                                  color: Color(0xFF00D4FF),
+                                  size: 24,
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ).animate().fadeIn(duration: 400.ms, delay: 100.ms),
+
+                _buildField(
+                  controller: _nameCtrl,
+                  label: 'Nom complet',
+                  hint: 'Ex: Ahmed Benali',
+                  icon: Icons.person_outline,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Le nom est requis'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                _buildField(
+                  controller: _phoneCtrl,
+                  label: 'Numéro de téléphone',
+                  hint: 'Ex: 0555 123 456',
+                  icon: Icons.phone_outlined,
+                  keyboardType: TextInputType.phone,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Le téléphone est requis'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                _buildField(
+                  controller: _emailCtrl,
+                  label: 'Email (optionnel)',
+                  hint: 'Ex: ahmed@email.com',
+                  icon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 16),
+                _buildField(
+                  controller: _addressCtrl,
+                  label: 'Adresse de livraison',
+                  hint: 'Ex: Rue des Martyrs, Alger',
+                  icon: Icons.location_on_outlined,
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 32),
+
+                // Info banner
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00D4FF).withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: const Color(0xFF00D4FF).withOpacity(0.2)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.qr_code_2,
+                          color: Color(0xFF00D4FF), size: 20),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Votre nom et téléphone seront intégrés dans le QR code afin que l\'agent identifie votre commande.',
+                          style: TextStyle(
+                              color: Colors.white54, fontSize: 12, height: 1.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // Save button
+                SizedBox(
+                  width: double.infinity,
+                  child: GestureDetector(
+                    onTap: _saving ? null : _save,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                        ),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: _saving
+                          ? const Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            )
+                          : const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.save_rounded,
+                                    color: Colors.black, size: 22),
+                                SizedBox(width: 10),
+                                Text(
+                                  'Enregistrer le profil',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 17,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ),
+                ).animate().fadeIn(duration: 400.ms, delay: 200.ms),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required IconData icon,
+    TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
+    String? Function(String?)? validator,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          style: const TextStyle(color: Colors.white),
+          keyboardType: keyboardType,
+          maxLines: maxLines,
+          validator: validator,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.06),
+            prefixIcon: Icon(icon, color: const Color(0xFF00D4FF), size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide:
+                  BorderSide(color: Colors.white.withOpacity(0.08)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Color(0xFF00D4FF)),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide:
+                  const BorderSide(color: Colors.redAccent, width: 1.5),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide:
+                  const BorderSide(color: Colors.redAccent, width: 1.5),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1851,8 +2617,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
 class AlgerianFlagPainter extends CustomPainter {
   final double wavePhase;
   final bool isMini;
+  /// Y-axis spin angle for the diamond star (radians). Ignored when isMini.
+  final double starPhase;
 
-  AlgerianFlagPainter(this.wavePhase, {this.isMini = false});
+  AlgerianFlagPainter(this.wavePhase,
+      {this.isMini = false, this.starPhase = 0.0});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1917,16 +2686,19 @@ class AlgerianFlagPainter extends CustomPainter {
     crescentPath.fillType = PathFillType.evenOdd;
     canvas.drawPath(crescentPath, paintRed);
 
+    // ---- Static red 5-pointed star (background shape, always shown) ----
     final starPath = Path();
     const numPoints = 5;
     final outerR = starRadius;
     final innerR = starRadius * 0.4;
+    final starCx = centerX - crescentRadius * 0.3;
+    final starCy = centerY;
 
     for (int i = 0; i < numPoints * 2; i++) {
       final radius = i.isEven ? outerR : innerR;
       final angle = (i * pi / numPoints) - pi / 2;
-      final x = centerX - crescentRadius * 0.3 + radius * cos(angle);
-      final y = centerY + radius * sin(angle);
+      final x = starCx + radius * cos(angle);
+      final y = starCy + radius * sin(angle);
       if (i == 0) {
         starPath.moveTo(x, y);
       } else {
@@ -1935,6 +2707,61 @@ class AlgerianFlagPainter extends CustomPainter {
     }
     starPath.close();
     canvas.drawPath(starPath, paintRed);
+
+    // ---- Rotating 3-D diamond star (Y-axis flip, green ↔ red) ----
+    if (!isMini) {
+      final cosY = cos(starPhase);          // −1…+1 — determines face + width
+      final isGreenFace = cosY >= 0;
+      final scaleX = cosY.abs().clamp(0.05, 1.0); // apparent width
+
+      final faceColor = isGreenFace
+          ? const Color(0xFF00D4FF)   // brilliant green
+          : const Color(0xFFFF1C35);  // brilliant red
+
+      // faceColor used for both solid and glow — no separate variable needed
+
+      // Glow behind the star
+      final glowPaint = Paint()
+        ..color = faceColor.withOpacity(0.45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+
+      // Solid face
+      final facePaint = Paint()
+        ..color = faceColor
+        ..style = PaintingStyle.fill;
+
+      // Thin bright edge highlight
+      final edgePaint = Paint()
+        ..color = Colors.white.withOpacity(0.7)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.6;
+
+      final dR = starRadius * 0.9;   // outer tip radius of diamond star
+      final dInner = dR * 0.22;      // inner notch radius (sharp diamond shape)
+
+      Path _diamondPath() {
+        final p = Path();
+        for (int i = 0; i < 8; i++) {
+          final r = i.isEven ? dR : dInner;
+          // 45° offset so tips point N/E/S/W (diamond orientation)
+          final a = (i * pi / 4) - pi / 4;
+          final lx = r * cos(a) * scaleX;
+          final ly = r * sin(a);
+          if (i == 0) p.moveTo(lx, ly); else p.lineTo(lx, ly);
+        }
+        p.close();
+        return p;
+      }
+
+      canvas.save();
+      canvas.translate(starCx, starCy);   // centre on existing star position
+
+      canvas.drawPath(_diamondPath(), glowPaint);
+      canvas.drawPath(_diamondPath(), facePaint);
+      canvas.drawPath(_diamondPath(), edgePaint);
+
+      canvas.restore();
+    }
   }
 
   @override

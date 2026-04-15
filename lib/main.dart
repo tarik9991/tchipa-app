@@ -169,14 +169,14 @@ class UserProfile {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Future.wait([Cart.load(), UserProfile.load()]);
-  runApp(const NearPayApp());
+  runApp(const TchipaApp());
 }
 
 // ============================================
 // APP PRINCIPALE
 // ============================================
-class NearPayApp extends StatelessWidget {
-  const NearPayApp({super.key});
+class TchipaApp extends StatelessWidget {
+  const TchipaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -637,7 +637,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           _buildMiniAlgerianFlag(),
                           const SizedBox(width: 10),
                           const Text(
-                            "NEARPAY",
+                            "TCHIPA",
                             style: TextStyle(
                               color: Color(0xFF00D4FF),
                               fontWeight: FontWeight.bold,
@@ -654,7 +654,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: QrImageView(
-                          data: "NEARPAY|$_orderID"
+                          data: "TCHIPA|$_orderID"
                               "|${_totalUsdt.toStringAsFixed(2)}|USDT"
                               "|NOM:${UserProfile.name}"
                               "|TEL:${UserProfile.phone}",
@@ -725,10 +725,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await Share.shareXFiles(
         [
           XFile.fromData(image,
-              name: 'nearpay_coupon.png', mimeType: 'image/png')
+              name: 'tchipa_coupon.png', mimeType: 'image/png')
         ],
         text:
-            'NearPay - Commande $_orderID - ${_totalUsdt.toStringAsFixed(2)} USDT',
+            'Tchipa - Commande $_orderID - ${_totalUsdt.toStringAsFixed(2)} USDT',
       );
     }
   }
@@ -786,7 +786,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildHeader() {
     return Column(
       children: [
-        // NearPay logo — layered neon cyan glow ring
+        // Tchipa logo — layered neon cyan glow ring
         Container(
           width: 104,
           height: 104,
@@ -848,7 +848,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
           ).createShader(bounds),
           child: const Text(
-            "NEARPAY",
+            "TCHIPA",
             style: TextStyle(
               fontSize: 38,
               fontWeight: FontWeight.bold,
@@ -907,7 +907,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMiniAlgerianFlag() {
-    // Mini NearPay logo for QR dialog header
+    // Mini Tchipa logo for QR dialog header
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: Image.asset(
@@ -1351,7 +1351,7 @@ class _CartScreenState extends State<CartScreen> {
                   children: [
                     // Header
                     const Text(
-                      "NEARPAY",
+                      "TCHIPA",
                       style: TextStyle(
                         color: Color(0xFF00D4FF),
                         fontWeight: FontWeight.bold,
@@ -1374,7 +1374,7 @@ class _CartScreenState extends State<CartScreen> {
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: QrImageView(
-                        data: "NEARPAY|$_orderID"
+                        data: "TCHIPA|$_orderID"
                             "|${Cart.totalUSDT.toStringAsFixed(2)}|USDT"
                             "|${Cart.items.length}articles"
                             "|NOM:${UserProfile.name}"
@@ -1461,11 +1461,11 @@ class _CartScreenState extends State<CartScreen> {
                   await Share.shareXFiles(
                     [
                       XFile.fromData(image,
-                          name: 'nearpay_panier.png',
+                          name: 'tchipa_panier.png',
                           mimeType: 'image/png')
                     ],
                     text:
-                        'NearPay - Commande $_orderID - ${Cart.totalUSDT.toStringAsFixed(2)} USDT',
+                        'Tchipa - Commande $_orderID - ${Cart.totalUSDT.toStringAsFixed(2)} USDT',
                   );
                 }
               },

@@ -182,7 +182,7 @@ class NearPayApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'NearPay',
+      title: 'tchipa',
       theme: ThemeData(
         scaffoldBackgroundColor: const Color(0xFF0D1117),
         primaryColor: const Color(0xFF00D4FF),
@@ -216,28 +216,48 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _fade;
-  late Animation<double> _scale;
+    with TickerProviderStateMixin {
+  // Image fades in over 800 ms
+  late AnimationController _imgCtrl;
+  late Animation<double> _imgFade;
+
+  // Overlay (name + spinner) slides up after image settles
+  late AnimationController _overlayCtrl;
+  late Animation<double> _overlayFade;
+  late Animation<Offset> _overlaySlide;
+
+  static const String _splashImage =
+      'https://i.ibb.co/JRMx30nM/Gemini-Generated-Image-1h03up1h03up1h03.png';
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
+
+    _imgCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
-    _fade  = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
-    _scale = Tween<double>(begin: 0.75, end: 1.0)
-        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
-    _ctrl.forward();
-    Future.delayed(const Duration(milliseconds: 2400), () {
+    _imgFade = CurvedAnimation(parent: _imgCtrl, curve: Curves.easeIn);
+
+    _overlayCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _overlayFade  = CurvedAnimation(parent: _overlayCtrl, curve: Curves.easeIn);
+    _overlaySlide = Tween<Offset>(
+      begin: const Offset(0, 0.12),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _overlayCtrl, curve: Curves.easeOut));
+
+    _imgCtrl.forward().then((_) => _overlayCtrl.forward());
+
+    // Navigate after 3.2 s total
+    Future.delayed(const Duration(milliseconds: 3200), () {
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => const MainScreen(),
-          transitionDuration: const Duration(milliseconds: 500),
+          transitionDuration: const Duration(milliseconds: 600),
           transitionsBuilder: (_, anim, __, child) =>
               FadeTransition(opacity: anim, child: child),
         ),
@@ -247,96 +267,105 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _imgCtrl.dispose();
+    _overlayCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
-      body: Center(
-        child: FadeTransition(
-          opacity: _fade,
-          child: ScaleTransition(
-            scale: _scale,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Logo with layered neon glow
-                Container(
-                  width: 130,
-                  height: 130,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(32),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF00D4FF).withOpacity(0.6),
-                        blurRadius: 40,
-                        spreadRadius: 8,
-                      ),
-                      BoxShadow(
-                        color: const Color(0xFF8B5CF6).withOpacity(0.4),
-                        blurRadius: 70,
-                        spreadRadius: 18,
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(32),
-                    child: Image.network(
-                      'https://i.ibb.co/6R2N7B1X/1000022003.jpg',
-                      width: 130,
-                      height: 130,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Image.asset(
-                        'assets/nearpay_logo.png',
-                        width: 130,
-                        height: 130,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ── Full-screen splash image ──
+          FadeTransition(
+            opacity: _imgFade,
+            child: Image.network(
+              _splashImage,
+              width: size.width,
+              height: size.height,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: const Color(0xFF0D1117),
+                child: const Center(
+                  child: Icon(Icons.image_not_supported_outlined,
+                      color: Colors.white24, size: 64),
                 ),
-                const SizedBox(height: 32),
-                ShaderMask(
-                  shaderCallback: (bounds) => const LinearGradient(
-                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-                  ).createShader(bounds),
-                  child: const Text(
-                    'NEARPAY',
-                    style: TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      letterSpacing: 6,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Smart Checkout · AliExpress & Temu',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.45),
-                    fontSize: 13,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const SizedBox(height: 48),
-                SizedBox(
-                  width: 36,
-                  height: 36,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      const Color(0xFF00D4FF).withOpacity(0.7),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
+
+          // ── Dark gradient scrim at the bottom ──
+          Positioned(
+            left: 0, right: 0, bottom: 0,
+            height: size.height * 0.45,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.85),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // ── App name + spinner overlay ──
+          Positioned(
+            left: 0, right: 0, bottom: 52,
+            child: SlideTransition(
+              position: _overlaySlide,
+              child: FadeTransition(
+                opacity: _overlayFade,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                      ).createShader(bounds),
+                      child: const Text(
+                        'tchipa',
+                        style: TextStyle(
+                          fontSize: 42,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: 8,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Smart Checkout · AliExpress & Temu',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.55),
+                        fontSize: 13,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          const Color(0xFF00D4FF).withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

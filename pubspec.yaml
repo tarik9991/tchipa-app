@@ -1,4 +1,4 @@
-name: nearpay
+name: tchipa
 description: "NearPay - Smart payment & product lookup for AliExpress/Temu"
 publish_to: 'none'
 version: 3.0.0+3

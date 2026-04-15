@@ -866,6 +866,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             letterSpacing: 0.5,
           ),
         ).animate().fadeIn(duration: 800.ms, delay: 400.ms),
+        const SizedBox(height: 18),
+        // Animated Algerian flag with rotating diamond star
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF006233).withOpacity(0.35),
+                blurRadius: 20,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: AnimatedBuilder(
+              animation: _flagController,
+              builder: (_, __) => CustomPaint(
+                size: const Size(150, 100),
+                painter: AlgerianFlagPainter(
+                  _flagAnimation.value,
+                  starPhase: _flagAnimation.value,
+                ),
+              ),
+            ),
+          ),
+        ).animate().fadeIn(duration: 700.ms, delay: 500.ms),
         if (!UserProfile.isEmpty) ...[
           const SizedBox(height: 14),
           _buildBalanceChip(),
@@ -907,18 +934,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMiniAlgerianFlag() {
-    // Mini Tchipa logo for QR dialog header
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(6),
-      child: Image.asset(
-        'assets/nearpay_logo.png',
-        width: 24,
-        height: 24,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(
-          Icons.bolt_rounded,
-          color: Color(0xFF00D4FF),
-          size: 20,
+    return AnimatedBuilder(
+      animation: _flagController,
+      builder: (_, __) => CustomPaint(
+        size: const Size(50, 34),
+        painter: AlgerianFlagPainter(
+          _flagAnimation.value,
+          isMini: true,
         ),
       ),
     );

@@ -181,6 +181,13 @@ class VariantSku {
   }
 }
 
+/// A single property dimension (e.g. "Color", "Shoe Size", "EU Size").
+class VariantProperty {
+  final String name;
+  final List<String> values;
+  const VariantProperty({required this.name, required this.values});
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Future.wait([Cart.load(), UserProfile.load()]);
@@ -831,7 +838,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ),
               ),
-              // Inner logo (3 px inset from the border)
+              // Inner logo — drawn inline, no network dependency
               Positioned(
                 top: 3,
                 left: 3,
@@ -839,12 +846,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 bottom: 3,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(25),
-                  child: Image.network(
-                    'https://i.ibb.co/6R2N7B1X/1000022003.jpg',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Image.asset(
-                      'assets/nearpay_logo.png',
-                      fit: BoxFit.cover,
+                  child: Container(
+                    color: const Color(0xFF0D1117),
+                    child: Center(
+                      child: ShaderMask(
+                        shaderCallback: (bounds) => const LinearGradient(
+                          colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ).createShader(bounds),
+                        child: const Text(
+                          'T',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 56,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -2,
+                            height: 1,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1934,17 +1955,19 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
   // Variant state
   bool _variantsLoading = false;
   List<VariantSku> _variants = [];
-  List<String> _colorNames = [];
-  List<String> _sizeNames = [];
-  final Map<String, String?> _colorImages = {};
-  String? _selectedColor;
-  String? _selectedSize;
+  List<VariantProperty> _properties = []; // all prop dimensions from API
+  // "$propName::$value" → thumbnail image URL (for colour swatches)
+  final Map<String, String?> _valueImages = {};
+  // propName → currently-selected value
+  final Map<String, String> _selections = {};
   late double _currentPriceUSD;
   late double _currentPriceUSDT;
   late double _currentPriceDZD;
 
-  static const _colorKeys = ['Color', 'color', 'Colour', 'colour', 'Couleur'];
-  static const _sizeKeys  = ['Size', 'size', 'Taille'];
+  // Prop names that AliExpress uses for the colour dimension
+  static const _colorPropNames = {
+    'Color', 'color', 'Colour', 'colour', 'Couleur',
+  };
 
   @override
   void initState() {
@@ -1971,12 +1994,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
     super.dispose();
   }
 
-  VariantPropValue? _getProp(Map<String, VariantPropValue> props, List<String> keys) {
-    for (final k in keys) {
-      if (props.containsKey(k)) return props[k];
-    }
-    return null;
-  }
+  bool _isColorProp(String name) => _colorPropNames.contains(name);
 
   Future<void> _loadVariants() async {
     setState(() => _variantsLoading = true);
@@ -1992,54 +2010,62 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
         final variantList = (data['variants'] as List<dynamic>? ?? [])
             .map((v) => VariantSku.fromJson(v as Map<String, dynamic>))
             .toList();
-        final colorNames = List<String>.from(data['colors'] as List? ?? []);
-        final sizeNames  = List<String>.from(data['sizes']  as List? ?? []);
 
-        final colorImages = <String, String?>{};
+        // Use the 'properties' array — it contains ALL AliExpress prop names
+        // (Color, Shoe Size, EU Size, Size, etc.) in display order.
+        final rawProps = data['properties'] as List<dynamic>? ?? [];
+        final properties = rawProps
+            .map((p) {
+              final m = p as Map<String, dynamic>;
+              return VariantProperty(
+                name: m['name'] as String? ?? '',
+                values: List<String>.from(m['values'] as List? ?? []),
+              );
+            })
+            .where((p) => p.name.isNotEmpty && p.values.isNotEmpty)
+            .toList();
+
+        // Build image map for every prop value that has a thumbnail
+        final valueImages = <String, String?>{};
         for (final sku in variantList) {
-          final c = _getProp(sku.props, _colorKeys);
-          if (c != null && !colorImages.containsKey(c.value)) {
-            colorImages[c.value] = c.image;
+          for (final entry in sku.props.entries) {
+            final key = '${entry.key}::${entry.value.value}';
+            valueImages.putIfAbsent(key, () => entry.value.image);
           }
         }
 
+        // Auto-select the first value for each property
+        final selections = <String, String>{};
+        for (final prop in properties) {
+          if (prop.values.isNotEmpty) selections[prop.name] = prop.values.first;
+        }
+
         setState(() {
-          _variants    = variantList;
-          _colorNames  = colorNames;
-          _sizeNames   = sizeNames;
-          _colorImages.addAll(colorImages);
-          if (colorNames.isNotEmpty) _selectedColor = colorNames.first;
-          if (sizeNames.isNotEmpty)  _selectedSize  = sizeNames.first;
+          _variants   = variantList;
+          _properties = properties;
+          _valueImages.addAll(valueImages);
+          _selections.addAll(selections);
           _syncPrice();
         });
       }
     } catch (_) {
-      // Silently skip — variant selector stays hidden
+      // Silently skip — selector stays hidden on any error
     } finally {
       if (mounted) setState(() => _variantsLoading = false);
     }
   }
 
-  /// Finds the best matching SKU and updates price fields.
-  /// Must be called inside setState or as the last line before setState completes.
+  /// Match the current _selections against the SKU list and update price fields.
+  /// Must be called inside setState (or before setState finishes).
   void _syncPrice() {
     if (_variants.isEmpty) return;
-    VariantSku? match;
-    if (_selectedColor != null && _selectedSize != null) {
-      match = _variants.firstWhere(
-        (v) =>
-            _getProp(v.props, _colorKeys)?.value == _selectedColor &&
-            _getProp(v.props, _sizeKeys)?.value  == _selectedSize,
-        orElse: () => _variants.first,
-      );
-    } else if (_selectedColor != null) {
-      match = _variants.firstWhere(
-        (v) => _getProp(v.props, _colorKeys)?.value == _selectedColor,
-        orElse: () => _variants.first,
-      );
-    } else {
-      match = _variants.first;
-    }
+    final match = _variants.firstWhere(
+      // A SKU matches when every selected prop value matches its props map
+      (v) => _selections.entries.every(
+        (e) => v.props[e.key]?.value == e.value,
+      ),
+      orElse: () => _variants.first,
+    );
     if (match.priceUSD > 0) {
       _currentPriceUSD  = match.priceUSD;
       _currentPriceUSDT = match.priceUSD * 1.10;
@@ -2053,11 +2079,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
     await _btnController.reverse();
     await _btnController.forward();
 
-    // Append selected variant options to product name
-    final parts = <String>[
-      if (_selectedColor != null) _selectedColor!,
-      if (_selectedSize  != null) _selectedSize!,
-    ];
+    // All selected prop values go into the cart item name, in property order
+    final parts = _properties
+        .map((p) => _selections[p.name])
+        .whereType<String>()
+        .toList();
     final name = parts.isEmpty
         ? widget.productName
         : '${widget.productName} (${parts.join(' / ')})';
@@ -2300,6 +2326,174 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
     );
   }
 
+  /// Renders one property section (header + swatches or chips).
+  Widget _buildPropertySection(VariantProperty prop, bool isFirst) {
+    final isColor    = _isColorProp(prop.name);
+    final selectedVal = _selections[prop.name];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!isFirst) const SizedBox(height: 16),
+        // ── Section header ──────────────────────────────────────
+        Row(
+          children: [
+            Icon(
+              isColor ? Icons.palette_outlined : Icons.straighten_outlined,
+              size: 14,
+              color: const Color(0xFF00D4FF),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              prop.name,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.65),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+              ),
+            ),
+            if (selectedVal != null) ...[
+              const SizedBox(width: 8),
+              Text(
+                selectedVal,
+                style: const TextStyle(
+                  color: Color(0xFF00D4FF),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        // ── Values ──────────────────────────────────────────────
+        if (isColor)
+          _buildColorSwatches(prop)
+        else
+          _buildSizeChips(prop),
+      ],
+    );
+  }
+
+  Widget _buildColorSwatches(VariantProperty prop) {
+    return SizedBox(
+      height: 76,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: prop.values.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (_, i) {
+          final val      = prop.values[i];
+          final img      = _valueImages['${prop.name}::$val'];
+          final selected = _selections[prop.name] == val;
+          return GestureDetector(
+            onTap: () => setState(() {
+              _selections[prop.name] = val;
+              _addedToCart = false;
+              _syncPrice();
+            }),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 66,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: selected
+                      ? const Color(0xFF00D4FF)
+                      : Colors.white.withOpacity(0.12),
+                  width: selected ? 2 : 1,
+                ),
+                boxShadow: selected
+                    ? [BoxShadow(
+                        color: const Color(0xFF00D4FF).withOpacity(0.30),
+                        blurRadius: 10,
+                        spreadRadius: 1,
+                      )]
+                    : null,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: img != null
+                          ? Image.network(
+                              img,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              errorBuilder: (_, __, ___) => _colorFallback(val, selected),
+                            )
+                          : _colorFallback(val, selected),
+                    ),
+                    Container(
+                      width: double.infinity,
+                      color: selected
+                          ? const Color(0xFF00D4FF).withOpacity(0.15)
+                          : Colors.white.withOpacity(0.04),
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Text(
+                        val.length > 7 ? '${val.substring(0, 6)}…' : val,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: selected ? const Color(0xFF00D4FF) : Colors.white54,
+                          fontSize: 9,
+                          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSizeChips(VariantProperty prop) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: prop.values.map((val) {
+        final selected = _selections[prop.name] == val;
+        return GestureDetector(
+          onTap: () => setState(() {
+            _selections[prop.name] = val;
+            _addedToCart = false;
+            _syncPrice();
+          }),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+            decoration: BoxDecoration(
+              gradient: selected
+                  ? const LinearGradient(
+                      colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)])
+                  : null,
+              color: selected ? null : Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected
+                    ? Colors.transparent
+                    : Colors.white.withOpacity(0.12),
+              ),
+            ),
+            child: Text(
+              val,
+              style: TextStyle(
+                color: selected ? Colors.black : Colors.white70,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   Widget _buildVariantSelector() {
     return Container(
       decoration: BoxDecoration(
@@ -2311,180 +2505,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Color row ──────────────────────────────────────────────
-          if (_colorNames.isNotEmpty) ...[
-            Row(
-              children: [
-                const Icon(Icons.palette_outlined, size: 14, color: Color(0xFF00D4FF)),
-                const SizedBox(width: 6),
-                Text(
-                  "Couleur",
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-                if (_selectedColor != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    _selectedColor!,
-                    style: const TextStyle(
-                      color: Color(0xFF00D4FF),
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 76,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _colorNames.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (_, i) {
-                  final name     = _colorNames[i];
-                  final img      = _colorImages[name];
-                  final selected = _selectedColor == name;
-                  return GestureDetector(
-                    onTap: () => setState(() {
-                      _selectedColor = name;
-                      _addedToCart   = false;
-                      _syncPrice();
-                    }),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: 66,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: selected
-                              ? const Color(0xFF00D4FF)
-                              : Colors.white.withOpacity(0.12),
-                          width: selected ? 2 : 1,
-                        ),
-                        boxShadow: selected
-                            ? [BoxShadow(
-                                color: const Color(0xFF00D4FF).withOpacity(0.30),
-                                blurRadius: 10,
-                                spreadRadius: 1,
-                              )]
-                            : null,
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: img != null
-                                  ? Image.network(
-                                      img,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder: (_, __, ___) => _colorFallback(name, selected),
-                                    )
-                                  : _colorFallback(name, selected),
-                            ),
-                            Container(
-                              width: double.infinity,
-                              color: selected
-                                  ? const Color(0xFF00D4FF).withOpacity(0.15)
-                                  : Colors.white.withOpacity(0.04),
-                              padding: const EdgeInsets.symmetric(vertical: 3),
-                              child: Text(
-                                name.length > 7 ? '${name.substring(0, 6)}…' : name,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: selected ? const Color(0xFF00D4FF) : Colors.white54,
-                                  fontSize: 9,
-                                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-
-          // ── Size row ───────────────────────────────────────────────
-          if (_sizeNames.isNotEmpty) ...[
-            if (_colorNames.isNotEmpty) const SizedBox(height: 16),
-            Row(
-              children: [
-                const Icon(Icons.straighten_outlined, size: 14, color: Color(0xFF00D4FF)),
-                const SizedBox(width: 6),
-                Text(
-                  "Taille",
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-                if (_selectedSize != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    _selectedSize!,
-                    style: const TextStyle(
-                      color: Color(0xFF00D4FF),
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _sizeNames.map((size) {
-                final selected = _selectedSize == size;
-                return GestureDetector(
-                  onTap: () => setState(() {
-                    _selectedSize = size;
-                    _addedToCart  = false;
-                    _syncPrice();
-                  }),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
-                    decoration: BoxDecoration(
-                      gradient: selected
-                          ? const LinearGradient(
-                              colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)])
-                          : null,
-                      color: selected ? null : Colors.white.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: selected
-                            ? Colors.transparent
-                            : Colors.white.withOpacity(0.12),
-                      ),
-                    ),
-                    child: Text(
-                      size,
-                      style: TextStyle(
-                        color: selected ? Colors.black : Colors.white70,
-                        fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ],
+          for (int i = 0; i < _properties.length; i++)
+            _buildPropertySection(_properties[i], i == 0),
         ],
       ),
     ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08);

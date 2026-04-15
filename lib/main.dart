@@ -32,7 +32,7 @@ class CartItem {
     this.quantity = 1,
   });
 
-  double get lineUSDT => priceUSD * 1.25 * quantity;
+  double get lineUSDT => priceUSD * 1.10 * quantity;
   double get lineDZD => lineUSDT * EXCHANGE_RATE;
 
   Map<String, dynamic> toJson() => {
@@ -227,7 +227,7 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<Offset> _overlaySlide;
 
   static const String _splashImage =
-      'https://i.ibb.co/JRMx30nM/Gemini-Generated-Image-1h03up1h03up1h03.png';
+      'https://i.ibb.co/QF18Dz91/Gemini-Generated-Image-1h03up1h03up1h03.png';
 
   @override
   void initState() {
@@ -590,7 +590,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _calculate() {
     setState(() {
       _originalPrice = double.tryParse(_priceController.text) ?? 0.0;
-      _totalUsdt = _originalPrice * 1.25;
+      _totalUsdt = _originalPrice * 1.10;
       _totalDzd = _totalUsdt * EXCHANGE_RATE;
       _orderID = "NP-${Random().nextInt(9000) + 1000}";
     });
@@ -881,14 +881,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: AnimatedBuilder(
-              animation: _flagController,
-              builder: (_, __) => CustomPaint(
-                size: const Size(150, 100),
-                painter: AlgerianFlagPainter(
-                  _flagAnimation.value,
-                  starPhase: _flagAnimation.value,
-                ),
+            child: SizedBox(
+              width: 150,
+              height: 100,
+              child: Stack(
+                children: [
+                  Image.network(
+                    'https://i.ibb.co/bjRzHSk2/Gemini-Generated-Image-xnu9ukxnu9ukxnu9-1.png',
+                    width: 150,
+                    height: 100,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => AnimatedBuilder(
+                      animation: _flagController,
+                      builder: (_, __) => CustomPaint(
+                        size: const Size(150, 100),
+                        painter: AlgerianFlagPainter(
+                          _flagAnimation.value,
+                          starPhase: _flagAnimation.value,
+                        ),
+                      ),
+                    ),
+                  ),
+                  AnimatedBuilder(
+                    animation: _flagController,
+                    builder: (_, __) => CustomPaint(
+                      size: const Size(150, 100),
+                      painter: _StarOverlayPainter(_flagAnimation.value),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -934,13 +955,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMiniAlgerianFlag() {
-    return AnimatedBuilder(
-      animation: _flagController,
-      builder: (_, __) => CustomPaint(
-        size: const Size(50, 34),
-        painter: AlgerianFlagPainter(
-          _flagAnimation.value,
-          isMini: true,
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        'https://i.ibb.co/bjRzHSk2/Gemini-Generated-Image-xnu9ukxnu9ukxnu9-1.png',
+        width: 50,
+        height: 34,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => AnimatedBuilder(
+          animation: _flagController,
+          builder: (_, __) => CustomPaint(
+            size: const Size(50, 34),
+            painter: AlgerianFlagPainter(
+              _flagAnimation.value,
+              isMini: true,
+            ),
+          ),
         ),
       ),
     );
@@ -2817,4 +2847,67 @@ class AlgerianFlagPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(AlgerianFlagPainter oldDelegate) => true;
+}
+
+// ============================================
+// ROTATING STAR OVERLAY (drawn on top of flag image)
+// ============================================
+class _StarOverlayPainter extends CustomPainter {
+  final double starPhase;
+  _StarOverlayPainter(this.starPhase);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const crescentRadius = 18.0;
+    const starRadius = 10.0;
+    final starCx = size.width / 2 - crescentRadius * 0.3;
+    final starCy = size.height / 2;
+
+    final cosY = cos(starPhase);
+    final isGreenFace = cosY >= 0;
+    final scaleX = cosY.abs().clamp(0.05, 1.0);
+
+    final faceColor = isGreenFace
+        ? const Color(0xFF00D4FF)
+        : const Color(0xFFFF1C35);
+
+    final glowPaint = Paint()
+      ..color = faceColor.withOpacity(0.45)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+
+    final facePaint = Paint()
+      ..color = faceColor
+      ..style = PaintingStyle.fill;
+
+    final edgePaint = Paint()
+      ..color = Colors.white.withOpacity(0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.6;
+
+    const dR = starRadius * 0.9;
+    const dInner = dR * 0.22;
+
+    Path diamondPath() {
+      final p = Path();
+      for (int i = 0; i < 8; i++) {
+        final r = i.isEven ? dR : dInner;
+        final a = (i * pi / 4) - pi / 4;
+        final lx = r * cos(a) * scaleX;
+        final ly = r * sin(a);
+        if (i == 0) p.moveTo(lx, ly); else p.lineTo(lx, ly);
+      }
+      p.close();
+      return p;
+    }
+
+    canvas.save();
+    canvas.translate(starCx, starCy);
+    canvas.drawPath(diamondPath(), glowPaint);
+    canvas.drawPath(diamondPath(), facePaint);
+    canvas.drawPath(diamondPath(), edgePaint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_StarOverlayPainter oldDelegate) => true;
 }

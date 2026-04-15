@@ -123,8 +123,6 @@ class UserProfile {
   static String phone = '';
   static String email = '';
   static String address = '';
-  static double balance = 0.0; // USDT credit balance
-
   static bool get isEmpty => name.trim().isEmpty || phone.trim().isEmpty;
 
   static Future<void> load() async {
@@ -133,7 +131,6 @@ class UserProfile {
     phone   = prefs.getString('profile_phone')   ?? '';
     email   = prefs.getString('profile_email')   ?? '';
     address = prefs.getString('profile_address') ?? '';
-    balance = prefs.getDouble('profile_balance') ?? 0.0;
   }
 
   static Future<void> save() async {
@@ -142,27 +139,6 @@ class UserProfile {
     await prefs.setString('profile_phone',   phone);
     await prefs.setString('profile_email',   email);
     await prefs.setString('profile_address', address);
-    await prefs.setDouble('profile_balance', balance);
-  }
-
-  /// Fetch balance from server and update local cache.
-  /// Silent — never throws; returns true if synced successfully.
-  static Future<bool> syncBalance() async {
-    if (phone.trim().isEmpty) return false;
-    try {
-      final uri = Uri.parse(
-          'http://$VPS_SERVER_IP:3000/balance?phone=${Uri.encodeComponent(phone.trim())}');
-      final response =
-          await http.get(uri).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        balance = (data['balance'] as num?)?.toDouble() ?? balance;
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setDouble('profile_balance', balance);
-        return true;
-      }
-    } catch (_) {}
-    return false;
   }
 }
 
@@ -519,11 +495,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     )..repeat();
     _flagAnimation =
         Tween<double>(begin: 0, end: 2 * pi).animate(_flagController);
-    // Sync balance from server in the background after the frame renders
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final synced = await UserProfile.syncBalance();
-      if (synced && mounted) setState(() {});
-    });
   }
 
   @override
@@ -867,110 +838,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ).animate().fadeIn(duration: 800.ms, delay: 400.ms),
         const SizedBox(height: 18),
-        // Animated Algerian flag with rotating diamond star
+        // Animated Algerian flag — CustomPaint, shimmer & rotating star
         Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF006233).withOpacity(0.35),
-                blurRadius: 20,
+                color: const Color(0xFF006233).withOpacity(0.50),
+                blurRadius: 24,
                 spreadRadius: 2,
+              ),
+              BoxShadow(
+                color: const Color(0xFFD21034).withOpacity(0.20),
+                blurRadius: 16,
+                spreadRadius: -2,
               ),
             ],
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
-            child: SizedBox(
-              width: 150,
-              height: 100,
-              child: Stack(
-                children: [
-                  Image.network(
-                    'https://i.ibb.co/bjRzHSk2/Gemini-Generated-Image-xnu9ukxnu9ukxnu9-1.png',
-                    width: 150,
-                    height: 100,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => AnimatedBuilder(
-                      animation: _flagController,
-                      builder: (_, __) => CustomPaint(
-                        size: const Size(150, 100),
-                        painter: AlgerianFlagPainter(
-                          _flagAnimation.value,
-                          starPhase: _flagAnimation.value,
-                        ),
-                      ),
-                    ),
-                  ),
-                  AnimatedBuilder(
-                    animation: _flagController,
-                    builder: (_, __) => CustomPaint(
-                      size: const Size(150, 100),
-                      painter: _StarOverlayPainter(_flagAnimation.value),
-                    ),
-                  ),
-                ],
+            child: AnimatedBuilder(
+              animation: _flagController,
+              builder: (_, __) => CustomPaint(
+                size: const Size(150, 100),
+                painter: AlgerianFlagPainter(_flagAnimation.value),
               ),
             ),
           ),
         ).animate().fadeIn(duration: 700.ms, delay: 500.ms),
-        if (!UserProfile.isEmpty) ...[
-          const SizedBox(height: 14),
-          _buildBalanceChip(),
-        ],
       ],
     );
-  }
-
-  Widget _buildBalanceChip() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF00D4FF).withOpacity(0.15),
-            const Color(0xFF8B5CF6).withOpacity(0.08),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFF00D4FF).withOpacity(0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.account_balance_wallet_rounded,
-              color: Color(0xFF00D4FF), size: 16),
-          const SizedBox(width: 8),
-          Text(
-            "Solde : ${UserProfile.balance.toStringAsFixed(2)} USDT",
-            style: const TextStyle(
-              color: Color(0xFF00D4FF),
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    ).animate().fadeIn(duration: 500.ms, delay: 600.ms);
   }
 
   Widget _buildMiniAlgerianFlag() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
-      child: Image.network(
-        'https://i.ibb.co/bjRzHSk2/Gemini-Generated-Image-xnu9ukxnu9ukxnu9-1.png',
-        width: 50,
-        height: 34,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => AnimatedBuilder(
-          animation: _flagController,
-          builder: (_, __) => CustomPaint(
-            size: const Size(50, 34),
-            painter: AlgerianFlagPainter(
-              _flagAnimation.value,
-              isMini: true,
-            ),
-          ),
+      child: AnimatedBuilder(
+        animation: _flagController,
+        builder: (_, __) => CustomPaint(
+          size: const Size(50, 34),
+          painter: AlgerianFlagPainter(_flagAnimation.value, isMini: true),
         ),
       ),
     );
@@ -2300,7 +2207,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final TextEditingController _emailCtrl;
   late final TextEditingController _addressCtrl;
   bool _saving = false;
-  bool _syncing = false;
 
   @override
   void initState() {
@@ -2309,15 +2215,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _phoneCtrl   = TextEditingController(text: UserProfile.phone);
     _emailCtrl   = TextEditingController(text: UserProfile.email);
     _addressCtrl = TextEditingController(text: UserProfile.address);
-    // Sync balance when profile screen opens
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncBalance());
-  }
-
-  Future<void> _syncBalance() async {
-    if (UserProfile.phone.trim().isEmpty) return;
-    setState(() => _syncing = true);
-    await UserProfile.syncBalance();
-    if (mounted) setState(() => _syncing = false);
   }
 
   @override
@@ -2429,91 +2326,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ).animate().scale(duration: 500.ms),
-
-                // Balance card
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 24),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 18),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        const Color(0xFF00D4FF).withOpacity(0.12),
-                        const Color(0xFF8B5CF6).withOpacity(0.06),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: const Color(0xFF00D4FF).withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color:
-                              const Color(0xFF00D4FF).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                            Icons.account_balance_wallet_rounded,
-                            color: Color(0xFF00D4FF),
-                            size: 24),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Solde USDT',
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 12)),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${UserProfile.balance.toStringAsFixed(2)} USDT',
-                              style: const TextStyle(
-                                color: Color(0xFF00D4FF),
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              '≈ ${(UserProfile.balance * EXCHANGE_RATE).toStringAsFixed(0)} DZD',
-                              style: const TextStyle(
-                                  color: Color(0xFF8B5CF6), fontSize: 12),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Refresh button
-                      GestureDetector(
-                        onTap: _syncing ? null : _syncBalance,
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          child: _syncing
-                              ? const SizedBox(
-                                  key: ValueKey('spin'),
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Color(0xFF00D4FF),
-                                  ),
-                                )
-                              : const Icon(
-                                  key: ValueKey('icon'),
-                                  Icons.refresh_rounded,
-                                  color: Color(0xFF00D4FF),
-                                  size: 24,
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ).animate().fadeIn(duration: 400.ms, delay: 100.ms),
 
                 _buildField(
                   controller: _nameCtrl,
@@ -2693,221 +2505,127 @@ class _ProfileScreenState extends State<ProfileScreen> {
 }
 
 // ============================================
-// DRAPEAU ALGÉRIEN ANIMÉ
+// DRAPEAU ALGÉRIEN ANIMÉ — CustomPaint
 // ============================================
 class AlgerianFlagPainter extends CustomPainter {
-  final double wavePhase;
+  /// Drives shimmer sweep + rotating diamond star (0 → 2π).
+  final double phase;
   final bool isMini;
-  /// Y-axis spin angle for the diamond star (radians). Ignored when isMini.
-  final double starPhase;
 
-  AlgerianFlagPainter(this.wavePhase,
-      {this.isMini = false, this.starPhase = 0.0});
+  AlgerianFlagPainter(this.phase, {this.isMini = false});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paintGreen = Paint()..color = const Color(0xFF006233);
-    final paintWhite = Paint()..color = Colors.white;
-    final paintRed = Paint()..color = const Color(0xFFD21034);
+    final w    = size.width;
+    final h    = size.height;
+    final halfW = w / 2;
+    final cx   = halfW;
+    final cy   = h / 2;
 
-    final double halfWidth = size.width / 2;
-    final pathGreen = Path();
-    final pathWhite = Path();
+    // ── 1. Green left half ──────────────────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, halfW, h),
+      Paint()..color = const Color(0xFF006233),
+    );
 
-    final waveAmplitude = isMini ? 1.0 : 3.0;
-    final waveFrequency = 0.05;
+    // ── 2. White right half ─────────────────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(halfW, 0, halfW, h),
+      Paint()..color = Colors.white,
+    );
 
-    pathGreen.moveTo(0, 0);
-    for (double x = 0; x <= halfWidth; x++) {
-      final y =
-          sin((x * waveFrequency) + wavePhase) * waveAmplitude;
-      pathGreen.lineTo(x, y);
+    // ── 3. Shimmer sweep (full-flag highlight, skipped on mini) ─────────
+    if (!isMini) {
+      final progress = (sin(phase * 0.55) + 1) / 2;         // 0..1
+      final shimX    = progress * (w + 80) - 40;            // px, -40..w+40
+      final rect     = Rect.fromLTWH(0, 0, w, h);
+      final toAlign  = (double px) => (px / w) * 2 - 1;     // px → -1..1
+
+      final shimShader = LinearGradient(
+        begin: Alignment(toAlign(shimX - 40), -1),
+        end:   Alignment(toAlign(shimX + 40),  1),
+        colors: [
+          Colors.white.withOpacity(0),
+          Colors.white.withOpacity(0.20),
+          Colors.white.withOpacity(0),
+        ],
+      ).createShader(rect);
+      canvas.drawRect(rect, Paint()..shader = shimShader);
     }
-    for (double x = halfWidth; x >= 0; x--) {
-      final y = size.height +
-          sin((x * waveFrequency) + wavePhase + pi) * waveAmplitude;
-      pathGreen.lineTo(x, y);
-    }
-    pathGreen.close();
-    canvas.drawPath(pathGreen, paintGreen);
 
-    pathWhite.moveTo(halfWidth, 0);
-    for (double x = halfWidth; x <= size.width; x++) {
-      final y =
-          sin((x * waveFrequency) + wavePhase) * waveAmplitude;
-      pathWhite.lineTo(x, y);
-    }
-    for (double x = size.width; x >= halfWidth; x--) {
-      final y = size.height +
-          sin((x * waveFrequency) + wavePhase + pi) * waveAmplitude;
-      pathWhite.lineTo(x, y);
-    }
-    pathWhite.close();
-    canvas.drawPath(pathWhite, paintWhite);
+    // ── 4. Red crescent (straddles centre, opens right) ─────────────────
+    final cr   = isMini ? 6.0  : 20.0;
+    final cOff = isMini ? 1.6  :  5.5;   // inner-circle offset rightward
+    final crescentPath = Path()
+      ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: cr))
+      ..addOval(Rect.fromCircle(
+          center: Offset(cx + cOff, cy), radius: cr * 0.72))
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(crescentPath, Paint()..color = const Color(0xFFD21034));
 
-    final centerX = halfWidth;
-    final centerY = size.height / 2;
-    final crescentRadius = isMini ? 6.0 : 18.0;
-    final starRadius = isMini ? 3.0 : 10.0;
+    // ── 5. Static 5-pointed red star — on the WHITE (right) half ────────
+    final sr    = isMini ? 3.2  : 11.0;
+    final starX = cx + cr * 0.55;   // clearly right of centre → white side
+    final starY = cy;
 
-    final crescentPath = Path();
-    final outerRadius = crescentRadius;
-    final innerRadius = crescentRadius * 0.7;
-    final crescentOffset = crescentRadius * 0.3;
-
-    crescentPath.addOval(Rect.fromCircle(
-      center: Offset(centerX + crescentOffset, centerY),
-      radius: outerRadius,
-    ));
-    crescentPath.addOval(Rect.fromCircle(
-      center: Offset(
-          centerX + crescentOffset + (outerRadius - innerRadius), centerY),
-      radius: innerRadius,
-    ));
-    crescentPath.fillType = PathFillType.evenOdd;
-    canvas.drawPath(crescentPath, paintRed);
-
-    // ---- Static red 5-pointed star (background shape, always shown) ----
     final starPath = Path();
-    const numPoints = 5;
-    final outerR = starRadius;
-    final innerR = starRadius * 0.4;
-    final starCx = centerX - crescentRadius * 0.3;
-    final starCy = centerY;
-
-    for (int i = 0; i < numPoints * 2; i++) {
-      final radius = i.isEven ? outerR : innerR;
-      final angle = (i * pi / numPoints) - pi / 2;
-      final x = starCx + radius * cos(angle);
-      final y = starCy + radius * sin(angle);
-      if (i == 0) {
-        starPath.moveTo(x, y);
-      } else {
-        starPath.lineTo(x, y);
-      }
+    for (int i = 0; i < 10; i++) {
+      final r = i.isEven ? sr : sr * 0.40;
+      final a = (i * pi / 5) - pi / 2;
+      final px = starX + r * cos(a);
+      final py = starY + r * sin(a);
+      if (i == 0) { starPath.moveTo(px, py); } else { starPath.lineTo(px, py); }
     }
     starPath.close();
-    canvas.drawPath(starPath, paintRed);
+    canvas.drawPath(starPath,
+        Paint()
+          ..color = const Color(0xFFD21034)
+          ..style = PaintingStyle.fill);
 
-    // ---- Rotating 3-D diamond star (Y-axis flip, green ↔ red) ----
+    // ── 6. Rotating glowing diamond star overlay (skipped on mini) ──────
     if (!isMini) {
-      final cosY = cos(starPhase);          // −1…+1 — determines face + width
-      final isGreenFace = cosY >= 0;
-      final scaleX = cosY.abs().clamp(0.05, 1.0); // apparent width
+      final cosA   = cos(phase);
+      final scaleX = cosA.abs().clamp(0.05, 1.0);
+      final bright = cosA >= 0
+          ? const Color(0xFFFF3355)   // warm bright red (front face)
+          : const Color(0xFFD21034);  // standard red   (back face)
 
-      final faceColor = isGreenFace
-          ? const Color(0xFF00D4FF)   // brilliant green
-          : const Color(0xFFFF1C35);  // brilliant red
-
-      // faceColor used for both solid and glow — no separate variable needed
-
-      // Glow behind the star
-      final glowPaint = Paint()
-        ..color = faceColor.withOpacity(0.45)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-
-      // Solid face
-      final facePaint = Paint()
-        ..color = faceColor
-        ..style = PaintingStyle.fill;
-
-      // Thin bright edge highlight
-      final edgePaint = Paint()
-        ..color = Colors.white.withOpacity(0.7)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.6;
-
-      final dR = starRadius * 0.9;   // outer tip radius of diamond star
-      final dInner = dR * 0.22;      // inner notch radius (sharp diamond shape)
-
-      Path _diamondPath() {
+      Path dPath() {
+        final dR     = sr * 0.92;
+        final dInner = dR * 0.22;
         final p = Path();
         for (int i = 0; i < 8; i++) {
           final r = i.isEven ? dR : dInner;
-          // 45° offset so tips point N/E/S/W (diamond orientation)
-          final a = (i * pi / 4) - pi / 4;
+          final a = (i * pi / 4) - pi / 4;   // 45° → diamond tips N/E/S/W
           final lx = r * cos(a) * scaleX;
           final ly = r * sin(a);
-          if (i == 0) p.moveTo(lx, ly); else p.lineTo(lx, ly);
+          if (i == 0) { p.moveTo(lx, ly); } else { p.lineTo(lx, ly); }
         }
         p.close();
         return p;
       }
 
       canvas.save();
-      canvas.translate(starCx, starCy);   // centre on existing star position
+      canvas.translate(starX, starY);
 
-      canvas.drawPath(_diamondPath(), glowPaint);
-      canvas.drawPath(_diamondPath(), facePaint);
-      canvas.drawPath(_diamondPath(), edgePaint);
+      // Outer glow halo
+      canvas.drawPath(dPath(), Paint()
+        ..color = bright.withOpacity(0.55)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7));
+      // Solid face
+      canvas.drawPath(dPath(), Paint()
+        ..color = bright
+        ..style = PaintingStyle.fill);
+      // Crisp bright edge
+      canvas.drawPath(dPath(), Paint()
+        ..color = Colors.white.withOpacity(0.65)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8);
 
       canvas.restore();
     }
   }
 
   @override
-  bool shouldRepaint(AlgerianFlagPainter oldDelegate) => true;
-}
-
-// ============================================
-// ROTATING STAR OVERLAY (drawn on top of flag image)
-// ============================================
-class _StarOverlayPainter extends CustomPainter {
-  final double starPhase;
-  _StarOverlayPainter(this.starPhase);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const crescentRadius = 18.0;
-    const starRadius = 10.0;
-    final starCx = size.width / 2 - crescentRadius * 0.3;
-    final starCy = size.height / 2;
-
-    final cosY = cos(starPhase);
-    final isGreenFace = cosY >= 0;
-    final scaleX = cosY.abs().clamp(0.05, 1.0);
-
-    final faceColor = isGreenFace
-        ? const Color(0xFF00D4FF)
-        : const Color(0xFFFF1C35);
-
-    final glowPaint = Paint()
-      ..color = faceColor.withOpacity(0.45)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-
-    final facePaint = Paint()
-      ..color = faceColor
-      ..style = PaintingStyle.fill;
-
-    final edgePaint = Paint()
-      ..color = Colors.white.withOpacity(0.7)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.6;
-
-    const dR = starRadius * 0.9;
-    const dInner = dR * 0.22;
-
-    Path diamondPath() {
-      final p = Path();
-      for (int i = 0; i < 8; i++) {
-        final r = i.isEven ? dR : dInner;
-        final a = (i * pi / 4) - pi / 4;
-        final lx = r * cos(a) * scaleX;
-        final ly = r * sin(a);
-        if (i == 0) p.moveTo(lx, ly); else p.lineTo(lx, ly);
-      }
-      p.close();
-      return p;
-    }
-
-    canvas.save();
-    canvas.translate(starCx, starCy);
-    canvas.drawPath(diamondPath(), glowPaint);
-    canvas.drawPath(diamondPath(), facePaint);
-    canvas.drawPath(diamondPath(), edgePaint);
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_StarOverlayPainter oldDelegate) => true;
+  bool shouldRepaint(AlgerianFlagPainter old) => true;
 }

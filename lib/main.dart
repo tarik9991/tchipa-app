@@ -24,12 +24,16 @@ class CartItem {
   final String image;
   final double priceUSD;
   int quantity;
+  final String productId; // AliExpress numeric product ID, or '0' if unknown
+  final String variantId; // SKU ID from AliExpress, or '0' if no variant
 
   CartItem({
     required this.name,
     required this.image,
     required this.priceUSD,
     this.quantity = 1,
+    this.productId = '0',
+    this.variantId = '0',
   });
 
   double get lineUSDT => priceUSD * 1.10 * quantity;
@@ -40,6 +44,8 @@ class CartItem {
         'image': image,
         'priceUSD': priceUSD,
         'quantity': quantity,
+        'productId': productId,
+        'variantId': variantId,
       };
 
   factory CartItem.fromJson(Map<String, dynamic> j) => CartItem(
@@ -47,6 +53,8 @@ class CartItem {
         image: j['image'] as String,
         priceUSD: (j['priceUSD'] as num).toDouble(),
         quantity: (j['quantity'] as num?)?.toInt() ?? 1,
+        productId: j['productId']?.toString() ?? '0',
+        variantId: j['variantId']?.toString() ?? '0',
       );
 }
 
@@ -81,9 +89,13 @@ class Cart {
   }
 
   static void add(CartItem newItem) {
-    // Match on name + image so different variants (colors/sizes) are separate entries
-    final idx = items.indexWhere(
-        (i) => i.name == newItem.name && i.image == newItem.image);
+    // Match on productId+variantId when available; fall back to name+image
+    final idx = (newItem.productId != '0')
+        ? items.indexWhere((i) =>
+            i.productId == newItem.productId &&
+            i.variantId == newItem.variantId)
+        : items.indexWhere(
+            (i) => i.name == newItem.name && i.image == newItem.image);
     if (idx >= 0) {
       items[idx].quantity++;
     } else {
@@ -530,6 +542,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _productImage = "";
   // Variant selections captured when user returns from ProductDetailScreen
   Map<String, String> _selectedVariants = {};
+  String _selectedProductId = '0';
+  String _selectedSkuId = '0';
 
   late AnimationController _flagController;
   late Animation<double> _flagAnimation;
@@ -674,15 +688,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                         child: QrImageView(
                           data: () {
-                            final variantParts = _selectedVariants.entries
-                                .where((e) => e.value.isNotEmpty)
-                                .map((e) => '${e.key.toUpperCase()}:${e.value}')
-                                .join('|');
-                            return "TCHIPA|$_orderID"
-                                "|${_totalUsdt.toStringAsFixed(2)}|USDT"
-                                "|NOM:${UserProfile.name}"
-                                "|TEL:${UserProfile.phone}"
-                                "${variantParts.isNotEmpty ? '|$variantParts' : ''}";
+                            // Extract product ID from URL if not already captured
+                            final prodId = (_selectedProductId != '0' &&
+                                    _selectedProductId.isNotEmpty)
+                                ? _selectedProductId
+                                : (RegExp(r'/item/(\d+)')
+                                        .firstMatch(
+                                            _linkController.text.trim())
+                                        ?.group(1) ??
+                                    '0');
+                            // Format: NP|TX_ID|PROD_ID:VAR_ID:QTY
+                            return 'NP|$_orderID|$prodId:$_selectedSkuId:1';
                           }(),
                           version: QrVersions.auto,
                           size: 180,
@@ -1053,7 +1069,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         );
         if (variants != null && mounted) {
-          setState(() => _selectedVariants = variants);
+          setState(() {
+            _selectedProductId = variants.remove('__productId__') ?? '0';
+            _selectedSkuId     = variants.remove('__skuId__')     ?? '0';
+            _selectedVariants  = variants;
+          });
         }
       },
       child: Container(
@@ -1406,11 +1426,15 @@ class _CartScreenState extends State<CartScreen> {
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: QrImageView(
-                        data: "TCHIPA|$_orderID"
-                            "|${Cart.totalUSDT.toStringAsFixed(2)}|USDT"
-                            "|${Cart.items.length}articles"
-                            "|NOM:${UserProfile.name}"
-                            "|TEL:${UserProfile.phone}",
+                        data: () {
+                          // Format: NP|TX_ID|PROD_ID:VAR_ID:QTY;PROD_ID:VAR_ID:QTY
+                          // All constituent parts are digits/alphanumeric — URI-safe.
+                          final items = Cart.items
+                              .map((i) =>
+                                  '${i.productId}:${i.variantId}:${i.quantity}')
+                              .join(';');
+                          return 'NP|$_orderID|$items';
+                        }(),
                         version: QrVersions.auto,
                         size: 200,
                         eyeStyle: const QrEyeStyle(
@@ -1728,6 +1752,8 @@ class _CartScreenState extends State<CartScreen> {
                         name: item.name,
                         image: item.image,
                         priceUSD: item.priceUSD,
+                        productId: item.productId,
+                        variantId: item.variantId,
                       )),
                       child: Container(
                         width: 32,
@@ -1975,6 +2001,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
   late double _currentPriceUSD;
   late double _currentPriceUSDT;
   late double _currentPriceDZD;
+  // IDs for QR / purchase backend
+  String _productId = '0';   // numeric AliExpress product ID
+  String _currentSkuId = '0'; // skuId of the currently selected variant
 
   // Currently displayed main image (changes when user taps a colour swatch)
   late String _displayImage;
@@ -1991,6 +2020,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
     _currentPriceUSDT = widget.priceUSDT;
     _currentPriceDZD  = widget.priceDZD;
     _displayImage = widget.productImage;
+
+    // Extract numeric product ID from the AliExpress URL (e.g. /item/1005005012345678.html)
+    final idMatch = RegExp(r'/item/(\d+)').firstMatch(widget.productUrl);
+    _productId = idMatch?.group(1) ?? '0';
 
     _btnController = AnimationController(
       vsync: this,
@@ -2087,6 +2120,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
       _currentPriceUSDT = match.priceUSD * 1.10;
       _currentPriceDZD  = _currentPriceUSDT * EXCHANGE_RATE;
     }
+    _currentSkuId = match.skuId ?? '0';
   }
 
   bool get _hasVariants => _variants.isNotEmpty;
@@ -2108,6 +2142,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
       name: name,
       image: widget.productImage,
       priceUSD: _currentPriceUSD,
+      productId: _productId,
+      variantId: _currentSkuId,
     ));
 
     setState(() => _addedToCart = true);
@@ -2140,7 +2176,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
             pinned: true,
             backgroundColor: const Color(0xFF0D1117),
             leading: GestureDetector(
-              onTap: () => Navigator.pop(context, Map<String, String>.from(_selections)),
+              onTap: () => Navigator.pop(context, {
+                    ...Map<String, String>.from(_selections),
+                    '__productId__': _productId,
+                    '__skuId__': _currentSkuId,
+                  }),
               child: Container(
                 margin: const EdgeInsets.all(8),
                 decoration: BoxDecoration(

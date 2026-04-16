@@ -528,6 +528,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _orderID = "";
   String _productName = "";
   String _productImage = "";
+  // Variant selections captured when user returns from ProductDetailScreen
+  Map<String, String> _selectedVariants = {};
 
   late AnimationController _flagController;
   late Animation<double> _flagAnimation;
@@ -651,7 +653,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          _buildMiniAlgerianFlag(),
+                          _buildMiniCircuitFlag(),
                           const SizedBox(width: 10),
                           const Text(
                             "TCHIPA",
@@ -671,10 +673,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(15),
                         ),
                         child: QrImageView(
-                          data: "TCHIPA|$_orderID"
-                              "|${_totalUsdt.toStringAsFixed(2)}|USDT"
-                              "|NOM:${UserProfile.name}"
-                              "|TEL:${UserProfile.phone}",
+                          data: () {
+                            final variantParts = _selectedVariants.entries
+                                .where((e) => e.value.isNotEmpty)
+                                .map((e) => '${e.key.toUpperCase()}:${e.value}')
+                                .join('|');
+                            return "TCHIPA|$_orderID"
+                                "|${_totalUsdt.toStringAsFixed(2)}|USDT"
+                                "|NOM:${UserProfile.name}"
+                                "|TEL:${UserProfile.phone}"
+                                "${variantParts.isNotEmpty ? '|$variantParts' : ''}";
+                          }(),
                           version: QrVersions.auto,
                           size: 180,
                           eyeStyle: const QrEyeStyle(
@@ -898,18 +907,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ).animate().fadeIn(duration: 800.ms, delay: 400.ms),
         const SizedBox(height: 18),
-        // Animated Algerian flag — CustomPaint, shimmer & rotating star
+        // Animated circuit-board flag — CustomPaint, glowing PCB traces
         Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF006233).withOpacity(0.50),
+                color: const Color(0xFF00FF88).withOpacity(0.30),
                 blurRadius: 24,
                 spreadRadius: 2,
               ),
               BoxShadow(
-                color: const Color(0xFFD21034).withOpacity(0.20),
+                color: const Color(0xFF00D4FF).withOpacity(0.15),
                 blurRadius: 16,
                 spreadRadius: -2,
               ),
@@ -921,7 +930,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               animation: _flagController,
               builder: (_, __) => CustomPaint(
                 size: const Size(150, 100),
-                painter: AlgerianFlagPainter(_flagAnimation.value),
+                painter: CircuitBoardFlagPainter(_flagAnimation.value),
               ),
             ),
           ),
@@ -930,14 +939,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildMiniAlgerianFlag() {
+  Widget _buildMiniCircuitFlag() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
       child: AnimatedBuilder(
         animation: _flagController,
         builder: (_, __) => CustomPaint(
           size: const Size(50, 34),
-          painter: AlgerianFlagPainter(_flagAnimation.value, isMini: true),
+          painter: CircuitBoardFlagPainter(_flagAnimation.value, isMini: true),
         ),
       ),
     );
@@ -1029,8 +1038,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildProductCard() {
     return GestureDetector(
-      onTap: () {
-        Navigator.push(
+      onTap: () async {
+        final variants = await Navigator.push<Map<String, String>>(
           context,
           MaterialPageRoute(
             builder: (_) => ProductDetailScreen(
@@ -1043,6 +1052,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           ),
         );
+        if (variants != null && mounted) {
+          setState(() => _selectedVariants = variants);
+        }
       },
       child: Container(
         decoration: BoxDecoration(
@@ -1964,6 +1976,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
   late double _currentPriceUSDT;
   late double _currentPriceDZD;
 
+  // Currently displayed main image (changes when user taps a colour swatch)
+  late String _displayImage;
+
   // Prop names that AliExpress uses for the colour dimension
   static const _colorPropNames = {
     'Color', 'color', 'Colour', 'colour', 'Couleur',
@@ -1975,6 +1990,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
     _currentPriceUSD  = widget.priceUSD;
     _currentPriceUSDT = widget.priceUSDT;
     _currentPriceDZD  = widget.priceDZD;
+    _displayImage = widget.productImage;
 
     _btnController = AnimationController(
       vsync: this,
@@ -2124,7 +2140,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
             pinned: true,
             backgroundColor: const Color(0xFF0D1117),
             leading: GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: () => Navigator.pop(context, Map<String, String>.from(_selections)),
               child: Container(
                 margin: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -2135,14 +2151,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
               ),
             ),
             flexibleSpace: FlexibleSpaceBar(
-              background: widget.productImage.isNotEmpty
+              background: _displayImage.isNotEmpty
                   ? Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.network(
-                          widget.productImage,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 280),
+                          child: Image.network(
+                            _displayImage,
+                            key: ValueKey(_displayImage),
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                          ),
                         ),
                         Positioned(
                           bottom: 0, left: 0, right: 0, height: 120,
@@ -2392,6 +2414,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen>
               _selections[prop.name] = val;
               _addedToCart = false;
               _syncPrice();
+              // Update the hero image to the tapped colour's thumbnail
+              final variantImg = _valueImages['${prop.name}::$val'];
+              if (variantImg != null && variantImg.isNotEmpty) {
+                _displayImage = variantImg;
+              }
             }),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
@@ -2887,127 +2914,272 @@ class _ProfileScreenState extends State<ProfileScreen> {
 }
 
 // ============================================
-// DRAPEAU ALGÉRIEN ANIMÉ — CustomPaint
+// CIRCUIT BOARD FLAG — CustomPaint
 // ============================================
-class AlgerianFlagPainter extends CustomPainter {
-  /// Drives shimmer sweep + rotating diamond star (0 → 2π).
+//
+// Animated PCB-style flag: dark green substrate, glowing copper traces,
+// solder pads, two IC chips, and traveling signal electrons.
+// `phase` (0 → 2π) drives all animations.
+class CircuitBoardFlagPainter extends CustomPainter {
   final double phase;
   final bool isMini;
 
-  AlgerianFlagPainter(this.phase, {this.isMini = false});
+  CircuitBoardFlagPainter(this.phase, {this.isMini = false});
+
+  // Normalised [x1,y1, x2,y2] trace segments (0..1)
+  static const List<List<double>> _segs = [
+    // ── Horizontals ──
+    [0.00, 0.17, 1.00, 0.17],
+    [0.00, 0.50, 0.42, 0.50],
+    [0.58, 0.50, 1.00, 0.50],
+    [0.00, 0.83, 1.00, 0.83],
+    [0.15, 0.33, 0.50, 0.33],
+    [0.50, 0.67, 0.85, 0.67],
+    [0.25, 0.17, 0.25, 0.33],  // short V
+    [0.75, 0.67, 0.75, 0.83],  // short V
+    // ── Verticals ──
+    [0.15, 0.00, 0.15, 1.00],
+    [0.85, 0.00, 0.85, 1.00],
+    [0.50, 0.00, 0.50, 0.33],
+    [0.50, 0.67, 0.50, 1.00],
+    [0.35, 0.17, 0.35, 0.83],
+    [0.65, 0.17, 0.65, 0.83],
+  ];
+
+  // Normalised pad positions [x,y]
+  static const List<List<double>> _pads = [
+    [0.15, 0.17], [0.35, 0.17], [0.65, 0.17], [0.85, 0.17],
+    [0.15, 0.33], [0.25, 0.33], [0.50, 0.33],
+    [0.15, 0.50], [0.85, 0.50],
+    [0.50, 0.67], [0.75, 0.67], [0.85, 0.67],
+    [0.15, 0.83], [0.35, 0.83], [0.65, 0.83], [0.85, 0.83],
+  ];
+
+  // Two signal electron paths (list of [x,y] waypoints, normalised)
+  static const List<List<List<double>>> _signalPaths = [
+    // path A — top-left loop
+    [[0.00, 0.17], [0.15, 0.17], [0.15, 0.33], [0.25, 0.33],
+     [0.25, 0.17], [0.50, 0.17], [0.50, 0.33], [0.35, 0.33],
+     [0.35, 0.83], [0.15, 0.83], [0.15, 0.50], [0.00, 0.50]],
+    // path B — right side
+    [[1.00, 0.17], [0.85, 0.17], [0.85, 0.50], [0.65, 0.50],
+     [0.65, 0.67], [0.75, 0.67], [0.75, 0.83], [0.85, 0.83],
+     [0.85, 1.00]],
+  ];
 
   @override
   void paint(Canvas canvas, Size size) {
-    final w    = size.width;
-    final h    = size.height;
-    final halfW = w / 2;
-    final cx   = halfW;
-    final cy   = h / 2;
+    final w = size.width;
+    final h = size.height;
 
-    // ── 1. Green left half ──────────────────────────────────────────────
+    // ── 1. PCB substrate ───────────────────────────────────────────────
     canvas.drawRect(
-      Rect.fromLTWH(0, 0, halfW, h),
-      Paint()..color = const Color(0xFF006233),
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()..color = const Color(0xFF061206),
     );
 
-    // ── 2. White right half ─────────────────────────────────────────────
-    canvas.drawRect(
-      Rect.fromLTWH(halfW, 0, halfW, h),
-      Paint()..color = Colors.white,
-    );
-
-    // ── 3. Shimmer sweep (full-flag highlight, skipped on mini) ─────────
+    // Subtle grid (full size only)
     if (!isMini) {
-      final progress = (sin(phase * 0.55) + 1) / 2;         // 0..1
-      final shimX    = progress * (w + 80) - 40;            // px, -40..w+40
-      final rect     = Rect.fromLTWH(0, 0, w, h);
-      final toAlign  = (double px) => (px / w) * 2 - 1;     // px → -1..1
-
-      final shimShader = LinearGradient(
-        begin: Alignment(toAlign(shimX - 40), -1),
-        end:   Alignment(toAlign(shimX + 40),  1),
-        colors: [
-          Colors.white.withOpacity(0),
-          Colors.white.withOpacity(0.20),
-          Colors.white.withOpacity(0),
-        ],
-      ).createShader(rect);
-      canvas.drawRect(rect, Paint()..shader = shimShader);
-    }
-
-    // ── 4. Red crescent (straddles centre, opens right) ─────────────────
-    final cr   = isMini ? 6.0  : 20.0;
-    final cOff = isMini ? 1.6  :  5.5;   // inner-circle offset rightward
-    final crescentPath = Path()
-      ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: cr))
-      ..addOval(Rect.fromCircle(
-          center: Offset(cx + cOff, cy), radius: cr * 0.72))
-      ..fillType = PathFillType.evenOdd;
-    canvas.drawPath(crescentPath, Paint()..color = const Color(0xFFD21034));
-
-    // ── 5. Static 5-pointed red star — on the WHITE (right) half ────────
-    final sr    = isMini ? 3.2  : 11.0;
-    final starX = cx + cr * 0.55;   // clearly right of centre → white side
-    final starY = cy;
-
-    final starPath = Path();
-    for (int i = 0; i < 10; i++) {
-      final r = i.isEven ? sr : sr * 0.40;
-      final a = (i * pi / 5) - pi / 2;
-      final px = starX + r * cos(a);
-      final py = starY + r * sin(a);
-      if (i == 0) { starPath.moveTo(px, py); } else { starPath.lineTo(px, py); }
-    }
-    starPath.close();
-    canvas.drawPath(starPath,
-        Paint()
-          ..color = const Color(0xFFD21034)
-          ..style = PaintingStyle.fill);
-
-    // ── 6. Rotating glowing diamond star overlay (skipped on mini) ──────
-    if (!isMini) {
-      final cosA   = cos(phase);
-      final scaleX = cosA.abs().clamp(0.05, 1.0);
-      final bright = cosA >= 0
-          ? const Color(0xFFFF3355)   // warm bright red (front face)
-          : const Color(0xFFD21034);  // standard red   (back face)
-
-      Path dPath() {
-        final dR     = sr * 0.92;
-        final dInner = dR * 0.22;
-        final p = Path();
-        for (int i = 0; i < 8; i++) {
-          final r = i.isEven ? dR : dInner;
-          final a = (i * pi / 4) - pi / 4;   // 45° → diamond tips N/E/S/W
-          final lx = r * cos(a) * scaleX;
-          final ly = r * sin(a);
-          if (i == 0) { p.moveTo(lx, ly); } else { p.lineTo(lx, ly); }
-        }
-        p.close();
-        return p;
+      final gridPaint = Paint()
+        ..color = const Color(0xFF00FF88).withOpacity(0.05)
+        ..strokeWidth = 0.4;
+      for (double x = 0; x <= w; x += w * 0.1) {
+        canvas.drawLine(Offset(x, 0), Offset(x, h), gridPaint);
       }
+      for (double y = 0; y <= h; y += h * 0.1) {
+        canvas.drawLine(Offset(0, y), Offset(w, y), gridPaint);
+      }
+    }
 
-      canvas.save();
-      canvas.translate(starX, starY);
+    // ── 2. Pulsing glow factor ─────────────────────────────────────────
+    final glow  = (sin(phase * 1.4) + 1) * 0.5;      // 0..1
+    final glow2 = (sin(phase * 0.9 + 1.2) + 1) * 0.5; // offset pulse
 
-      // Outer glow halo
-      canvas.drawPath(dPath(), Paint()
-        ..color = bright.withOpacity(0.55)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7));
-      // Solid face
-      canvas.drawPath(dPath(), Paint()
-        ..color = bright
-        ..style = PaintingStyle.fill);
-      // Crisp bright edge
-      canvas.drawPath(dPath(), Paint()
-        ..color = Colors.white.withOpacity(0.65)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8);
+    // ── 3. Traces ──────────────────────────────────────────────────────
+    final traceAlpha = 0.40 + glow * 0.40;
+    final traceW = isMini ? 0.7 : 1.4;
 
-      canvas.restore();
+    final traceGlowPaint = Paint()
+      ..color = const Color(0xFF00FF88).withOpacity(traceAlpha * 0.35)
+      ..strokeWidth = traceW * 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5);
+
+    final tracePaint = Paint()
+      ..color = const Color(0xFF00FF88).withOpacity(traceAlpha)
+      ..strokeWidth = traceW
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    for (final s in _segs) {
+      final p1 = Offset(s[0] * w, s[1] * h);
+      final p2 = Offset(s[2] * w, s[3] * h);
+      if (!isMini) canvas.drawLine(p1, p2, traceGlowPaint);
+      canvas.drawLine(p1, p2, tracePaint);
+    }
+
+    // ── 4. Solder pads ─────────────────────────────────────────────────
+    final padR       = isMini ? 1.5 : 3.0;
+    final padAlpha   = 0.55 + glow2 * 0.35;
+
+    final padGlowP = Paint()
+      ..color = const Color(0xFF00FF88).withOpacity(0.45)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, isMini ? 2 : 5);
+    final padFillP = Paint()
+      ..color = const Color(0xFF00FF88).withOpacity(padAlpha);
+    final padRingP = Paint()
+      ..color = const Color(0xFFAAFFCC).withOpacity(0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = isMini ? 0.4 : 0.7;
+
+    for (final p in _pads) {
+      final c = Offset(p[0] * w, p[1] * h);
+      if (!isMini) canvas.drawCircle(c, padR * 2, padGlowP);
+      canvas.drawCircle(c, padR, padFillP);
+      canvas.drawCircle(c, padR, padRingP);
+    }
+
+    // ── 5. IC chips (two small chips, full-size only) ──────────────────
+    if (!isMini) {
+      _drawIC(canvas, Offset(w * 0.50, h * 0.50),
+              w * 0.14, h * 0.22, glow);
+      _drawIC(canvas, Offset(w * 0.50, h * 0.50),
+              w * 0.14, h * 0.22, glow, secondary: true);
+      // second IC, top-right area
+      _drawIC(canvas, Offset(w * 0.78, h * 0.33),
+              w * 0.10, h * 0.18, glow2);
+    }
+
+    // ── 6. Traveling signal electrons ─────────────────────────────────
+    if (!isMini) {
+      final tA = ((phase / (2 * pi)) * 1.0 % 1.0);
+      final tB = ((phase / (2 * pi)) * 0.7 + 0.5) % 1.0;
+      _drawSignal(canvas, w, h, _signalPaths[0], tA, const Color(0xFF00FFAA));
+      _drawSignal(canvas, w, h, _signalPaths[1], tB, const Color(0xFF00D4FF));
+    } else {
+      // Mini: simple pulsing dot on centre trace
+      final tM = (phase / (2 * pi)) % 1.0;
+      final dotX = tM * w;
+      final dotC = Offset(dotX, h * 0.50);
+      canvas.drawCircle(dotC, 2.2,
+          Paint()
+            ..color = const Color(0xFF00FF88).withOpacity(0.9)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
+      canvas.drawCircle(dotC, 1.0,
+          Paint()..color = Colors.white.withOpacity(0.95));
     }
   }
 
+  /// Draw a simplified IC chip outline with pins.
+  void _drawIC(
+    Canvas canvas,
+    Offset center,
+    double chipW,
+    double chipH,
+    double glow, {
+    bool secondary = false,
+  }) {
+    if (secondary) return; // only one IC at this position
+
+    final rect = Rect.fromCenter(center: center, width: chipW, height: chipH);
+    canvas.drawRect(rect, Paint()..color = const Color(0xFF0A1F0A));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = const Color(0xFF00FF88).withOpacity(0.55 + glow * 0.35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9,
+    );
+
+    // Text label "T C" in chip
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: 'TC',
+        style: TextStyle(
+          color: const Color(0xFF00FF88).withOpacity(0.50 + glow * 0.40),
+          fontSize: chipW * 0.28,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    textPainter.paint(
+      canvas,
+      center - Offset(textPainter.width / 2, textPainter.height / 2),
+    );
+
+    // Pins (left & right, 3 per side)
+    const numPins = 3;
+    final pinSpacing = chipH / (numPins + 1);
+    final pinLen = chipW * 0.18;
+    final pinPaint = Paint()
+      ..color = const Color(0xFF00FF88).withOpacity(0.55)
+      ..strokeWidth = 0.8;
+    for (int i = 0; i < numPins; i++) {
+      final py = center.dy - chipH / 2 + pinSpacing * (i + 1);
+      canvas.drawLine(
+        Offset(center.dx - chipW / 2 - pinLen, py),
+        Offset(center.dx - chipW / 2, py),
+        pinPaint,
+      );
+      canvas.drawLine(
+        Offset(center.dx + chipW / 2, py),
+        Offset(center.dx + chipW / 2 + pinLen, py),
+        pinPaint,
+      );
+    }
+  }
+
+  /// Draw an animated electron signal traveling along [path] at progress [t].
+  void _drawSignal(
+    Canvas canvas,
+    double w,
+    double h,
+    List<List<double>> path,
+    double t,
+    Color color,
+  ) {
+    if (path.length < 2) return;
+
+    // Build cumulative length table
+    final pts = path.map((p) => Offset(p[0] * w, p[1] * h)).toList();
+    final lengths = <double>[0];
+    for (int i = 1; i < pts.length; i++) {
+      lengths.add(lengths.last + (pts[i] - pts[i - 1]).distance);
+    }
+    final total = lengths.last;
+    if (total == 0) return;
+
+    // Position at progress t
+    final target = t * total;
+    int seg = 0;
+    for (int i = 1; i < lengths.length; i++) {
+      if (lengths[i] >= target) { seg = i - 1; break; }
+    }
+    seg = seg.clamp(0, pts.length - 2);
+    final segLen  = (pts[seg + 1] - pts[seg]).distance;
+    final segFrac = segLen > 0
+        ? ((target - lengths[seg]) / segLen).clamp(0.0, 1.0)
+        : 0.0;
+    final pos = Offset.lerp(pts[seg], pts[seg + 1], segFrac)!;
+
+    // Outer glow
+    canvas.drawCircle(
+      pos, 5.5,
+      Paint()
+        ..color = color.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+    // Core dot
+    canvas.drawCircle(pos, 2.2,
+        Paint()..color = color.withOpacity(0.95));
+    // Bright centre
+    canvas.drawCircle(pos, 0.8,
+        Paint()..color = Colors.white.withOpacity(0.9));
+  }
+
   @override
-  bool shouldRepaint(AlgerianFlagPainter old) => true;
+  bool shouldRepaint(CircuitBoardFlagPainter old) => true;
 }

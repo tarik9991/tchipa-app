@@ -3025,7 +3025,7 @@ class CircuitBoardFlagPainter extends CustomPainter {
 
     final padGlowP = Paint()
       ..color = const Color(0xFF00FF88).withOpacity(0.45)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, isMini ? 2 : 5);
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, isMini ? 2 : 5);
     final padFillP = Paint()
       ..color = const Color(0xFF00FF88).withOpacity(padAlpha);
     final padRingP = Paint()

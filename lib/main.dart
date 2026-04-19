@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 // ============================================
 // CONFIGURATION
@@ -787,6 +788,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  double _parseImportedPrice(String raw) {
+    final match = RegExp(r'[\d]+(?:[.,]\d+)?').firstMatch(raw.replaceAll(',', '.'));
+    return match != null ? double.tryParse(match.group(0)!) ?? 0.0 : 0.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1045,6 +1051,68 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
               prefixIcon:
                   const Icon(Icons.attach_money, color: Color(0xFF00D4FF)),
+            ),
+          ),
+          const SizedBox(height: 15),
+          GestureDetector(
+            onTap: () async {
+              final result = await Navigator.push<Map<String, dynamic>>(
+                context,
+                MaterialPageRoute(builder: (_) => const ImportWebViewScreen()),
+              );
+              if (result != null && mounted) {
+                final name = result['name']?.toString() ?? 'Produit importé';
+                final priceRaw = result['price']?.toString() ?? '0';
+                final priceUSD = _parseImportedPrice(priceRaw);
+                final variants = result['variants'];
+                String variantLabel = '';
+                if (variants is List && variants.isNotEmpty) {
+                  variantLabel = variants
+                      .map((v) => '${v['label']}: ${v['value']}')
+                      .join(', ');
+                }
+                final fullName =
+                    variantLabel.isNotEmpty ? '$name — $variantLabel' : name;
+                Cart.add(CartItem(
+                  name: fullName,
+                  image: '',
+                  priceUSD: priceUSD,
+                ));
+                _showToast('✓ Produit ajouté au panier');
+              }
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFF6B35), Color(0xFFFF3CAC)],
+                ),
+                borderRadius: BorderRadius.circular(15),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFF6B35).withOpacity(0.3),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.camera_alt_rounded, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text(
+                    'Importer Temu / Shein',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -3222,4 +3290,93 @@ class CircuitBoardFlagPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CircuitBoardFlagPainter old) => true;
+}
+
+// ============================================
+// IMPORT WEBVIEW — Temu / Shein screenshot importer
+// ============================================
+class ImportWebViewScreen extends StatefulWidget {
+  const ImportWebViewScreen({super.key});
+
+  @override
+  State<ImportWebViewScreen> createState() => _ImportWebViewScreenState();
+}
+
+class _ImportWebViewScreenState extends State<ImportWebViewScreen> {
+  late final WebViewController _controller;
+  bool _loading = true;
+
+  static const _importUrl = 'http://$VPS_SERVER_IP/import';
+
+  // Injected after page load: watch #result for JSON and relay via FlutterBridge
+  static const _bridgeJs = r'''
+(function() {
+  var el = document.getElementById('result');
+  if (!el) return;
+  var observer = new MutationObserver(function() {
+    var text = el.textContent.trim();
+    if (text.startsWith('{')) {
+      try { JSON.parse(text); FlutterBridge.postMessage(text); } catch(e) {}
+    }
+  });
+  observer.observe(el, { childList: true, subtree: true, characterData: true });
+})();
+''';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'FlutterBridge',
+        onMessageReceived: (msg) {
+          try {
+            final data = jsonDecode(msg.message) as Map<String, dynamic>;
+            if (!data.containsKey('error') && mounted) {
+              Navigator.pop(context, data);
+            }
+          } catch (_) {}
+        },
+      )
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) {
+          setState(() => _loading = false);
+          _controller.runJavaScript(_bridgeJs);
+        },
+      ))
+      ..loadRequest(Uri.parse(_importUrl));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0F1923),
+        foregroundColor: Colors.white,
+        title: const Text(
+          'Importer Temu / Shein',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () => _controller.reload(),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_loading)
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00D4FF)),
+            ),
+        ],
+      ),
+    );
+  }
 }

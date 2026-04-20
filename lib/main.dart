@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 // ============================================
 // CONFIGURATION
@@ -698,8 +699,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             _linkController.text.trim())
                                         ?.group(1) ??
                                     '0');
-                            // Format: NP|TX_ID|PROD_ID:VAR_ID:QTY
-                            return 'NP|$_orderID|$prodId:$_selectedSkuId:1';
+                            // Format: NP|TX_ID|TOTAL_USDT|PROD_ID:VAR_ID:QTY
+                            return 'NP|$_orderID|${_totalUsdt.toStringAsFixed(2)}|$prodId:$_selectedSkuId:1';
                           }(),
                           version: QrVersions.auto,
                           size: 180,
@@ -1501,7 +1502,7 @@ class _CartScreenState extends State<CartScreen> {
                               .map((i) =>
                                   '${i.productId}:${i.variantId}:${i.quantity}')
                               .join(';');
-                          return 'NP|$_orderID|$items';
+                          return 'NP|$_orderID|${Cart.totalUSDT.toStringAsFixed(2)}|$items';
                         }(),
                         version: QrVersions.auto,
                         size: 200,
@@ -2951,6 +2952,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ).animate().fadeIn(duration: 400.ms, delay: 200.ms),
+
+                const SizedBox(height: 16),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AgentScreen()),
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                          color: const Color(0xFF00D4FF).withOpacity(0.4)),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.qr_code_scanner_rounded,
+                            color: Color(0xFF00D4FF), size: 20),
+                        SizedBox(width: 10),
+                        Text(
+                          'Mode Agent',
+                          style: TextStyle(
+                            color: Color(0xFF00D4FF),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ).animate().fadeIn(duration: 400.ms, delay: 300.ms),
               ],
             ),
           ),
@@ -3019,6 +3053,382 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
   }
+}
+
+// ============================================
+// AGENT SCREEN — QR scanner + payment confirm
+// ============================================
+
+class _OrderScan {
+  final String orderId;
+  final double totalUsdt;
+  double get totalDzd => totalUsdt * EXCHANGE_RATE;
+
+  const _OrderScan({required this.orderId, required this.totalUsdt});
+
+  /// Parse `NP|ORDER_ID|TOTAL_USDT|...` (items segment is ignored by agent).
+  static _OrderScan? tryParse(String raw) {
+    final parts = raw.split('|');
+    if (parts.length < 3 || parts[0] != 'NP') return null;
+    final usdt = double.tryParse(parts[2]);
+    if (usdt == null) return null;
+    return _OrderScan(orderId: parts[1], totalUsdt: usdt);
+  }
+}
+
+class AgentScreen extends StatefulWidget {
+  const AgentScreen({super.key});
+
+  @override
+  State<AgentScreen> createState() => _AgentScreenState();
+}
+
+class _AgentScreenState extends State<AgentScreen> {
+  final MobileScannerController _scanner = MobileScannerController();
+
+  _OrderScan? _order;
+  bool _confirming = false;
+  bool _confirmed = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _scanner.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_order != null) return;
+    for (final barcode in capture.barcodes) {
+      final raw = barcode.rawValue ?? '';
+      final parsed = _OrderScan.tryParse(raw);
+      if (parsed != null) {
+        _scanner.stop();
+        setState(() => _order = parsed);
+        return;
+      }
+    }
+  }
+
+  Future<void> _confirmPayment() async {
+    if (_order == null) return;
+    setState(() { _confirming = true; _error = null; });
+    try {
+      final resp = await http.post(
+        Uri.parse('http://$VPS_SERVER_IP:3000/payment-confirmed'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'orderId': _order!.orderId,
+          'totalUsdt': _order!.totalUsdt,
+          'totalDzd': _order!.totalDzd,
+          'confirmedAt': DateTime.now().toIso8601String(),
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode == 200 || resp.statusCode == 201) {
+        setState(() { _confirmed = true; _confirming = false; });
+      } else {
+        setState(() {
+          _error = 'Erreur serveur (${resp.statusCode})';
+          _confirming = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Impossible de joindre le serveur';
+        _confirming = false;
+      });
+    }
+  }
+
+  void _reset() {
+    setState(() { _order = null; _confirmed = false; _error = null; });
+    _scanner.start();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0F1923),
+        foregroundColor: Colors.white,
+        title: const Text('Mode Agent',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        elevation: 0,
+      ),
+      body: _order == null ? _buildScanner() : _buildOrderCard(),
+    );
+  }
+
+  Widget _buildScanner() {
+    return Stack(
+      children: [
+        MobileScanner(controller: _scanner, onDetect: _onDetect),
+        // Dark overlay with cut-out window
+        IgnorePointer(
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _ScanOverlayPainter(),
+          ),
+        ),
+        // Instructions
+        Positioned(
+          bottom: 60,
+          left: 0, right: 0,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Scannez le QR code du client',
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOrderCard() {
+    final order = _order!;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          const SizedBox(height: 20),
+          // Success check or confirmation header
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF00D4FF).withOpacity(0.4),
+                  blurRadius: 24,
+                  spreadRadius: 4,
+                ),
+              ],
+            ),
+            child: const Icon(Icons.qr_code_2_rounded,
+                color: Colors.black, size: 36),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Commande ${order.orderId}',
+            style: const TextStyle(
+              color: Colors.white54,
+              fontSize: 13,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 32),
+          // Amount card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  const Color(0xFF00D4FF).withOpacity(0.12),
+                  const Color(0xFF8B5CF6).withOpacity(0.08),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                  color: const Color(0xFF00D4FF).withOpacity(0.25)),
+            ),
+            child: Column(
+              children: [
+                const Text(
+                  'MONTANT À ENCAISSER',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  '${order.totalUsdt.toStringAsFixed(2)} USDT',
+                  style: const TextStyle(
+                    color: Color(0xFF00D4FF),
+                    fontSize: 38,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '≈ ${order.totalDzd.toStringAsFixed(0)} DZD',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 18,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          if (_confirmed) ...[
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00FF88).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                    color: const Color(0xFF00FF88).withOpacity(0.3)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_rounded,
+                      color: Color(0xFF00FF88), size: 22),
+                  SizedBox(width: 10),
+                  Text(
+                    'Paiement confirmé',
+                    style: TextStyle(
+                      color: Color(0xFF00FF88),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextButton.icon(
+              onPressed: _reset,
+              icon: const Icon(Icons.qr_code_scanner_rounded,
+                  color: Color(0xFF00D4FF)),
+              label: const Text('Scanner un autre QR',
+                  style: TextStyle(color: Color(0xFF00D4FF))),
+            ),
+          ] else ...[
+            if (_error != null) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: Text(_error!,
+                    style: const TextStyle(color: Colors.redAccent)),
+              ),
+              const SizedBox(height: 16),
+            ],
+            // Confirm button
+            GestureDetector(
+              onTap: _confirming ? null : _confirmPayment,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00D4FF).withOpacity(0.3),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: _confirming
+                    ? const Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.black),
+                        ),
+                      )
+                    : const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_rounded,
+                              color: Colors.black, size: 22),
+                          SizedBox(width: 10),
+                          Text(
+                            'Confirmer paiement reçu',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: _reset,
+              child: const Text('Annuler',
+                  style: TextStyle(color: Colors.white38)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanOverlayPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dim = size.shortestSide * 0.65;
+    final left = (size.width - dim) / 2;
+    final top = (size.height - dim) / 2.2;
+    final rect = Rect.fromLTWH(left, top, dim, dim);
+
+    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    final inner = Path()
+      ..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
+    final overlay = Path.combine(PathOperation.difference, outer, inner);
+
+    canvas.drawPath(
+        overlay, Paint()..color = Colors.black.withOpacity(0.62));
+
+    // Corner brackets
+    const cLen = 24.0;
+    const cThick = 3.5;
+    final paint = Paint()
+      ..color = const Color(0xFF00D4FF)
+      ..strokeWidth = cThick
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    final corners = [
+      [rect.topLeft, const Offset(cLen, 0), const Offset(0, cLen)],
+      [rect.topRight, const Offset(-cLen, 0), const Offset(0, cLen)],
+      [rect.bottomLeft, const Offset(cLen, 0), const Offset(0, -cLen)],
+      [rect.bottomRight, const Offset(-cLen, 0), const Offset(0, -cLen)],
+    ];
+    for (final c in corners) {
+      final origin = c[0] as Offset;
+      canvas.drawLine(origin, origin + (c[1] as Offset), paint);
+      canvas.drawLine(origin, origin + (c[2] as Offset), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ScanOverlayPainter old) => false;
 }
 
 // ============================================

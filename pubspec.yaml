@@ -23,6 +23,7 @@ dependencies:
   image_picker: ^1.0.7
   shared_preferences: ^2.3.0
   webview_flutter: ^4.4.0
+  mobile_scanner: ^5.0.0
 
 dev_dependencies:
   flutter_test:

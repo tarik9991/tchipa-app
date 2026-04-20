@@ -10,7 +10,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 // ============================================
 // CONFIGURATION
@@ -3084,7 +3083,7 @@ class AgentScreen extends StatefulWidget {
 }
 
 class _AgentScreenState extends State<AgentScreen> {
-  final MobileScannerController _scanner = MobileScannerController();
+  final TextEditingController _inputCtrl = TextEditingController();
 
   _OrderScan? _order;
   bool _confirming = false;
@@ -3093,20 +3092,18 @@ class _AgentScreenState extends State<AgentScreen> {
 
   @override
   void dispose() {
-    _scanner.dispose();
+    _inputCtrl.dispose();
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    if (_order != null) return;
-    for (final barcode in capture.barcodes) {
-      final raw = barcode.rawValue ?? '';
-      final parsed = _OrderScan.tryParse(raw);
-      if (parsed != null) {
-        _scanner.stop();
-        setState(() => _order = parsed);
-        return;
-      }
+  void _submit() {
+    final raw = _inputCtrl.text.trim();
+    if (raw.isEmpty) return;
+    final parsed = _OrderScan.tryParse(raw);
+    if (parsed != null) {
+      setState(() { _order = parsed; _error = null; });
+    } else {
+      setState(() => _error = 'Format invalide. Collez le texte complet du QR.');
     }
   }
 
@@ -3142,8 +3139,8 @@ class _AgentScreenState extends State<AgentScreen> {
   }
 
   void _reset() {
+    _inputCtrl.clear();
     setState(() { _order = null; _confirmed = false; _error = null; });
-    _scanner.start();
   }
 
   @override
@@ -3158,40 +3155,89 @@ class _AgentScreenState extends State<AgentScreen> {
         centerTitle: true,
         elevation: 0,
       ),
-      body: _order == null ? _buildScanner() : _buildOrderCard(),
+      body: _order == null ? _buildInput() : _buildOrderCard(),
     );
   }
 
-  Widget _buildScanner() {
-    return Stack(
-      children: [
-        MobileScanner(controller: _scanner, onDetect: _onDetect),
-        // Dark overlay with cut-out window
-        IgnorePointer(
-          child: CustomPaint(
-            size: Size.infinite,
-            painter: _ScanOverlayPainter(),
+  Widget _buildInput() {
+    return Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 32),
+          const Icon(Icons.assignment_outlined,
+              color: Color(0xFF00D4FF), size: 48),
+          const SizedBox(height: 20),
+          const Text(
+            'ENTRER L\'ID DE COMMANDE',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        // Instructions
-        Positioned(
-          bottom: 60,
-          left: 0, right: 0,
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(20),
+          const SizedBox(height: 28),
+          TextField(
+            controller: _inputCtrl,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Collez le texte du QR (NP|ID|total|…)',
+              hintStyle: const TextStyle(color: Colors.white30),
+              filled: true,
+              fillColor: const Color(0xFF1A2332),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
               ),
-              child: const Text(
-                'Scannez le QR code du client',
-                style: TextStyle(color: Colors.white70, fontSize: 14),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFF00D4FF)),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 18, vertical: 16),
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          ],
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: _submit,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.search_rounded, color: Colors.black, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    'Rechercher la commande',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -3219,7 +3265,7 @@ class _AgentScreenState extends State<AgentScreen> {
                 ),
               ],
             ),
-            child: const Icon(Icons.qr_code_2_rounded,
+            child: const Icon(Icons.assignment_turned_in_rounded,
                 color: Colors.black, size: 36),
           ),
           const SizedBox(height: 20),
@@ -3310,9 +3356,9 @@ class _AgentScreenState extends State<AgentScreen> {
             const SizedBox(height: 20),
             TextButton.icon(
               onPressed: _reset,
-              icon: const Icon(Icons.qr_code_scanner_rounded,
+              icon: const Icon(Icons.add_circle_outline_rounded,
                   color: Color(0xFF00D4FF)),
-              label: const Text('Scanner un autre QR',
+              label: const Text('Nouvelle commande',
                   style: TextStyle(color: Color(0xFF00D4FF))),
             ),
           ] else ...[
@@ -3389,47 +3435,6 @@ class _AgentScreenState extends State<AgentScreen> {
   }
 }
 
-class _ScanOverlayPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final dim = size.shortestSide * 0.65;
-    final left = (size.width - dim) / 2;
-    final top = (size.height - dim) / 2.2;
-    final rect = Rect.fromLTWH(left, top, dim, dim);
-
-    final outer = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final inner = Path()
-      ..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)));
-    final overlay = Path.combine(PathOperation.difference, outer, inner);
-
-    canvas.drawPath(
-        overlay, Paint()..color = Colors.black.withOpacity(0.62));
-
-    // Corner brackets
-    const cLen = 24.0;
-    const cThick = 3.5;
-    final paint = Paint()
-      ..color = const Color(0xFF00D4FF)
-      ..strokeWidth = cThick
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    final corners = [
-      [rect.topLeft, const Offset(cLen, 0), const Offset(0, cLen)],
-      [rect.topRight, const Offset(-cLen, 0), const Offset(0, cLen)],
-      [rect.bottomLeft, const Offset(cLen, 0), const Offset(0, -cLen)],
-      [rect.bottomRight, const Offset(-cLen, 0), const Offset(0, -cLen)],
-    ];
-    for (final c in corners) {
-      final origin = c[0] as Offset;
-      canvas.drawLine(origin, origin + (c[1] as Offset), paint);
-      canvas.drawLine(origin, origin + (c[2] as Offset), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_ScanOverlayPainter old) => false;
-}
 
 // ============================================
 // CIRCUIT BOARD FLAG — CustomPaint

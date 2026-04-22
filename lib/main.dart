@@ -3710,57 +3710,66 @@ class CircuitBoardFlagPainter extends CustomPainter {
 // ============================================
 // IMPORT WEBVIEW — Temu / Shein screenshot importer
 // ============================================
-class ImportWebViewScreen extends StatefulWidget {
+class ImportWebViewScreen extends StatelessWidget {
   const ImportWebViewScreen({super.key});
-
   @override
-  State<ImportWebViewScreen> createState() => _ImportWebViewScreenState();
+  Widget build(BuildContext context) => const CheckProductScreen();
 }
 
-class _ImportWebViewScreenState extends State<ImportWebViewScreen> {
-  late final WebViewController _controller;
-  bool _loading = true;
+class CheckProductScreen extends StatefulWidget {
+  const CheckProductScreen({super.key});
+  @override
+  State<CheckProductScreen> createState() => _CheckProductScreenState();
+}
 
-  static const _importUrl = 'http://$VPS_SERVER_IP/import';
+class _CheckProductScreenState extends State<CheckProductScreen> {
+  final _urlController = TextEditingController();
+  bool _loading = false;
+  String? _error;
+  Map<String, dynamic>? _product;
 
-  // Injected after page load: watch #result for JSON and relay via FlutterBridge
-  static const _bridgeJs = r'''
-(function() {
-  var el = document.getElementById('result');
-  if (!el) return;
-  var observer = new MutationObserver(function() {
-    var text = el.textContent.trim();
-    if (text.startsWith('{')) {
-      try { JSON.parse(text); FlutterBridge.postMessage(text); } catch(e) {}
-    }
-  });
-  observer.observe(el, { childList: true, subtree: true, characterData: true });
-})();
-''';
+  static const _endpoint =
+      'http://$VPS_SERVER_IP:3000/check-product';
 
   @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..addJavaScriptChannel(
-        'FlutterBridge',
-        onMessageReceived: (msg) {
-          try {
-            final data = jsonDecode(msg.message) as Map<String, dynamic>;
-            if (!data.containsKey('error') && mounted) {
-              Navigator.pop(context, data);
-            }
-          } catch (_) {}
-        },
-      )
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) {
-          setState(() => _loading = false);
-          _controller.runJavaScript(_bridgeJs);
-        },
-      ))
-      ..loadRequest(Uri.parse(_importUrl));
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _check() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) return;
+    setState(() { _loading = true; _error = null; _product = null; });
+    try {
+      final res = await http.post(
+        Uri.parse(_endpoint),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'url': url}),
+      ).timeout(const Duration(seconds: 90));
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode == 200 && body['name'] != null) {
+        setState(() => _product = body);
+      } else {
+        setState(() => _error = body['message']?.toString() ??
+            body['error']?.toString() ?? 'Produit introuvable');
+      }
+    } catch (e) {
+      setState(() => _error = 'Erreur de connexion: ${e.toString().split('\n').first}');
+    } finally {
+      setState(() => _loading = false);
+    }
+  }
+
+  void _addToCart() {
+    if (_product == null) return;
+    Navigator.pop(context, {
+      'name': _product!['name'] ?? 'Produit importé',
+      'price': _product!['price']?.toString() ?? '0',
+      'image_url': _product!['image_url'] ?? '',
+      'variants': <dynamic>[],
+    });
   }
 
   @override
@@ -3771,25 +3780,282 @@ class _ImportWebViewScreenState extends State<ImportWebViewScreen> {
         backgroundColor: const Color(0xFF0F1923),
         foregroundColor: Colors.white,
         title: const Text(
-          'Importer Temu / Shein',
+          'Vérifier un produit',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => _controller.reload(),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── URL field ──
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: TextField(
+                controller: _urlController,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                decoration: InputDecoration(
+                  hintText: 'Coller un lien Temu / AliExpress / Shein…',
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 13),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  suffixIcon: _urlController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
+                          onPressed: () => setState(() { _urlController.clear(); _product = null; _error = null; }),
+                        )
+                      : null,
+                ),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) => _check(),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // ── Check button ──
+            GestureDetector(
+              onTap: _loading ? null : _check,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00D4FF).withOpacity(0.25),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: _loading
+                      ? const SizedBox(
+                          height: 20, width: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2,
+                          ),
+                        )
+                      : const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.search_rounded, color: Colors.white, size: 18),
+                            SizedBox(width: 8),
+                            Text(
+                              'Vérifier le produit',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            ),
+
+            // ── Error ──
+            if (_error != null) ...[
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(_error!,
+                          style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // ── Product card ──
+            if (_product != null) ...[
+              const SizedBox(height: 24),
+              _ProductResultCard(
+                product: _product!,
+                onAddToCart: _addToCart,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductResultCard extends StatelessWidget {
+  const _ProductResultCard({required this.product, required this.onAddToCart});
+  final Map<String, dynamic> product;
+  final VoidCallback onAddToCart;
+
+  @override
+  Widget build(BuildContext context) {
+    final name      = product['name']?.toString() ?? 'Produit';
+    final priceUSD  = (product['price'] as num?)?.toDouble() ?? 0.0;
+    final priceUSDT = priceUSD * 1.10;
+    final priceDZD  = priceUSDT * EXCHANGE_RATE;
+    final currency  = product['currency']?.toString() ?? 'USD';
+    final imageUrl  = product['image_url']?.toString() ?? '';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Image
+          if (imageUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              child: Image.network(
+                imageUrl,
+                height: 200,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  height: 100,
+                  color: Colors.white.withOpacity(0.04),
+                  child: const Icon(Icons.image_not_supported_rounded,
+                      color: Colors.white24, size: 40),
+                ),
+              ),
+            ),
+
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Name
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    height: 1.4,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 14),
+
+                // Price row
+                Row(
+                  children: [
+                    _PriceBadge(
+                      label: currency,
+                      value: priceUSD.toStringAsFixed(2),
+                      color: Colors.white24,
+                    ),
+                    const SizedBox(width: 10),
+                    _PriceBadge(
+                      label: 'USDT',
+                      value: priceUSDT.toStringAsFixed(2),
+                      color: const Color(0xFF00D4FF),
+                      highlight: true,
+                    ),
+                    const SizedBox(width: 10),
+                    _PriceBadge(
+                      label: 'DZD',
+                      value: priceDZD.toStringAsFixed(0),
+                      color: const Color(0xFF8B5CF6),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Add to cart
+                GestureDetector(
+                  onTap: onAddToCart,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF6B35), Color(0xFFFF3CAC)],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_shopping_cart_rounded,
+                            color: Colors.white, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'Ajouter au panier',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
-      body: Stack(
+    ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.15);
+  }
+}
+
+class _PriceBadge extends StatelessWidget {
+  const _PriceBadge({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.highlight = false,
+  });
+  final String label;
+  final String value;
+  final Color color;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(highlight ? 0.15 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(highlight ? 0.5 : 0.2)),
+      ),
+      child: Column(
         children: [
-          WebViewWidget(controller: _controller),
-          if (_loading)
-            const Center(
-              child: CircularProgressIndicator(color: Color(0xFF00D4FF)),
-            ),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value,
+              style: TextStyle(
+                  color: highlight ? color : Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold)),
         ],
       ),
     );

@@ -3,174 +3,266 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Product Import — Gemini Vision</title>
+  <title>Import Product</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
       font-family: system-ui, -apple-system, sans-serif;
       background: #0f172a; color: #e2e8f0;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem;
+      min-height: 100vh; display: flex;
+      align-items: center; justify-content: center; padding: 1.5rem;
     }
-    .card {
-      background: #1e293b; border: 1px solid #334155;
-      border-radius: 1rem; padding: 2rem; width: 100%; max-width: 540px;
-      box-shadow: 0 25px 50px rgba(0,0,0,.4);
+
+    /* ── upload screen ── */
+    #screen-upload {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      width: 100%; max-width: 400px; gap: 1rem;
     }
-    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: .25rem; color: #f1f5f9; }
-    p.sub { font-size: .85rem; color: #94a3b8; margin-bottom: 1.75rem; }
-    label { display: block; font-size: .8rem; font-weight: 600; color: #94a3b8;
-            letter-spacing: .05em; text-transform: uppercase; margin-bottom: .35rem; }
-    input[type="text"], input[type="url"] {
-      width: 100%; padding: .65rem .85rem; background: #0f172a;
-      border: 1px solid #334155; border-radius: .5rem; color: #e2e8f0;
-      font-size: .95rem; outline: none; transition: border-color .2s;
+    #drop-zone {
+      width: 100%; aspect-ratio: 1 / 1; max-height: 340px;
+      border: 2px dashed #334155; border-radius: 1.25rem;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: .75rem;
+      cursor: pointer; transition: border-color .2s, background .2s;
+      position: relative;
     }
-    input:focus { border-color: #6366f1; }
-    .file-zone {
-      margin-top: 1.25rem; border: 2px dashed #334155; border-radius: .75rem;
-      padding: 1.5rem; text-align: center; cursor: pointer;
-      transition: border-color .2s, background .2s; position: relative;
-    }
-    .file-zone:hover, .file-zone.drag { border-color: #6366f1; background: #1a2540; }
-    .file-zone input[type="file"] {
+    #drop-zone:hover, #drop-zone.drag { border-color: #6366f1; background: #1a2540; }
+    #drop-zone input[type="file"] {
       position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
     }
-    .file-zone .icon { font-size: 2rem; margin-bottom: .5rem; }
-    .file-zone .hint { font-size: .85rem; color: #64748b; }
-    #preview { max-width: 100%; max-height: 220px; border-radius: .5rem;
-               margin-top: 1rem; display: none; border: 1px solid #334155; }
-    button[type="submit"] {
-      margin-top: 1.5rem; width: 100%; padding: .75rem;
-      background: #6366f1; border: none; border-radius: .5rem;
-      color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
-      transition: background .2s; display: flex; align-items: center; justify-content: center; gap: .5rem;
-    }
-    button[type="submit"]:hover { background: #4f46e5; }
-    button[type="submit"]:disabled { background: #334155; cursor: not-allowed; }
-    #result-box {
-      margin-top: 1.5rem; display: none; background: #0f172a;
-      border: 1px solid #334155; border-radius: .75rem; overflow: hidden;
-    }
-    #result-box .bar {
-      background: #1e293b; padding: .5rem 1rem; display: flex;
-      align-items: center; justify-content: space-between; border-bottom: 1px solid #334155;
-      font-size: .8rem; font-weight: 600; color: #94a3b8;
-    }
-    #result-box .bar .status { color: #4ade80; }
-    #result-box .bar .status.err { color: #f87171; }
-    pre#result {
-      padding: 1rem; font-size: .82rem; overflow-x: auto;
-      white-space: pre-wrap; word-break: break-word; color: #a5f3fc;
+    #drop-zone svg { color: #475569; }
+    #drop-zone .label { font-size: 1.1rem; font-weight: 600; color: #94a3b8; }
+    #drop-zone .hint  { font-size: .8rem; color: #475569; }
+
+    /* ── analysing screen ── */
+    #screen-loading {
+      display: none; flex-direction: column;
+      align-items: center; gap: 1.25rem; text-align: center;
     }
     .spinner {
-      width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.3);
-      border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+      width: 52px; height: 52px;
+      border: 4px solid #1e293b; border-top-color: #6366f1;
+      border-radius: 50%; animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    #screen-loading .msg { font-size: 1rem; color: #94a3b8; }
+    #thumb {
+      width: 100px; height: 100px; object-fit: cover;
+      border-radius: .75rem; border: 1px solid #334155; display: none;
+    }
+
+    /* ── result screen ── */
+    #screen-result {
+      display: none; flex-direction: column;
+      width: 100%; max-width: 400px; gap: 1rem;
+    }
+    .result-card {
+      background: #1e293b; border: 1px solid #334155;
+      border-radius: 1rem; padding: 1.25rem; display: flex; flex-direction: column; gap: .85rem;
+    }
+    .field-row { display: flex; flex-direction: column; gap: .2rem; }
+    .field-row .key {
+      font-size: .7rem; font-weight: 700; color: #64748b;
+      letter-spacing: .07em; text-transform: uppercase;
+    }
+    .field-row .val { font-size: .95rem; color: #e2e8f0; word-break: break-word; }
+    .field-row .val.empty { color: #475569; font-style: italic; }
+    .tag-list { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .15rem; }
+    .tag {
+      background: #0f172a; border: 1px solid #334155;
+      border-radius: .35rem; padding: .2rem .55rem;
+      font-size: .8rem; color: #a5b4fc;
+    }
+
+    .btn-confirm {
+      width: 100%; padding: .8rem;
+      background: #22c55e; border: none; border-radius: .75rem;
+      color: #fff; font-size: 1rem; font-weight: 700;
+      cursor: pointer; transition: background .2s;
+    }
+    .btn-confirm:hover { background: #16a34a; }
+
+    .btn-retry {
+      width: 100%; padding: .65rem;
+      background: none; border: 1px solid #334155; border-radius: .75rem;
+      color: #64748b; font-size: .875rem;
+      cursor: pointer; transition: border-color .2s, color .2s;
+    }
+    .btn-retry:hover { border-color: #6366f1; color: #a5b4fc; }
+
+    /* ── error banner ── */
+    #error-box {
+      display: none; background: #2d1515; border: 1px solid #7f1d1d;
+      border-radius: .75rem; padding: .85rem 1rem;
+      font-size: .82rem; color: #fca5a5; word-break: break-word;
+    }
   </style>
 </head>
 <body>
-<div class="card">
-  <h1>Product Importer</h1>
-  <p class="sub">Upload a product screenshot &mdash; Gemini Vision extracts name, variants &amp; price.</p>
 
-  <form id="form" enctype="multipart/form-data">
-    <div style="margin-bottom:1.25rem">
-      <label for="url">Product URL (optional)</label>
-      <input type="url" id="url" name="url" placeholder="https://example.com/product/..." />
-    </div>
-
-    <label>Screenshot</label>
-    <div class="file-zone" id="drop-zone">
-      <input type="file" name="screenshot" id="file" accept="image/*" required />
-      <div class="icon">🖼️</div>
-      <div>Drop image here or <strong>click to browse</strong></div>
-      <div class="hint">PNG, JPG, WebP up to 10 MB</div>
-    </div>
-    <img id="preview" alt="Preview" />
-
-    <button type="submit" id="btn">
-      <span id="btn-label">Extract with Gemini</span>
-    </button>
-  </form>
-
-  <div id="result-box">
-    <div class="bar">
-      <span>Result</span>
-      <span class="status" id="status-label"></span>
-    </div>
-    <pre id="result"></pre>
+<!-- SCREEN 1: upload -->
+<div id="screen-upload">
+  <div id="drop-zone">
+    <input type="file" id="file-input" accept="image/*" />
+    <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round"
+        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+    </svg>
+    <span class="label">Upload Screenshot</span>
+    <span class="hint">Tap or drop a product image</span>
   </div>
 </div>
 
+<!-- SCREEN 2: analysing -->
+<div id="screen-loading">
+  <img id="thumb" alt="" />
+  <div class="spinner"></div>
+  <div class="msg">Analysing with Gemma&nbsp;4B…</div>
+</div>
+
+<!-- SCREEN 3: result -->
+<div id="screen-result">
+  <div class="result-card" id="result-card"></div>
+  <div id="error-box"></div>
+  <button class="btn-confirm" id="btn-confirm">Confirm &amp; Add Product</button>
+  <button class="btn-retry"   id="btn-retry">Try another image</button>
+</div>
+
 <script>
-const form = document.getElementById('form');
-const fileInput = document.getElementById('file');
-const preview = document.getElementById('preview');
-const btn = document.getElementById('btn');
-const btnLabel = document.getElementById('btn-label');
-const resultBox = document.getElementById('result-box');
-const resultPre = document.getElementById('result');
-const statusLabel = document.getElementById('status-label');
-const dropZone = document.getElementById('drop-zone');
+var extracted = null;
 
-fileInput.addEventListener('change', () => {
-  const f = fileInput.files[0];
-  if (!f) return;
-  preview.src = URL.createObjectURL(f);
-  preview.style.display = 'block';
+var fileInput  = document.getElementById('file-input');
+var dropZone   = document.getElementById('drop-zone');
+var thumb      = document.getElementById('thumb');
+var resultCard = document.getElementById('result-card');
+var errorBox   = document.getElementById('error-box');
+
+var sUpload  = document.getElementById('screen-upload');
+var sLoading = document.getElementById('screen-loading');
+var sResult  = document.getElementById('screen-result');
+
+function show(screen) {
+  sUpload.style.display  = screen === 'upload'  ? 'flex' : 'none';
+  sLoading.style.display = screen === 'loading' ? 'flex' : 'none';
+  sResult.style.display  = screen === 'result'  ? 'flex' : 'none';
+}
+
+// drag highlight
+['dragover','dragenter'].forEach(function(ev) {
+  dropZone.addEventListener(ev, function(e) { e.preventDefault(); dropZone.classList.add('drag'); });
+});
+['dragleave','drop'].forEach(function(ev) {
+  dropZone.addEventListener(ev, function() { dropZone.classList.remove('drag'); });
+});
+dropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  var f = e.dataTransfer.files[0];
+  if (f) processFile(f);
 });
 
-['dragover','dragenter'].forEach(ev => dropZone.addEventListener(ev, e => {
-  e.preventDefault(); dropZone.classList.add('drag');
-}));
-['dragleave','drop'].forEach(ev => dropZone.addEventListener(ev, () => dropZone.classList.remove('drag')));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  const f = e.dataTransfer.files[0];
-  if (!f) return;
-  const dt = new DataTransfer();
-  dt.items.add(f);
-  fileInput.files = dt.files;
-  preview.src = URL.createObjectURL(f);
-  preview.style.display = 'block';
+fileInput.addEventListener('change', function() {
+  if (fileInput.files[0]) processFile(fileInput.files[0]);
 });
 
-form.addEventListener('submit', async e => {
-  e.preventDefault();
-  btn.disabled = true;
-  btnLabel.innerHTML = '';
-  const sp = document.createElement('div');
-  sp.className = 'spinner';
-  btn.appendChild(sp);
-  btn.insertAdjacentText('beforeend', ' Analysing…');
+function processFile(file) {
+  var objUrl = URL.createObjectURL(file);
+  thumb.src = objUrl;
+  thumb.style.display = 'block';
+  show('loading');
 
-  resultBox.style.display = 'none';
+  var fd = new FormData();
+  fd.append('screenshot', file, file.name);
 
-  try {
-    const fd = new FormData(form);
-    const res = await fetch('/import/extract', { method: 'POST', body: fd });
-    const json = await res.json();
-    resultBox.style.display = 'block';
-    resultPre.textContent = JSON.stringify(json, null, 2);
-    if (res.ok && !json.error) {
-      statusLabel.textContent = '✓ OK';
-      statusLabel.className = 'status';
-    } else {
-      statusLabel.textContent = '✗ Error';
-      statusLabel.className = 'status err';
-    }
-  } catch (err) {
-    resultBox.style.display = 'block';
-    resultPre.textContent = String(err);
-    statusLabel.textContent = '✗ Error';
-    statusLabel.className = 'status err';
-  } finally {
-    btn.disabled = false;
-    btn.querySelectorAll('.spinner, *').forEach(n => n.nodeType === 3 && n.remove());
-    sp.remove();
-    btnLabel.textContent = 'Extract with Gemini';
+  fetch('/import/extract', { method: 'POST', body: fd })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      extracted = data;
+      renderResult(data);
+      show('result');
+    })
+    .catch(function(err) {
+      extracted = null;
+      renderError(String(err));
+      show('result');
+    });
+}
+
+function row(key, val) {
+  var d = document.createElement('div');
+  d.className = 'field-row';
+  var k = document.createElement('div'); k.className = 'key'; k.textContent = key;
+  var v = document.createElement('div');
+  if (!val && val !== 0) {
+    v.className = 'val empty'; v.textContent = '—';
+  } else {
+    v.className = 'val'; v.textContent = val;
   }
+  d.appendChild(k); d.appendChild(v);
+  return d;
+}
+
+function renderResult(data) {
+  resultCard.innerHTML = '';
+  errorBox.style.display = 'none';
+
+  if (data.error) {
+    renderError(data.error + (data.raw ? '\n\nRaw: ' + data.raw : ''));
+    return;
+  }
+
+  resultCard.appendChild(row('Name', data.name));
+
+  var priceVal = data.price
+    ? (data.price + (data.currency ? ' ' + data.currency : ''))
+    : null;
+  resultCard.appendChild(row('Price', priceVal));
+
+  if (data.variants && data.variants.length) {
+    var d = document.createElement('div'); d.className = 'field-row';
+    var k = document.createElement('div'); k.className = 'key'; k.textContent = 'Variants';
+    var tl = document.createElement('div'); tl.className = 'tag-list';
+    data.variants.forEach(function(v) {
+      var t = document.createElement('span'); t.className = 'tag';
+      t.textContent = v.label + ': ' + v.value;
+      tl.appendChild(t);
+    });
+    d.appendChild(k); d.appendChild(tl);
+    resultCard.appendChild(d);
+  }
+
+  if (data.image_url) resultCard.appendChild(row('Image URL', data.image_url));
+  if (data.source_url) resultCard.appendChild(row('Source URL', data.source_url));
+}
+
+function renderError(msg) {
+  resultCard.innerHTML = '';
+  errorBox.style.display = 'block';
+  errorBox.textContent = msg;
+}
+
+document.getElementById('btn-confirm').addEventListener('click', function() {
+  if (!extracted || extracted.error) return;
+  var json = JSON.stringify(extracted);
+  // Signal Flutter via JS channel (flutter_inappwebview / webview_flutter)
+  if (window.ProductChannel && window.ProductChannel.postMessage) {
+    window.ProductChannel.postMessage(json);
+  } else if (window.flutter_inappwebview) {
+    window.flutter_inappwebview.callHandler('ProductChannel', json);
+  } else {
+    // Fallback: navigate to a URI Flutter can intercept
+    window.location.href = 'tchipa://product-confirmed?' + encodeURIComponent(json);
+  }
+});
+
+document.getElementById('btn-retry').addEventListener('click', function() {
+  extracted = null;
+  fileInput.value = '';
+  thumb.src = ''; thumb.style.display = 'none';
+  errorBox.style.display = 'none';
+  resultCard.innerHTML = '';
+  show('upload');
 });
 </script>
 </body>

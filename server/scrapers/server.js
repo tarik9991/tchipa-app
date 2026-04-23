@@ -196,11 +196,13 @@ function parseTemuHtml(html) {
 
 async function scrapeTemu(url) {
   const params = new URLSearchParams({
-    api_key:       SCRAPINGBEE_KEY,
-    url:           url,
-    render_js:     'true',
-    premium_proxy: 'true',
-    wait:          '8000',
+    api_key:        SCRAPINGBEE_KEY,
+    url:            url,
+    render_js:      'true',
+    stealth_proxy:  'true',
+    country_code:   'us',
+    wait:           '5000',
+    block_resources:'false',
   });
 
   console.log('[Temu/ScrapingBee] scraping:', url);
@@ -270,6 +272,74 @@ app.post('/check-product', async (req, res) => {
   } catch (err) {
     console.error('[/check-product] Error:', err.message);
     return res.status(502).json({ error: err.message, message: 'Erreur lors de la récupération du produit' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /analyze-screenshot — Ollama moondream vision
+// ---------------------------------------------------------------------------
+
+const OLLAMA_URL = 'http://127.0.0.1:32768';
+
+app.post('/analyze-screenshot', async (req, res) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: 'Missing imageBase64' });
+
+  const prompt =
+    'This is a Temu product screenshot. Extract the product name, variant (size/color/style if shown), and price. ' +
+    'Reply with ONLY a raw JSON object — no markdown, no code block, no explanation. ' +
+    'Use exactly these keys: {"name":"...","variant":"...","price":"..."}. ' +
+    'For price use only digits and a dot (e.g. "12.99"). If a field is unknown use an empty string.';
+
+  try {
+    const ollamaResp = await fetch(`${OLLAMA_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'moondream',
+        prompt,
+        images: [imageBase64],
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+
+    if (!ollamaResp.ok) {
+      const errText = await ollamaResp.text();
+      throw new Error(`Ollama ${ollamaResp.status}: ${errText.slice(0, 300)}`);
+    }
+
+    const ollamaData = await ollamaResp.json();
+    const rawText = (ollamaData.response || '').trim();
+    console.log('[/analyze-screenshot] raw model output:', rawText.slice(0, 200));
+
+    // Try to find a JSON object anywhere in the response
+    let parsed = null;
+    const jsonMatch = rawText.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+    }
+
+    // Fallback: try the whole text as JSON
+    if (!parsed) {
+      try { parsed = JSON.parse(rawText); } catch { /* fall through */ }
+    }
+
+    if (!parsed || !parsed.name) {
+      return res.status(422).json({
+        error: 'Could not extract product data from image',
+        raw: rawText.slice(0, 400),
+      });
+    }
+
+    return res.json({
+      name:    parsed.name    || '',
+      variant: parsed.variant || '',
+      price:   String(parsed.price || '').replace(/[^0-9.]/g, ''),
+    });
+  } catch (err) {
+    console.error('[/analyze-screenshot] Error:', err.message);
+    return res.status(502).json({ error: err.message });
   }
 });
 

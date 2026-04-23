@@ -1,9 +1,7 @@
 import 'dart:ui';
-import 'dart:io';
 import 'dart:math';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -1117,49 +1115,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          GestureDetector(
-            onTap: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ScreenshotScanScreen()),
-              );
-              if (mounted) setState(() {});
-            },
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF8B5CF6), Color(0xFF00D4FF)],
-                ),
-                borderRadius: BorderRadius.circular(15),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.image_search_rounded, color: Colors.white, size: 18),
-                  SizedBox(width: 8),
-                  Text(
-                    'Scanner capture Temu (IA)',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     ).animate().fadeIn(duration: 600.ms, delay: 600.ms).slideY(begin: 0.2);
@@ -1454,7 +1409,6 @@ class CartScreen extends StatefulWidget {
 
 class _CartScreenState extends State<CartScreen> {
   final ScreenshotController _screenshotController = ScreenshotController();
-  final TextEditingController _checkoutUrlCtrl = TextEditingController();
   String _orderID = "";
 
   @override
@@ -1467,7 +1421,6 @@ class _CartScreenState extends State<CartScreen> {
   @override
   void dispose() {
     Cart.removeListener(_onCartChanged);
-    _checkoutUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -1542,13 +1495,13 @@ class _CartScreenState extends State<CartScreen> {
                       ),
                       child: QrImageView(
                         data: () {
+                          // Format: NP|TX_ID|PROD_ID:VAR_ID:QTY;PROD_ID:VAR_ID:QTY
+                          // All constituent parts are digits/alphanumeric — URI-safe.
                           final items = Cart.items
                               .map((i) =>
                                   '${i.productId}:${i.variantId}:${i.quantity}')
                               .join(';');
-                          final base = 'NP|$_orderID|${Cart.totalUSDT.toStringAsFixed(2)}|$items';
-                          final url = _checkoutUrlCtrl.text.trim();
-                          return url.isNotEmpty ? '$base|$url' : base;
+                          return 'NP|$_orderID|${Cart.totalUSDT.toStringAsFixed(2)}|$items';
                         }(),
                         version: QrVersions.auto,
                         size: 200,
@@ -1984,31 +1937,7 @@ class _CartScreenState extends State<CartScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Temu checkout URL (included in QR)
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.white.withOpacity(0.08)),
-            ),
-            child: TextField(
-              controller: _checkoutUrlCtrl,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'URL paiement Temu (optionnel, inclus dans le QR)',
-                hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.3), fontSize: 12),
-                border: InputBorder.none,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                prefixIcon: const Icon(Icons.link_rounded,
-                    color: Color(0xFF00D4FF), size: 18),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 14),
           // QR Button
           GestureDetector(
             onTap: _showQrDialog,
@@ -3781,66 +3710,57 @@ class CircuitBoardFlagPainter extends CustomPainter {
 // ============================================
 // IMPORT WEBVIEW — Temu / Shein screenshot importer
 // ============================================
-class ImportWebViewScreen extends StatelessWidget {
+class ImportWebViewScreen extends StatefulWidget {
   const ImportWebViewScreen({super.key});
+
   @override
-  Widget build(BuildContext context) => const CheckProductScreen();
+  State<ImportWebViewScreen> createState() => _ImportWebViewScreenState();
 }
 
-class CheckProductScreen extends StatefulWidget {
-  const CheckProductScreen({super.key});
-  @override
-  State<CheckProductScreen> createState() => _CheckProductScreenState();
-}
+class _ImportWebViewScreenState extends State<ImportWebViewScreen> {
+  late final WebViewController _controller;
+  bool _loading = true;
 
-class _CheckProductScreenState extends State<CheckProductScreen> {
-  final _urlController = TextEditingController();
-  bool _loading = false;
-  String? _error;
-  Map<String, dynamic>? _product;
+  static const _importUrl = 'http://$VPS_SERVER_IP/import';
 
-  static const _endpoint =
-      'http://$VPS_SERVER_IP:3000/check-product';
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _check() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
-    setState(() { _loading = true; _error = null; _product = null; });
-    try {
-      final res = await http.post(
-        Uri.parse(_endpoint),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'url': url}),
-      ).timeout(const Duration(seconds: 90));
-
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      if (res.statusCode == 200 && body['name'] != null) {
-        setState(() => _product = body);
-      } else {
-        setState(() => _error = body['message']?.toString() ??
-            body['error']?.toString() ?? 'Produit introuvable');
-      }
-    } catch (e) {
-      setState(() => _error = 'Erreur de connexion: ${e.toString().split('\n').first}');
-    } finally {
-      setState(() => _loading = false);
+  // Injected after page load: watch #result for JSON and relay via FlutterBridge
+  static const _bridgeJs = r'''
+(function() {
+  var el = document.getElementById('result');
+  if (!el) return;
+  var observer = new MutationObserver(function() {
+    var text = el.textContent.trim();
+    if (text.startsWith('{')) {
+      try { JSON.parse(text); FlutterBridge.postMessage(text); } catch(e) {}
     }
-  }
+  });
+  observer.observe(el, { childList: true, subtree: true, characterData: true });
+})();
+''';
 
-  void _addToCart() {
-    if (_product == null) return;
-    Navigator.pop(context, {
-      'name': _product!['name'] ?? 'Produit importé',
-      'price': _product!['price']?.toString() ?? '0',
-      'image_url': _product!['image_url'] ?? '',
-      'variants': <dynamic>[],
-    });
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'FlutterBridge',
+        onMessageReceived: (msg) {
+          try {
+            final data = jsonDecode(msg.message) as Map<String, dynamic>;
+            if (!data.containsKey('error') && mounted) {
+              Navigator.pop(context, data);
+            }
+          } catch (_) {}
+        },
+      )
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) {
+          setState(() => _loading = false);
+          _controller.runJavaScript(_bridgeJs);
+        },
+      ))
+      ..loadRequest(Uri.parse(_importUrl));
   }
 
   @override
@@ -3851,683 +3771,27 @@ class _CheckProductScreenState extends State<CheckProductScreen> {
         backgroundColor: const Color(0xFF0F1923),
         foregroundColor: Colors.white,
         title: const Text(
-          'Vérifier un produit',
+          'Importer Temu / Shein',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
         elevation: 0,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── URL field ──
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: TextField(
-                controller: _urlController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: 'Coller un lien Temu / AliExpress / Shein…',
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.35), fontSize: 13),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  suffixIcon: _urlController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.white38, size: 18),
-                          onPressed: () => setState(() { _urlController.clear(); _product = null; _error = null; }),
-                        )
-                      : null,
-                ),
-                onChanged: (_) => setState(() {}),
-                onSubmitted: (_) => _check(),
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // ── Check button ──
-            GestureDetector(
-              onTap: _loading ? null : _check,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00D4FF).withOpacity(0.25),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: _loading
-                      ? const SizedBox(
-                          height: 20, width: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2,
-                          ),
-                        )
-                      : const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.search_rounded, color: Colors.white, size: 18),
-                            SizedBox(width: 8),
-                            Text(
-                              'Vérifier le produit',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ],
-                        ),
-                ),
-              ),
-            ),
-
-            // ── Error ──
-            if (_error != null) ...[
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.red.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(_error!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
-            // ── Product card ──
-            if (_product != null) ...[
-              const SizedBox(height: 24),
-              _ProductResultCard(
-                product: _product!,
-                onAddToCart: _addToCart,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProductResultCard extends StatelessWidget {
-  const _ProductResultCard({required this.product, required this.onAddToCart});
-  final Map<String, dynamic> product;
-  final VoidCallback onAddToCart;
-
-  @override
-  Widget build(BuildContext context) {
-    final name      = product['name']?.toString() ?? 'Produit';
-    final priceUSD  = (product['price'] as num?)?.toDouble() ?? 0.0;
-    final priceUSDT = priceUSD * 1.10;
-    final priceDZD  = priceUSDT * EXCHANGE_RATE;
-    final currency  = product['currency']?.toString() ?? 'USD';
-    final imageUrl  = product['image_url']?.toString() ?? '';
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Image
-          if (imageUrl.isNotEmpty)
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-              child: Image.network(
-                imageUrl,
-                height: 200,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  height: 100,
-                  color: Colors.white.withOpacity(0.04),
-                  child: const Icon(Icons.image_not_supported_rounded,
-                      color: Colors.white24, size: 40),
-                ),
-              ),
-            ),
-
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Name
-                Text(
-                  name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    height: 1.4,
-                  ),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 14),
-
-                // Price row
-                Row(
-                  children: [
-                    _PriceBadge(
-                      label: currency,
-                      value: priceUSD.toStringAsFixed(2),
-                      color: Colors.white24,
-                    ),
-                    const SizedBox(width: 10),
-                    _PriceBadge(
-                      label: 'USDT',
-                      value: priceUSDT.toStringAsFixed(2),
-                      color: const Color(0xFF00D4FF),
-                      highlight: true,
-                    ),
-                    const SizedBox(width: 10),
-                    _PriceBadge(
-                      label: 'DZD',
-                      value: priceDZD.toStringAsFixed(0),
-                      color: const Color(0xFF8B5CF6),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // Add to cart
-                GestureDetector(
-                  onTap: onAddToCart,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFFFF6B35), Color(0xFFFF3CAC)],
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.add_shopping_cart_rounded,
-                            color: Colors.white, size: 18),
-                        SizedBox(width: 8),
-                        Text(
-                          'Ajouter au panier',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () => _controller.reload(),
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.15);
-  }
-}
-
-class _PriceBadge extends StatelessWidget {
-  const _PriceBadge({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.highlight = false,
-  });
-  final String label;
-  final String value;
-  final Color color;
-  final bool highlight;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(highlight ? 0.15 : 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(highlight ? 0.5 : 0.2)),
-      ),
-      child: Column(
+      body: Stack(
         children: [
-          Text(label,
-              style: TextStyle(
-                  color: color, fontSize: 9, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(value,
-              style: TextStyle(
-                  color: highlight ? color : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold)),
+          WebViewWidget(controller: _controller),
+          if (_loading)
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00D4FF)),
+            ),
         ],
       ),
     );
-  }
-}
-
-// ============================================
-// SCREENSHOT SCAN SCREEN (Ollama moondream)
-// ============================================
-
-class ScreenshotScanScreen extends StatefulWidget {
-  const ScreenshotScanScreen({super.key});
-
-  @override
-  State<ScreenshotScanScreen> createState() => _ScreenshotScanScreenState();
-}
-
-class _ScreenshotScanScreenState extends State<ScreenshotScanScreen> {
-  final _picker = ImagePicker();
-  XFile? _imageFile;
-  bool _analyzing = false;
-  String? _error;
-  Map<String, dynamic>? _result;
-
-  static const _endpoint = 'http://$VPS_SERVER_IP:3000/analyze-screenshot';
-
-  Future<void> _pickImage(ImageSource source) async {
-    try {
-      final file = await _picker.pickImage(
-          source: source, imageQuality: 85, maxWidth: 1200);
-      if (file == null || !mounted) return;
-      setState(() {
-        _imageFile = file;
-        _result = null;
-        _error = null;
-      });
-      await _analyze(file);
-    } catch (e) {
-      if (mounted) {
-        setState(
-            () => _error = 'Erreur: ${e.toString().split('\n').first}');
-      }
-    }
-  }
-
-  Future<void> _analyze(XFile file) async {
-    setState(() {
-      _analyzing = true;
-      _error = null;
-    });
-    try {
-      final bytes = await file.readAsBytes();
-      final base64Image = base64Encode(bytes);
-
-      final resp = await http
-          .post(
-            Uri.parse(_endpoint),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'imageBase64': base64Image}),
-          )
-          .timeout(const Duration(seconds: 120));
-
-      final body = jsonDecode(resp.body) as Map<String, dynamic>;
-      if (resp.statusCode == 200 && (body['name'] as String?)?.isNotEmpty == true) {
-        setState(() => _result = body);
-        _autoAddToCart(body);
-      } else {
-        setState(() => _error =
-            body['error']?.toString() ?? 'Analyse échouée');
-      }
-    } catch (e) {
-      setState(() =>
-          _error = 'Erreur connexion: ${e.toString().split('\n').first}');
-    } finally {
-      if (mounted) setState(() => _analyzing = false);
-    }
-  }
-
-  void _autoAddToCart(Map<String, dynamic> data) {
-    final name = data['name']?.toString() ?? 'Produit Temu';
-    final variant = data['variant']?.toString() ?? '';
-    final priceStr = data['price']?.toString() ?? '0';
-    final price = double.tryParse(
-            priceStr.replaceAll(RegExp(r'[^0-9.]'), '')) ??
-        0.0;
-    final fullName =
-        variant.isNotEmpty ? '$name — $variant' : name;
-
-    Cart.add(CartItem(name: fullName, image: '', priceUSD: price));
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✓ "$fullName" ajouté au panier'),
-          backgroundColor: const Color(0xFF0F1923),
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0F1923),
-        foregroundColor: Colors.white,
-        title: const Text('Scanner capture Temu',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        elevation: 0,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Pick buttons
-            Row(
-              children: [
-                Expanded(
-                  child: _PickButton(
-                    icon: Icons.photo_library_rounded,
-                    label: 'Galerie',
-                    onTap: () => _pickImage(ImageSource.gallery),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _PickButton(
-                    icon: Icons.camera_alt_rounded,
-                    label: 'Caméra',
-                    onTap: () => _pickImage(ImageSource.camera),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            // Image preview
-            if (_imageFile != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.file(
-                  File(_imageFile!.path),
-                  height: 260,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            // Analyzing indicator
-            if (_analyzing)
-              const Center(
-                child: Column(
-                  children: [
-                    CircularProgressIndicator(color: Color(0xFF00D4FF)),
-                    SizedBox(height: 12),
-                    Text('Analyse IA en cours…',
-                        style: TextStyle(color: Colors.white54)),
-                  ],
-                ),
-              ),
-
-            // Error
-            if (_error != null) ...[
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.red.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error_outline,
-                        color: Colors.redAccent, size: 18),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(_error!,
-                          style: const TextStyle(
-                              color: Colors.redAccent, fontSize: 13)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
-            // Result card
-            if (_result != null && !_analyzing) ...[
-              _ScanResultCard(result: _result!),
-              const SizedBox(height: 16),
-              GestureDetector(
-                onTap: () => _pickImage(ImageSource.gallery),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-                    ),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.add_photo_alternate_rounded,
-                          color: Colors.black, size: 20),
-                      SizedBox(width: 8),
-                      Text('Scanner un autre produit',
-                          style: TextStyle(
-                            color: Colors.black,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          )),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-
-            // Empty state
-            if (_imageFile == null && !_analyzing) _buildEmptyState(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Column(
-      children: [
-        const SizedBox(height: 40),
-        Container(
-          padding: const EdgeInsets.all(28),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.04),
-            borderRadius: BorderRadius.circular(20),
-            border:
-                Border.all(color: Colors.white.withOpacity(0.08)),
-          ),
-          child: Column(
-            children: [
-              const Icon(Icons.image_search_rounded,
-                  color: Color(0xFF00D4FF), size: 52),
-              const SizedBox(height: 16),
-              const Text(
-                'Scanner une capture d\'écran Temu',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Importez une capture d\'écran d\'un produit Temu. '
-                'L\'IA (moondream) extraira le nom, la variante et le prix, '
-                'puis ajoutera le produit au panier automatiquement.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 13,
-                  height: 1.5,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PickButton extends StatelessWidget {
-  const _PickButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: const Color(0xFF00D4FF), size: 20),
-            const SizedBox(width: 8),
-            Text(label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                )),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ScanResultCard extends StatelessWidget {
-  const _ScanResultCard({required this.result});
-  final Map<String, dynamic> result;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = result['name']?.toString() ?? '';
-    final variant = result['variant']?.toString() ?? '';
-    final priceStr = result['price']?.toString() ?? '0';
-    final priceUSD = double.tryParse(
-            priceStr.replaceAll(RegExp(r'[^0-9.]'), '')) ??
-        0.0;
-    final priceUSDT = priceUSD * 1.10;
-    final priceDZD = priceUSDT * EXCHANGE_RATE;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-            color: const Color(0xFF00D4FF).withOpacity(0.3)),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.check_circle_rounded,
-                  color: Color(0xFF00D4FF), size: 20),
-              SizedBox(width: 8),
-              Text('Ajouté au panier automatiquement',
-                  style: TextStyle(
-                    color: Color(0xFF00D4FF),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  )),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(name,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  height: 1.4)),
-          if (variant.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFF8B5CF6).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: const Color(0xFF8B5CF6).withOpacity(0.3)),
-              ),
-              child: Text(variant,
-                  style: const TextStyle(
-                      color: Color(0xFF8B5CF6), fontSize: 12)),
-            ),
-          ],
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _PriceBadge(
-                  label: 'USD',
-                  value: priceUSD.toStringAsFixed(2),
-                  color: Colors.white24),
-              const SizedBox(width: 8),
-              _PriceBadge(
-                  label: 'USDT',
-                  value: priceUSDT.toStringAsFixed(2),
-                  color: const Color(0xFF00D4FF),
-                  highlight: true),
-              const SizedBox(width: 8),
-              _PriceBadge(
-                  label: 'DZD',
-                  value: priceDZD.toStringAsFixed(0),
-                  color: const Color(0xFF8B5CF6)),
-            ],
-          ),
-        ],
-      ),
-    ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1);
   }
 }

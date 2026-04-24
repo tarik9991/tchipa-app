@@ -3062,16 +3062,58 @@ class _OrderScan {
   final String orderId;
   final double totalUsdt;
   double get totalDzd => totalUsdt * EXCHANGE_RATE;
-
   const _OrderScan({required this.orderId, required this.totalUsdt});
+}
 
-  /// Parse `NP|ORDER_ID|TOTAL_USDT|...` (items segment is ignored by agent).
-  static _OrderScan? tryParse(String raw) {
-    final parts = raw.split('|');
-    if (parts.length < 3 || parts[0] != 'NP') return null;
-    final usdt = double.tryParse(parts[2]);
-    if (usdt == null) return null;
-    return _OrderScan(orderId: parts[1], totalUsdt: usdt);
+class _WalletDataCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+  const _WalletDataCard({required this.data});
+
+  Widget _row(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.white38, fontSize: 10, letterSpacing: 1.2)),
+            const SizedBox(height: 4),
+            SelectableText(
+              value,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
+            ),
+          ],
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2332),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF00D4FF).withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('WALLET PAYGATE',
+              style: TextStyle(
+                  color: Color(0xFF00D4FF),
+                  fontSize: 11,
+                  letterSpacing: 1.5,
+                  fontWeight: FontWeight.w600)),
+          const Divider(color: Colors.white12, height: 20),
+          _row('ADRESSE POLYGON (USDC)',
+              data['polygon_address_in'] ?? '—'),
+          _row('IPN TOKEN', data['ipn_token'] ?? '—'),
+          _row('CALLBACK', data['callback_url'] ?? '—'),
+        ],
+      ),
+    );
   }
 }
 
@@ -3083,27 +3125,47 @@ class AgentScreen extends StatefulWidget {
 }
 
 class _AgentScreenState extends State<AgentScreen> {
-  final TextEditingController _inputCtrl = TextEditingController();
+  final _orderIdCtrl = TextEditingController();
 
+  bool _loading = false;
   _OrderScan? _order;
   bool _confirming = false;
   bool _confirmed = false;
   String? _error;
+  Map<String, dynamic>? _walletData;
 
   @override
   void dispose() {
-    _inputCtrl.dispose();
+    _orderIdCtrl.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    final raw = _inputCtrl.text.trim();
-    if (raw.isEmpty) return;
-    final parsed = _OrderScan.tryParse(raw);
-    if (parsed != null) {
-      setState(() { _order = parsed; _error = null; });
-    } else {
-      setState(() => _error = 'Format invalide. Collez le texte complet du QR.');
+  Future<void> _lookupOrder() async {
+    final id = _orderIdCtrl.text.trim();
+    if (id.isEmpty) return;
+    setState(() { _loading = true; _error = null; });
+    try {
+      final resp = await http.get(
+        Uri.parse('http://$VPS_SERVER_IP:3000/orders/$id'),
+      ).timeout(const Duration(seconds: 20));
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (resp.statusCode == 200) {
+        final usdt = (body['totalUsdt'] as num?)?.toDouble()
+            ?? (body['total_usdt'] as num?)?.toDouble()
+            ?? (body['amount'] as num?)?.toDouble();
+        if (usdt == null) {
+          setState(() { _error = 'Montant introuvable dans la réponse'; _loading = false; });
+          return;
+        }
+        setState(() { _order = _OrderScan(orderId: id, totalUsdt: usdt); _loading = false; });
+      } else {
+        setState(() {
+          _error = 'Commande introuvable (${resp.statusCode}): ${body['error'] ?? ''}';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      setState(() { _error = 'Impossible de joindre le serveur'; _loading = false; });
     }
   }
 
@@ -3112,35 +3174,27 @@ class _AgentScreenState extends State<AgentScreen> {
     setState(() { _confirming = true; _error = null; });
     try {
       final resp = await http.post(
-        Uri.parse('http://$VPS_SERVER_IP:3000/payment-confirmed'),
+        Uri.parse('http://$VPS_SERVER_IP:3000/paygate/create-wallet'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'orderId': _order!.orderId,
-          'totalUsdt': _order!.totalUsdt,
-          'totalDzd': _order!.totalDzd,
-          'confirmedAt': DateTime.now().toIso8601String(),
-        }),
-      ).timeout(const Duration(seconds: 15));
-
+        body: jsonEncode({'orderId': _order!.orderId}),
+      ).timeout(const Duration(seconds: 30));
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
       if (resp.statusCode == 200 || resp.statusCode == 201) {
-        setState(() { _confirmed = true; _confirming = false; });
+        setState(() { _confirmed = true; _confirming = false; _walletData = body; });
       } else {
         setState(() {
-          _error = 'Erreur serveur (${resp.statusCode})';
+          _error = 'Erreur PayGate (${resp.statusCode}): ${body['error'] ?? resp.body}';
           _confirming = false;
         });
       }
     } catch (e) {
-      setState(() {
-        _error = 'Impossible de joindre le serveur';
-        _confirming = false;
-      });
+      setState(() { _error = 'Impossible de joindre le serveur'; _confirming = false; });
     }
   }
 
   void _reset() {
-    _inputCtrl.clear();
-    setState(() { _order = null; _confirmed = false; _error = null; });
+    _orderIdCtrl.clear();
+    setState(() { _order = null; _confirmed = false; _error = null; _walletData = null; });
   }
 
   @override
@@ -3150,8 +3204,7 @@ class _AgentScreenState extends State<AgentScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F1923),
         foregroundColor: Colors.white,
-        title: const Text('Mode Agent',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Mode Agent', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         elevation: 0,
       ),
@@ -3166,8 +3219,7 @@ class _AgentScreenState extends State<AgentScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 32),
-          const Icon(Icons.assignment_outlined,
-              color: Color(0xFF00D4FF), size: 48),
+          const Icon(Icons.assignment_outlined, color: Color(0xFF00D4FF), size: 48),
           const SizedBox(height: 20),
           const Text(
             'ENTRER L\'ID DE COMMANDE',
@@ -3181,11 +3233,11 @@ class _AgentScreenState extends State<AgentScreen> {
           ),
           const SizedBox(height: 28),
           TextField(
-            controller: _inputCtrl,
+            controller: _orderIdCtrl,
             autofocus: true,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
-              hintText: 'Collez le texte du QR (NP|ID|total|…)',
+              hintText: 'Ex: ORD-2024-001',
               hintStyle: const TextStyle(color: Colors.white30),
               filled: true,
               fillColor: const Color(0xFF1A2332),
@@ -3197,10 +3249,9 @@ class _AgentScreenState extends State<AgentScreen> {
                 borderRadius: BorderRadius.circular(14),
                 borderSide: const BorderSide(color: Color(0xFF00D4FF)),
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 18, vertical: 16),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
             ),
-            onSubmitted: (_) => _submit(),
+            onSubmitted: (_) => _lookupOrder(),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -3210,7 +3261,7 @@ class _AgentScreenState extends State<AgentScreen> {
           ],
           const SizedBox(height: 20),
           GestureDetector(
-            onTap: _submit,
+            onTap: _loading ? null : _lookupOrder,
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(
@@ -3219,21 +3270,29 @@ class _AgentScreenState extends State<AgentScreen> {
                 ),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.search_rounded, color: Colors.black, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Rechercher la commande',
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
+              child: _loading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.black),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.search_rounded, color: Colors.black, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Rechercher la commande',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ),
         ],
@@ -3248,7 +3307,6 @@ class _AgentScreenState extends State<AgentScreen> {
       child: Column(
         children: [
           const SizedBox(height: 20),
-          // Success check or confirmation header
           Container(
             width: 72,
             height: 72,
@@ -3271,14 +3329,9 @@ class _AgentScreenState extends State<AgentScreen> {
           const SizedBox(height: 20),
           Text(
             'Commande ${order.orderId}',
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 13,
-              letterSpacing: 1,
-            ),
+            style: const TextStyle(color: Colors.white54, fontSize: 13, letterSpacing: 1),
           ),
           const SizedBox(height: 32),
-          // Amount card
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(28),
@@ -3290,8 +3343,7 @@ class _AgentScreenState extends State<AgentScreen> {
                 ],
               ),
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF).withOpacity(0.25)),
+              border: Border.all(color: const Color(0xFF00D4FF).withOpacity(0.25)),
             ),
             child: Column(
               children: [
@@ -3317,33 +3369,27 @@ class _AgentScreenState extends State<AgentScreen> {
                 const SizedBox(height: 6),
                 Text(
                   '≈ ${order.totalDzd.toStringAsFixed(0)} DZD',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 18,
-                  ),
+                  style: const TextStyle(color: Colors.white54, fontSize: 18),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 32),
-
-          if (_confirmed) ...[
+          if (_confirmed && _walletData != null) ...[
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: const Color(0xFF00FF88).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                    color: const Color(0xFF00FF88).withOpacity(0.3)),
+                border: Border.all(color: const Color(0xFF00FF88).withOpacity(0.3)),
               ),
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.check_circle_rounded,
-                      color: Color(0xFF00FF88), size: 22),
+                  Icon(Icons.check_circle_rounded, color: Color(0xFF00FF88), size: 22),
                   SizedBox(width: 10),
                   Text(
-                    'Paiement confirmé',
+                    'VCC PayGate générée',
                     style: TextStyle(
                       color: Color(0xFF00FF88),
                       fontWeight: FontWeight.bold,
@@ -3354,29 +3400,26 @@ class _AgentScreenState extends State<AgentScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            _WalletDataCard(data: _walletData!),
+            const SizedBox(height: 20),
             TextButton.icon(
               onPressed: _reset,
-              icon: const Icon(Icons.add_circle_outline_rounded,
-                  color: Color(0xFF00D4FF)),
-              label: const Text('Nouvelle commande',
-                  style: TextStyle(color: Color(0xFF00D4FF))),
+              icon: const Icon(Icons.add_circle_outline_rounded, color: Color(0xFF00D4FF)),
+              label: const Text('Nouvelle commande', style: TextStyle(color: Color(0xFF00D4FF))),
             ),
           ] else ...[
             if (_error != null) ...[
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.red.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: Colors.red.withOpacity(0.3)),
                 ),
-                child: Text(_error!,
-                    style: const TextStyle(color: Colors.redAccent)),
+                child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
               ),
               const SizedBox(height: 16),
             ],
-            // Confirm button
             GestureDetector(
               onTap: _confirming ? null : _confirmPayment,
               child: Container(
@@ -3400,15 +3443,13 @@ class _AgentScreenState extends State<AgentScreen> {
                         child: SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.5, color: Colors.black),
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.black),
                         ),
                       )
                     : const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.check_rounded,
-                              color: Colors.black, size: 22),
+                          Icon(Icons.check_rounded, color: Colors.black, size: 22),
                           SizedBox(width: 10),
                           Text(
                             'Confirmer paiement reçu',
@@ -3425,8 +3466,7 @@ class _AgentScreenState extends State<AgentScreen> {
             const SizedBox(height: 16),
             TextButton(
               onPressed: _reset,
-              child: const Text('Annuler',
-                  style: TextStyle(color: Colors.white38)),
+              child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
             ),
           ],
         ],

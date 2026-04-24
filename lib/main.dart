@@ -252,6 +252,10 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
+  // Flag fades in and loops continuously
+  late AnimationController _flagCtrl;
+  late Animation<double> _flagAnim;
+
   // Image fades in over 800 ms
   late AnimationController _imgCtrl;
   late Animation<double> _imgFade;
@@ -261,12 +265,15 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _overlayFade;
   late Animation<Offset> _overlaySlide;
 
-  static const String _splashImage =
-      'https://i.ibb.co/QF18Dz91/Gemini-Generated-Image-1h03up1h03up1h03.png';
-
   @override
   void initState() {
     super.initState();
+
+    _flagCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4),
+    )..repeat();
+    _flagAnim = Tween<double>(begin: 0, end: 2 * pi).animate(_flagCtrl);
 
     _imgCtrl = AnimationController(
       vsync: this,
@@ -302,6 +309,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _flagCtrl.dispose();
     _imgCtrl.dispose();
     _overlayCtrl.dispose();
     super.dispose();
@@ -315,20 +323,14 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Full-screen splash image ──
+          // ── Full-screen animated flag ──
           FadeTransition(
             opacity: _imgFade,
-            child: Image.network(
-              _splashImage,
-              width: size.width,
-              height: size.height,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: const Color(0xFF0D1117),
-                child: const Center(
-                  child: Icon(Icons.image_not_supported_outlined,
-                      color: Colors.white24, size: 64),
-                ),
+            child: AnimatedBuilder(
+              animation: _flagCtrl,
+              builder: (_, __) => CustomPaint(
+                size: Size(size.width, size.height),
+                painter: CircuitBoardFlagPainter(_flagAnim.value),
               ),
             ),
           ),
@@ -3477,190 +3479,360 @@ class _AgentScreenState extends State<AgentScreen> {
 
 
 // ============================================
-// CIRCUIT BOARD FLAG — CustomPaint
+// ALGERIAN TECH FLAG — CustomPaint
 // ============================================
 //
-// Animated PCB-style flag: dark green substrate, glowing copper traces,
-// solder pads, two IC chips, and traveling signal electrons.
-// `phase` (0 → 2π) drives all animations.
+// Left half: dark-green PCB substrate with glowing circuit traces, solder
+// pads, an IC chip, traveling electrons, and electrical spark discharges.
+// Right half: white with a pulsing holographic data grid.
+// Centre: red glowing crescent (Algerian style) + slowly rotating star.
+// `phase` (0 → 2π per cycle) drives all animations.
 class CircuitBoardFlagPainter extends CustomPainter {
   final double phase;
   final bool isMini;
 
   CircuitBoardFlagPainter(this.phase, {this.isMini = false});
 
-  // Normalised [x1,y1, x2,y2] trace segments (0..1)
-  static const List<List<double>> _segs = [
-    // ── Horizontals ──
-    [0.00, 0.17, 1.00, 0.17],
-    [0.00, 0.50, 0.42, 0.50],
-    [0.58, 0.50, 1.00, 0.50],
-    [0.00, 0.83, 1.00, 0.83],
-    [0.15, 0.33, 0.50, 0.33],
-    [0.50, 0.67, 0.85, 0.67],
-    [0.25, 0.17, 0.25, 0.33],  // short V
-    [0.75, 0.67, 0.75, 0.83],  // short V
-    // ── Verticals ──
-    [0.15, 0.00, 0.15, 1.00],
-    [0.85, 0.00, 0.85, 1.00],
-    [0.50, 0.00, 0.50, 0.33],
-    [0.50, 0.67, 0.50, 1.00],
-    [0.35, 0.17, 0.35, 0.83],
-    [0.65, 0.17, 0.65, 0.83],
-  ];
-
-  // Normalised pad positions [x,y]
-  static const List<List<double>> _pads = [
-    [0.15, 0.17], [0.35, 0.17], [0.65, 0.17], [0.85, 0.17],
-    [0.15, 0.33], [0.25, 0.33], [0.50, 0.33],
-    [0.15, 0.50], [0.85, 0.50],
-    [0.50, 0.67], [0.75, 0.67], [0.85, 0.67],
-    [0.15, 0.83], [0.35, 0.83], [0.65, 0.83], [0.85, 0.83],
-  ];
-
-  // Two signal electron paths (list of [x,y] waypoints, normalised)
-  static const List<List<List<double>>> _signalPaths = [
-    // path A — top-left loop
-    [[0.00, 0.17], [0.15, 0.17], [0.15, 0.33], [0.25, 0.33],
-     [0.25, 0.17], [0.50, 0.17], [0.50, 0.33], [0.35, 0.33],
-     [0.35, 0.83], [0.15, 0.83], [0.15, 0.50], [0.00, 0.50]],
-    // path B — right side
-    [[1.00, 0.17], [0.85, 0.17], [0.85, 0.50], [0.65, 0.50],
-     [0.65, 0.67], [0.75, 0.67], [0.75, 0.83], [0.85, 0.83],
-     [0.85, 1.00]],
-  ];
-
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
 
-    // ── 1. PCB substrate ───────────────────────────────────────────────
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, w, h),
-      Paint()..color = const Color(0xFF061206),
-    );
+    final glow    = (sin(phase * 1.4) + 1) * 0.5;
+    final glow2   = (sin(phase * 0.9 + 1.2) + 1) * 0.5;
+    final shimmer = (sin(phase * 2.1 + 0.5) + 1) * 0.5;
 
-    // Subtle grid (full size only)
+    // ── Left half: dark-green PCB ──────────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w * 0.5, h),
+      Paint()..color = const Color(0xFF041A06),
+    );
+    _drawLeftCircuits(canvas, w, h, glow, glow2);
+
+    // ── Right half: white holographic ─────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(w * 0.5, 0, w * 0.5, h),
+      Paint()..color = Colors.white,
+    );
+    _drawRightHolographic(canvas, w, h, shimmer);
+
+    // ── Centre emblem: crescent + star ────────────────────────────────
+    _drawCrescent(canvas, w, h, glow);
+    _drawStar(canvas, w, h, glow, phase * 0.4);
+  }
+
+  // ── Left-half PCB ─────────────────────────────────────────────────────
+
+  void _drawLeftCircuits(Canvas canvas, double w, double h,
+      double glow, double glow2) {
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, w * 0.5, h));
+
+    final traceAlpha = 0.45 + glow * 0.40;
+    final tw = isMini ? 0.6 : 1.2;
+
+    // Faint PCB grid
     if (!isMini) {
-      final gridPaint = Paint()
-        ..color = const Color(0xFF00FF88).withOpacity(0.05)
+      final gridP = Paint()
+        ..color = const Color(0xFF00FF44).withValues(alpha: 0.055)
         ..strokeWidth = 0.4;
-      for (double x = 0; x <= w; x += w * 0.1) {
-        canvas.drawLine(Offset(x, 0), Offset(x, h), gridPaint);
+      for (int i = 1; i < 5; i++) {
+        canvas.drawLine(
+            Offset(w * 0.5 * i / 5, 0), Offset(w * 0.5 * i / 5, h), gridP);
       }
-      for (double y = 0; y <= h; y += h * 0.1) {
-        canvas.drawLine(Offset(0, y), Offset(w, y), gridPaint);
+      for (int i = 1; i < 8; i++) {
+        canvas.drawLine(
+            Offset(0, h * i / 8), Offset(w * 0.5, h * i / 8), gridP);
       }
     }
 
-    // ── 2. Pulsing glow factor ─────────────────────────────────────────
-    final glow  = (sin(phase * 1.4) + 1) * 0.5;      // 0..1
-    final glow2 = (sin(phase * 0.9 + 1.2) + 1) * 0.5; // offset pulse
+    // Circuit traces (normalised to full width, all x < 0.5)
+    const segs = [
+      [0.00, 0.20, 0.46, 0.20],
+      [0.00, 0.50, 0.46, 0.50],
+      [0.00, 0.80, 0.46, 0.80],
+      [0.05, 0.35, 0.30, 0.35],
+      [0.10, 0.65, 0.42, 0.65],
+      [0.10, 0.00, 0.10, 1.00],
+      [0.26, 0.00, 0.26, 0.35],
+      [0.26, 0.65, 0.26, 1.00],
+      [0.40, 0.20, 0.40, 0.80],
+    ];
 
-    // ── 3. Traces ──────────────────────────────────────────────────────
-    final traceAlpha = 0.40 + glow * 0.40;
-    final traceW = isMini ? 0.7 : 1.4;
-
-    final traceGlowPaint = Paint()
-      ..color = const Color(0xFF00FF88).withOpacity(traceAlpha * 0.35)
-      ..strokeWidth = traceW * 4
+    final glowP = Paint()
+      ..color = const Color(0xFF00FF44).withValues(alpha: traceAlpha * 0.4)
+      ..strokeWidth = tw * 4
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5);
-
-    final tracePaint = Paint()
-      ..color = const Color(0xFF00FF88).withOpacity(traceAlpha)
-      ..strokeWidth = traceW
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
+    final lineP = Paint()
+      ..color = const Color(0xFF00FF44).withValues(alpha: traceAlpha)
+      ..strokeWidth = tw
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    for (final s in _segs) {
+    for (final s in segs) {
       final p1 = Offset(s[0] * w, s[1] * h);
       final p2 = Offset(s[2] * w, s[3] * h);
-      if (!isMini) canvas.drawLine(p1, p2, traceGlowPaint);
-      canvas.drawLine(p1, p2, tracePaint);
+      if (!isMini) canvas.drawLine(p1, p2, glowP);
+      canvas.drawLine(p1, p2, lineP);
     }
 
-    // ── 4. Solder pads ─────────────────────────────────────────────────
-    final padR       = isMini ? 1.5 : 3.0;
-    final padAlpha   = 0.55 + glow2 * 0.35;
-
+    // Solder pads
+    const pads = [
+      [0.10, 0.20], [0.26, 0.20], [0.40, 0.20],
+      [0.10, 0.35], [0.26, 0.35],
+      [0.10, 0.50], [0.40, 0.50],
+      [0.10, 0.65], [0.26, 0.65], [0.40, 0.65],
+      [0.10, 0.80], [0.40, 0.80],
+    ];
+    final padR = isMini ? 1.2 : 2.5;
+    final padA = 0.55 + glow2 * 0.35;
     final padGlowP = Paint()
-      ..color = const Color(0xFF00FF88).withOpacity(0.45)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, isMini ? 2 : 5);
+      ..color = const Color(0xFF00FF44).withValues(alpha: 0.45)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, isMini ? 1.5 : 4.0);
     final padFillP = Paint()
-      ..color = const Color(0xFF00FF88).withOpacity(padAlpha);
+      ..color = const Color(0xFF00FF44).withValues(alpha: padA);
     final padRingP = Paint()
-      ..color = const Color(0xFFAAFFCC).withOpacity(0.9)
+      ..color = const Color(0xCC88FFAA)
       ..style = PaintingStyle.stroke
       ..strokeWidth = isMini ? 0.4 : 0.7;
 
-    for (final p in _pads) {
+    for (final p in pads) {
       final c = Offset(p[0] * w, p[1] * h);
-      if (!isMini) canvas.drawCircle(c, padR * 2, padGlowP);
+      if (!isMini) canvas.drawCircle(c, padR * 2.2, padGlowP);
       canvas.drawCircle(c, padR, padFillP);
       canvas.drawCircle(c, padR, padRingP);
     }
 
-    // ── 5. IC chips (two small chips, full-size only) ──────────────────
+    // IC chip
     if (!isMini) {
-      _drawIC(canvas, Offset(w * 0.50, h * 0.50),
-              w * 0.14, h * 0.22, glow);
-      _drawIC(canvas, Offset(w * 0.50, h * 0.50),
-              w * 0.14, h * 0.22, glow, secondary: true);
-      // second IC, top-right area
-      _drawIC(canvas, Offset(w * 0.78, h * 0.33),
-              w * 0.10, h * 0.18, glow2);
+      _drawIC(canvas, Offset(w * 0.20, h * 0.50), w * 0.10, h * 0.22, glow);
     }
 
-    // ── 6. Traveling signal electrons ─────────────────────────────────
+    // Traveling electrons
     if (!isMini) {
-      final tA = ((phase / (2 * pi)) * 1.0 % 1.0);
-      final tB = ((phase / (2 * pi)) * 0.7 + 0.5) % 1.0;
-      _drawSignal(canvas, w, h, _signalPaths[0], tA, const Color(0xFF00FFAA));
-      _drawSignal(canvas, w, h, _signalPaths[1], tB, const Color(0xFF00D4FF));
+      _drawElectron(
+          canvas,
+          Offset(0, h * 0.20), Offset(w * 0.46, h * 0.20),
+          (phase / (2 * pi)) % 1.0,
+          const Color(0xFF00FF88));
+      _drawElectron(
+          canvas,
+          Offset(w * 0.10, 0), Offset(w * 0.10, h),
+          ((phase / (2 * pi)) * 0.7 + 0.3) % 1.0,
+          const Color(0xFF00D4FF));
+      // Electrical discharge sparks
+      _drawSpark(canvas, Offset(w * 0.26, h * 0.35), glow,
+          const Color(0xFF00FF44));
+      _drawSpark(canvas, Offset(w * 0.40, h * 0.65), glow2,
+          const Color(0xFF44FFAA));
     } else {
-      // Mini: simple pulsing dot on centre trace
+      // Mini: single pulsing electron on horizontal trace
       final tM = (phase / (2 * pi)) % 1.0;
-      final dotX = tM * w;
-      final dotC = Offset(dotX, h * 0.50);
-      canvas.drawCircle(dotC, 2.2,
+      final dotC = Offset(tM * w * 0.46, h * 0.50);
+      canvas.drawCircle(dotC, 2.5,
           Paint()
-            ..color = const Color(0xFF00FF88).withOpacity(0.9)
+            ..color = const Color(0xFF00FF88).withValues(alpha: 0.9)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2));
-      canvas.drawCircle(dotC, 1.0,
-          Paint()..color = Colors.white.withOpacity(0.95));
+      canvas.drawCircle(dotC, 1.1,
+          Paint()..color = Colors.white.withValues(alpha: 0.95));
     }
+
+    canvas.restore();
   }
 
-  /// Draw a simplified IC chip outline with pins.
-  void _drawIC(
-    Canvas canvas,
-    Offset center,
-    double chipW,
-    double chipH,
-    double glow, {
-    bool secondary = false,
-  }) {
-    if (secondary) return; // only one IC at this position
+  void _drawElectron(Canvas canvas, Offset start, Offset end,
+      double t, Color color) {
+    final pos = Offset.lerp(start, end, t)!;
+    canvas.drawCircle(pos, 5.5,
+        Paint()
+          ..color = color.withValues(alpha: 0.35)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5));
+    canvas.drawCircle(pos, 2.2,
+        Paint()..color = color.withValues(alpha: 0.95));
+    canvas.drawCircle(pos, 0.9,
+        Paint()..color = Colors.white.withValues(alpha: 0.9));
+  }
 
-    final rect = Rect.fromCenter(center: center, width: chipW, height: chipH);
+  void _drawSpark(Canvas canvas, Offset center, double intensity, Color color) {
+    if (intensity < 0.5) return;
+    final alpha = ((intensity - 0.5) / 0.5).clamp(0.0, 1.0);
+    final len = 8.0 * alpha;
+    final p = Paint()
+      ..color = color.withValues(alpha: alpha * 0.85)
+      ..strokeWidth = 0.9
+      ..strokeCap = StrokeCap.round;
+    for (int i = 0; i < 6; i++) {
+      final a = i * pi / 3 + phase * 0.6;
+      canvas.drawLine(
+          center,
+          Offset(center.dx + cos(a) * len, center.dy + sin(a) * len),
+          p);
+    }
+    canvas.drawCircle(center, 1.8 * alpha,
+        Paint()..color = color.withValues(alpha: alpha * 0.9));
+  }
+
+  // ── Right-half holographic ─────────────────────────────────────────────
+
+  void _drawRightHolographic(Canvas canvas, double w, double h,
+      double shimmer) {
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(w * 0.5, 0, w * 0.5, h));
+
+    final gridA = 0.07 + shimmer * 0.07;
+    final gridP = Paint()
+      ..color = const Color(0xFF00CCDD).withValues(alpha: gridA)
+      ..strokeWidth = 0.35;
+
+    for (int i = 1; i <= 9; i++) {
+      final x = w * 0.5 + i * (w * 0.5) / 10;
+      canvas.drawLine(Offset(x, 0), Offset(x, h), gridP);
+    }
+    for (int i = 1; i <= 7; i++) {
+      canvas.drawLine(
+          Offset(w * 0.5, h * i / 8), Offset(w, h * i / 8), gridP);
+    }
+
+    // Diagonal shimmer streaks
+    final diagP = Paint()
+      ..color = const Color(0xFF00CCFF).withValues(alpha: 0.05 + shimmer * 0.07)
+      ..strokeWidth = 0.4;
+    for (int i = -3; i <= 7; i++) {
+      final sx = w * 0.5 + i * w * 0.08;
+      canvas.drawLine(Offset(sx, 0), Offset(sx + w * 0.4, h), diagP);
+    }
+
+    // Pulsing data nodes
+    if (!isMini) {
+      const nodes = [
+        [0.62, 0.18], [0.78, 0.32], [0.90, 0.15],
+        [0.68, 0.72], [0.85, 0.82], [0.56, 0.86],
+      ];
+      for (final np in nodes) {
+        final c = Offset(np[0] * w, np[1] * h);
+        final pulse = (sin(phase * 1.5 + np[0] * 8) + 1) * 0.5;
+        canvas.drawCircle(c, 3.5 + pulse * 2.5,
+            Paint()
+              ..color = const Color(0xFF00BBDD)
+                  .withValues(alpha: 0.12 + pulse * 0.14)
+              ..maskFilter =
+                  const MaskFilter.blur(BlurStyle.normal, 4));
+        canvas.drawCircle(c, 1.8,
+            Paint()..color = const Color(0xFF00BBDD)
+                .withValues(alpha: 0.5 + pulse * 0.4));
+      }
+    }
+
+    canvas.restore();
+  }
+
+  // ── Centre emblem ─────────────────────────────────────────────────────
+
+  void _drawCrescent(Canvas canvas, double w, double h, double glow) {
+    final cx = w * 0.42;
+    final cy = h * 0.50;
+    final outerR = h * 0.24;
+    final innerR = h * 0.19;
+    final offset = w * 0.030;
+
+    const red = Color(0xFFEF2135);
+
+    // Outer glow halo
+    canvas.drawCircle(Offset(cx, cy), outerR + 5,
+        Paint()
+          ..color = red.withValues(alpha: 0.22 + glow * 0.18)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+
+    // Crescent: outer circle minus inner circle shifted right
+    // (creates concave opening on the right side — facing the star)
+    final path = Path()
+      ..addOval(Rect.fromCircle(
+          center: Offset(cx, cy), radius: outerR))
+      ..addOval(Rect.fromCircle(
+          center: Offset(cx + offset, cy), radius: innerR))
+      ..fillType = PathFillType.evenOdd;
+
+    canvas.drawPath(path, Paint()..color = red);
+
+    // Subtle inner highlight
+    canvas.drawPath(path,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.15 + glow * 0.10)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.7);
+  }
+
+  void _drawStar(Canvas canvas, double w, double h,
+      double glow, double angle) {
+    final cx = w * 0.555;
+    final cy = h * 0.50;
+    final outerR = isMini ? h * 0.09 : h * 0.125;
+    final innerR = outerR * 0.40;
+
+    const red = Color(0xFFEF2135);
+
+    // Glow halo
+    canvas.drawCircle(Offset(cx, cy), outerR + 4,
+        Paint()
+          ..color = red.withValues(alpha: 0.22 + glow * 0.20)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
+
+    // Energy pulse ring
+    final pulseR = outerR + 2 + glow * 4;
+    canvas.drawCircle(Offset(cx, cy), pulseR,
+        Paint()
+          ..color = red.withValues(alpha: 0.15 * glow)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0);
+
+    // 5-pointed star
+    final starPath = Path();
+    for (int i = 0; i < 5; i++) {
+      final outerPt = Offset(
+        cx + outerR * cos(angle - pi / 2 + i * 2 * pi / 5),
+        cy + outerR * sin(angle - pi / 2 + i * 2 * pi / 5),
+      );
+      final innerPt = Offset(
+        cx + innerR * cos(angle - pi / 2 + (i + 0.5) * 2 * pi / 5),
+        cy + innerR * sin(angle - pi / 2 + (i + 0.5) * 2 * pi / 5),
+      );
+      if (i == 0) {
+        starPath.moveTo(outerPt.dx, outerPt.dy);
+      } else {
+        starPath.lineTo(outerPt.dx, outerPt.dy);
+      }
+      starPath.lineTo(innerPt.dx, innerPt.dy);
+    }
+    starPath.close();
+
+    canvas.drawPath(starPath, Paint()..color = red);
+    canvas.drawPath(starPath,
+        Paint()
+          ..color = Colors.white.withValues(alpha: 0.18 + glow * 0.14)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.6);
+  }
+
+  // ── IC chip helper ────────────────────────────────────────────────────
+
+  void _drawIC(Canvas canvas, Offset center, double chipW, double chipH,
+      double glow) {
+    final rect = Rect.fromCenter(
+        center: center, width: chipW, height: chipH);
     canvas.drawRect(rect, Paint()..color = const Color(0xFF0A1F0A));
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..color = const Color(0xFF00FF88).withOpacity(0.55 + glow * 0.35)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.9,
-    );
+    canvas.drawRect(rect,
+        Paint()
+          ..color = const Color(0xFF00FF44).withValues(alpha: 0.55 + glow * 0.35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9);
 
-    // Text label "T C" in chip
-    final textPainter = TextPainter(
+    final tp = TextPainter(
       text: TextSpan(
         text: 'TC',
         style: TextStyle(
-          color: const Color(0xFF00FF88).withOpacity(0.50 + glow * 0.40),
+          color: const Color(0xFF00FF44).withValues(alpha: 0.50 + glow * 0.40),
           fontSize: chipW * 0.28,
           fontWeight: FontWeight.bold,
           letterSpacing: 1,
@@ -3668,79 +3840,21 @@ class CircuitBoardFlagPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    textPainter.paint(
-      canvas,
-      center - Offset(textPainter.width / 2, textPainter.height / 2),
-    );
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
 
-    // Pins (left & right, 3 per side)
     const numPins = 3;
     final pinSpacing = chipH / (numPins + 1);
     final pinLen = chipW * 0.18;
-    final pinPaint = Paint()
-      ..color = const Color(0xFF00FF88).withOpacity(0.55)
+    final pinP = Paint()
+      ..color = const Color(0xFF00FF44).withValues(alpha: 0.5)
       ..strokeWidth = 0.8;
     for (int i = 0; i < numPins; i++) {
       final py = center.dy - chipH / 2 + pinSpacing * (i + 1);
-      canvas.drawLine(
-        Offset(center.dx - chipW / 2 - pinLen, py),
-        Offset(center.dx - chipW / 2, py),
-        pinPaint,
-      );
-      canvas.drawLine(
-        Offset(center.dx + chipW / 2, py),
-        Offset(center.dx + chipW / 2 + pinLen, py),
-        pinPaint,
-      );
+      canvas.drawLine(Offset(center.dx - chipW / 2 - pinLen, py),
+          Offset(center.dx - chipW / 2, py), pinP);
+      canvas.drawLine(Offset(center.dx + chipW / 2, py),
+          Offset(center.dx + chipW / 2 + pinLen, py), pinP);
     }
-  }
-
-  /// Draw an animated electron signal traveling along [path] at progress [t].
-  void _drawSignal(
-    Canvas canvas,
-    double w,
-    double h,
-    List<List<double>> path,
-    double t,
-    Color color,
-  ) {
-    if (path.length < 2) return;
-
-    // Build cumulative length table
-    final pts = path.map((p) => Offset(p[0] * w, p[1] * h)).toList();
-    final lengths = <double>[0];
-    for (int i = 1; i < pts.length; i++) {
-      lengths.add(lengths.last + (pts[i] - pts[i - 1]).distance);
-    }
-    final total = lengths.last;
-    if (total == 0) return;
-
-    // Position at progress t
-    final target = t * total;
-    int seg = 0;
-    for (int i = 1; i < lengths.length; i++) {
-      if (lengths[i] >= target) { seg = i - 1; break; }
-    }
-    seg = seg.clamp(0, pts.length - 2);
-    final segLen  = (pts[seg + 1] - pts[seg]).distance;
-    final segFrac = segLen > 0
-        ? ((target - lengths[seg]) / segLen).clamp(0.0, 1.0)
-        : 0.0;
-    final pos = Offset.lerp(pts[seg], pts[seg + 1], segFrac)!;
-
-    // Outer glow
-    canvas.drawCircle(
-      pos, 5.5,
-      Paint()
-        ..color = color.withOpacity(0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-    );
-    // Core dot
-    canvas.drawCircle(pos, 2.2,
-        Paint()..color = color.withOpacity(0.95));
-    // Bright centre
-    canvas.drawCircle(pos, 0.8,
-        Paint()..color = Colors.white.withOpacity(0.9));
   }
 
   @override

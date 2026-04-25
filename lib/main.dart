@@ -2134,6 +2134,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
                 onTap: _save,
               ),
+              const SizedBox(height: 32),
+              GestureDetector(
+                onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AgentScreen())),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: const Color(0xFF00D4FF).withValues(alpha: 0.25)),
+                    borderRadius: BorderRadius.circular(14),
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.05),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.shield_outlined,
+                          color: Color(0xFF00D4FF), size: 18),
+                      SizedBox(width: 10),
+                      Text('Mode Agent',
+                          style: TextStyle(
+                              color: Color(0xFF00D4FF),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5)),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -2155,6 +2183,615 @@ class _FieldLabel extends StatelessWidget {
               color: Colors.white54,
               fontSize: 12,
               letterSpacing: 0.5)),
+    );
+  }
+}
+
+// ============================================
+// AGENT SCREEN
+// ============================================
+class AgentScreen extends StatefulWidget {
+  const AgentScreen({super.key});
+  @override
+  State<AgentScreen> createState() => _AgentScreenState();
+}
+
+class _AgentScreenState extends State<AgentScreen>
+    with SingleTickerProviderStateMixin {
+  static const _correctPin = '1234';
+
+  // PIN lock
+  bool _unlocked = false;
+  String _pin = '';
+  bool _pinError = false;
+  late AnimationController _shakeCtrl;
+  late Animation<double> _shakeAnim;
+
+  // Form
+  final _phoneCtrl = TextEditingController();
+  final _nameCtrl  = TextEditingController();
+  bool _isRecharge = false;
+  double _amount   = 7.0;
+  static const _presets = [7.0, 10.0, 20.0, 50.0, 100.0];
+
+  // State
+  bool _loading = false;
+  String? _error;
+  Map<String, dynamic>? _result; // activation result
+  String? _rechargeId;            // recharge order ID
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
+    _shakeAnim = TweenSequence([
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: -12.0), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: -12.0, end: 12.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 12.0, end: -8.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -8.0, end: 8.0), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 8.0, end: 0.0), weight: 1),
+    ]).animate(_shakeCtrl);
+  }
+
+  @override
+  void dispose() {
+    _shakeCtrl.dispose();
+    _phoneCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  void _pressDigit(String d) {
+    if (_pin.length >= 4) return;
+    setState(() {
+      _pin += d;
+      _pinError = false;
+    });
+    if (_pin.length == 4) {
+      Future.delayed(const Duration(milliseconds: 120), _checkPin);
+    }
+  }
+
+  void _backspace() => setState(() {
+        if (_pin.isNotEmpty) _pin = _pin.substring(0, _pin.length - 1);
+        _pinError = false;
+      });
+
+  void _checkPin() {
+    if (_pin == _correctPin) {
+      setState(() { _unlocked = true; _pinError = false; });
+    } else {
+      setState(() { _pin = ''; _pinError = true; });
+      _shakeCtrl.forward(from: 0);
+    }
+  }
+
+  Future<void> _confirm() async {
+    final phone = _phoneCtrl.text.trim();
+    final name  = _nameCtrl.text.trim();
+    if (phone.isEmpty || name.isEmpty) {
+      setState(() => _error = 'Téléphone et nom requis');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      if (_isRecharge) {
+        final data = await PayGateService.requestRecharge(
+          cardId: phone, // use phone as lookup key
+          amountUsd: _amount,
+          phone: phone,
+        );
+        setState(() {
+          _rechargeId = data['orderId']?.toString() ??
+              data['order_id']?.toString() ?? '—';
+          _loading = false;
+        });
+      } else {
+        final card = await PayGateService.activateVcc(
+            holderName: name, phone: phone);
+        final saved = card.copyWith(isActivated: true, holderName: name);
+        await saved.save();
+        setState(() {
+          _result = {
+            'number':  saved.formattedNumber,
+            'expiry':  saved.expiry ?? '—',
+            'cvv':     saved.cvv ?? '—',
+            'holder':  name,
+            'balance': saved.balance,
+          };
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
+
+  void _reset() => setState(() {
+        _result = null;
+        _rechargeId = null;
+        _error = null;
+        _phoneCtrl.clear();
+        _nameCtrl.clear();
+        _isRecharge = false;
+        _amount = 7.0;
+      });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0D1117),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text('Mode Agent',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+      ),
+      body: _unlocked ? _buildPanel() : _buildPinLock(),
+    );
+  }
+
+  // ── PIN LOCK ──────────────────────────────────────────────────
+  Widget _buildPinLock() {
+    return SafeArea(
+      child: Column(children: [
+        const SizedBox(height: 40),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
+            boxShadow: [
+              BoxShadow(
+                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                  blurRadius: 24),
+            ],
+          ),
+          child: const Icon(Icons.shield_rounded,
+              color: Color(0xFF00D4FF), size: 40),
+        ),
+        const SizedBox(height: 24),
+        const Text('Code Agent',
+            style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text('Entrez votre code à 4 chiffres',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.45), fontSize: 13)),
+        const SizedBox(height: 36),
+        AnimatedBuilder(
+          animation: _shakeAnim,
+          builder: (_, child) =>
+              Transform.translate(offset: Offset(_shakeAnim.value, 0), child: child),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(4, (i) {
+              final filled = i < _pin.length;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                margin: const EdgeInsets.symmetric(horizontal: 10),
+                width: 18, height: 18,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _pinError
+                      ? Colors.redAccent
+                      : filled
+                          ? const Color(0xFF00D4FF)
+                          : Colors.white12,
+                  boxShadow: filled && !_pinError
+                      ? [BoxShadow(
+                          color: const Color(0xFF00D4FF).withValues(alpha: 0.5),
+                          blurRadius: 8)]
+                      : null,
+                ),
+              );
+            }),
+          ),
+        ),
+        if (_pinError) ...[
+          const SizedBox(height: 12),
+          const Text('Code incorrect',
+              style: TextStyle(color: Colors.redAccent, fontSize: 13)),
+        ],
+        const Spacer(),
+        // Numpad
+        Padding(
+          padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
+          child: Column(
+            children: [
+              for (final row in [
+                ['1', '2', '3'],
+                ['4', '5', '6'],
+                ['7', '8', '9'],
+                ['', '0', '⌫'],
+              ])
+                Row(
+                  children: row.map((d) {
+                    if (d.isEmpty) return const Expanded(child: SizedBox());
+                    return Expanded(
+                      child: GestureDetector(
+                        onTap: () =>
+                            d == '⌫' ? _backspace() : _pressDigit(d),
+                        child: Container(
+                          margin: const EdgeInsets.all(6),
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: d == '⌫'
+                                ? Colors.transparent
+                                : const Color(0xFF1A2332),
+                            borderRadius: BorderRadius.circular(14),
+                            border: d == '⌫'
+                                ? null
+                                : Border.all(
+                                    color: Colors.white.withValues(alpha: 0.06)),
+                          ),
+                          child: Center(
+                            child: d == '⌫'
+                                ? const Icon(Icons.backspace_outlined,
+                                    color: Colors.white54, size: 22)
+                                : Text(d,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w500)),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── AGENT PANEL ───────────────────────────────────────────────
+  Widget _buildPanel() {
+    if (_result != null) return _buildActivationResult();
+    if (_rechargeId != null) return _buildRechargeResult();
+    return _buildForm();
+  }
+
+  Widget _buildForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 12),
+          // Type toggle
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A2332),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(children: [
+              _typeBtn('Activation', !_isRecharge, () {
+                setState(() { _isRecharge = false; _amount = 7.0; });
+              }),
+              _typeBtn('Rechargement', _isRecharge, () {
+                setState(() { _isRecharge = true; _amount = 20.0; });
+              }),
+            ]),
+          ),
+          const SizedBox(height: 24),
+          const _FieldLabel('Téléphone du client *'),
+          TextField(
+            controller: _phoneCtrl,
+            keyboardType: TextInputType.phone,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: '+213 XXX XXX XXX',
+              hintStyle: const TextStyle(color: Colors.white30),
+              filled: true,
+              fillColor: const Color(0xFF1A2332),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide:
+                      const BorderSide(color: Color(0xFF00D4FF))),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _FieldLabel('Nom complet du client *'),
+          TextField(
+            controller: _nameCtrl,
+            textCapitalization: TextCapitalization.words,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Prénom Nom',
+              hintStyle: const TextStyle(color: Colors.white30),
+              filled: true,
+              fillColor: const Color(0xFF1A2332),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide:
+                      const BorderSide(color: Color(0xFF00D4FF))),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 14),
+            ),
+          ),
+          if (_isRecharge) ...[
+            const SizedBox(height: 20),
+            const _FieldLabel('Montant (USD)'),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: _presets.where((p) => p != 7.0).map((p) {
+                final sel = _amount == p;
+                return GestureDetector(
+                  onTap: () => setState(() => _amount = p),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: sel
+                          ? const Color(0xFF00D4FF)
+                          : const Color(0xFF1A2332),
+                      border: sel
+                          ? null
+                          : Border.all(
+                              color: Colors.white.withValues(alpha: 0.1)),
+                    ),
+                    child: Text('\$$p',
+                        style: TextStyle(
+                            color:
+                                sel ? Colors.black : Colors.white70,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 24),
+          // Summary box
+          Container(
+            padding: const EdgeInsets.symmetric(
+                vertical: 14, horizontal: 20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A2332),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                    _isRecharge
+                        ? 'Montant à encaisser'
+                        : 'Frais d\'activation',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.65),
+                        fontSize: 13)),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Text('\$${_amount.toStringAsFixed(0)} USD',
+                      style: const TextStyle(
+                          color: Color(0xFF00D4FF),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                  Text(
+                      '${(_amount * kExchangeRate).toStringAsFixed(0)} DA',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 11)),
+                ]),
+              ],
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10)),
+              child: Text(_error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.redAccent, fontSize: 13)),
+            ),
+          ],
+          const SizedBox(height: 24),
+          _gradientBtn(
+            label: _isRecharge
+                ? 'Confirmer le rechargement'
+                : 'Activer la carte',
+            loading: _loading,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: _confirm,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _typeBtn(String label, bool active, VoidCallback onTap) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.all(4),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            gradient: active
+                ? const LinearGradient(
+                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)])
+                : null,
+          ),
+          child: Text(label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: active ? Colors.black : Colors.white54,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivationResult() {
+    final r = _result!;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded,
+                  color: Color(0xFF00D4FF), size: 48),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Carte activée avec succès !',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(r['holder'] ?? '',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 14)),
+          const SizedBox(height: 28),
+          _infoCard('Numéro de carte', r['number'] ?? '—',
+              Icons.credit_card_rounded),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+                child: _infoCard('Expiry', r['expiry'] ?? '—',
+                    Icons.calendar_month_rounded)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: _infoCard(
+                    'CVV', r['cvv'] ?? '—', Icons.lock_rounded)),
+          ]),
+          const SizedBox(height: 28),
+          _gradientBtn(
+            label: 'Nouvelle opération',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: _reset,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoCard(String label, String value, IconData icon) {
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: value));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('$label copié'),
+          duration: const Duration(seconds: 1),
+          backgroundColor: const Color(0xFF1A2332),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A2332),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, color: const Color(0xFF00D4FF), size: 14),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 10,
+                      letterSpacing: 1.2)),
+              const Spacer(),
+              const Icon(Icons.copy_rounded,
+                  color: Colors.white24, size: 14),
+            ]),
+            const SizedBox(height: 8),
+            Text(value,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                    letterSpacing: 1.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRechargeResult() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 40, 20, 40),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.bolt_rounded,
+                color: Color(0xFF00D4FF), size: 48),
+          ),
+          const SizedBox(height: 20),
+          const Text('Rechargement confirmé !',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text('Ref: $_rechargeId',
+              style: const TextStyle(
+                  color: Color(0xFF00D4FF),
+                  fontSize: 14,
+                  fontFamily: 'monospace')),
+          const Spacer(),
+          _gradientBtn(
+            label: 'Nouvelle opération',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: _reset,
+          ),
+        ],
+      ),
     );
   }
 }

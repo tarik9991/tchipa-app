@@ -1459,6 +1459,10 @@ class _ActivationSheetState extends State<_ActivationSheet> {
   _ActStep _step = _ActStep.pick;
   double _amount = 7.0;
   static const _presets = [7.0, 10.0, 20.0, 50.0];
+  static const _kMargin = 0.10; // marge Tchipa 10%
+  // Prix estimé affiché avant la création de commande (PayGate ~6.64% + marge 10%)
+  static double _estimatedUsdt(double cardValue) =>
+      double.parse((cardValue * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
   VccOrder? _order;
   String? _redeemLink;
   String? _error;
@@ -1555,7 +1559,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         const Text('Choisir le montant de la carte',
             style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
-        Text('Paiement en USDT sur le réseau Polygon',
+        Text('Remettez le montant en DZD à votre agent',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
         const SizedBox(height: 20),
         GridView.count(
@@ -1587,9 +1591,10 @@ class _ActivationSheetState extends State<_ActivationSheet> {
                         style: TextStyle(
                             color: sel ? Colors.black : Colors.white,
                             fontWeight: FontWeight.bold, fontSize: 16)),
-                    Text('USDT', style: TextStyle(
-                        color: sel ? Colors.black54 : Colors.white38,
-                        fontSize: 10)),
+                    Text('${(_estimatedUsdt(amt) * kExchangeRate).toStringAsFixed(0)} DA',
+                        style: TextStyle(
+                            color: sel ? Colors.black54 : Colors.white38,
+                            fontSize: 10)),
                   ],
                 ),
               ),
@@ -1607,7 +1612,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Text('Carte Mastercard',
                 style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
-            Text('\$$_amount USDT',
+            Text('≈ ${_estimatedUsdt(_amount)} USDT · ${(_estimatedUsdt(_amount) * kExchangeRate).toStringAsFixed(0)} DA',
                 style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold)),
           ]),
         ),
@@ -1642,56 +1647,29 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         children: [
           _handle(),
           const SizedBox(height: 20),
-          const Text('Envoyez le paiement',
+          const Text('Commande créée',
               style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('Montant exact en USDT sur le réseau Polygon uniquement',
+          Text('Remettez le montant ci-dessous à votre agent',
               style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
-          const SizedBox(height: 18),
-          if (order.qrCodeBase64 != null)
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                    color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                child: Image.memory(
-                  base64Decode(order.qrCodeBase64!),
-                  width: 150, height: 150, fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: const Color(0xFF1A2332),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
             ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('MONTANT EXACT À ENVOYER',
+            child: Column(children: [
+              Text('MONTANT À REMETTRE À L\'AGENT',
                   style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 6),
-              Text('${order.amountUsdt} USDT (Polygon)',
+              const SizedBox(height: 8),
+              Text('${(double.tryParse(order.amountUsdt) ?? 0) * kExchangeRate ~/ 1} DA',
                   style: const TextStyle(color: Color(0xFF00D4FF),
-                      fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Text('ADRESSE DE PAIEMENT',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 6),
-              SelectableText(order.cryptoAddress,
-                  style: const TextStyle(color: Colors.white70, fontSize: 11,
-                      fontFamily: 'monospace')),
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: () => Clipboard.setData(
-                    ClipboardData(text: order.cryptoAddress)),
-                icon: const Icon(Icons.copy, size: 14),
-                label: const Text('Copier l\'adresse'),
-                style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF00D4FF),
-                    side: const BorderSide(color: Color(0xFF00D4FF))),
-              ),
+                      fontSize: 32, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text('≈ ${order.amountUsdt} USDT · carte \$${order.cardValue.toStringAsFixed(0)}',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
             ]),
           ),
           const SizedBox(height: 10),
@@ -1703,7 +1681,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
               border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
             ),
             child: Text(
-              '⚠️ Réseau Polygon UNIQUEMENT. Envoyez du USDT, pas d\'autre token. Tout mauvais envoi est définitivement perdu.',
+              'Votre agent traitera le paiement. Une fois confirmé, votre carte sera prête.',
               style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
             ),
           ),

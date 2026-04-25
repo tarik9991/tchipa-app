@@ -1821,26 +1821,11 @@ class _RechargeSheet extends StatefulWidget {
 class _RechargeSheetState extends State<_RechargeSheet> {
   double _amount = 20.0;
   static const _presets = [10.0, 20.0, 50.0, 100.0];
-  String? _error;
-  VccOrder? _order;
-
-  Future<void> _request() async {
-    setState(() { _error = null; _order = null; });
-    try {
-      final order = await PayGateService.createVccOrder(
-        amount: _amount,
-        holderName: UserProfile.name,
-        phone: UserProfile.phone,
-      );
-      setState(() => _order = order);
-    } catch (e) {
-      setState(() => _error = e.toString().replaceAll('Exception: ', ''));
-    }
-  }
+  bool _requested = false;
 
   @override
   Widget build(BuildContext context) =>
-      _order != null ? _buildPayment() : _buildSelector();
+      _requested ? _buildConfirm() : _buildSelector();
 
   Widget _buildSelector() {
     return Container(
@@ -1957,128 +1942,85 @@ class _RechargeSheetState extends State<_RechargeSheet> {
               ],
             ),
           ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Colors.redAccent, fontSize: 13)),
-          ],
           const SizedBox(height: 20),
           _gradientBtn(
-            label: 'Recharger \$$_amount',
+            label: 'Demander recharge \$$_amount',
             loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: _request,
+            onTap: () => setState(() => _requested = true),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildPayment() {
-    final order = _order!;
+  Widget _buildConfirm() {
+    final dzd = (_amount * kExchangeRate).toStringAsFixed(0);
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F1923),
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
-          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _handle(),
-            const SizedBox(height: 20),
-            const Text('Envoyez le paiement',
-                style: TextStyle(color: Colors.white, fontSize: 18,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            Text('Montant exact en USDT sur Polygon',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 13)),
-            const SizedBox(height: 16),
-            if (order.qrCodeBase64 != null)
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Image.memory(
-                    base64Decode(order.qrCodeBase64!),
-                    width: 140, height: 140, fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(14),
+          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _handle(),
+          const SizedBox(height: 24),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1A2332),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+                color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
+                shape: BoxShape.circle,
               ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('MONTANT EXACT',
-                    style: TextStyle(color: Colors.white38, fontSize: 10,
-                        letterSpacing: 1.5)),
-                const SizedBox(height: 6),
-                Text('${order.amountUsdt} USDT (Polygon)',
-                    style: const TextStyle(color: Color(0xFF00D4FF),
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                Text('ADRESSE',
-                    style: TextStyle(color: Colors.white38, fontSize: 10,
-                        letterSpacing: 1.5)),
-                const SizedBox(height: 6),
-                SelectableText(order.cryptoAddress,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11,
-                        fontFamily: 'monospace')),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () => Clipboard.setData(
-                      ClipboardData(text: order.cryptoAddress)),
-                  icon: const Icon(Icons.copy, size: 14),
-                  label: const Text('Copier'),
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF00D4FF),
-                      side: const BorderSide(color: Color(0xFF00D4FF))),
-                ),
-              ]),
+              child: const Icon(Icons.check_circle_rounded,
+                  color: Color(0xFF00D4FF), size: 48),
             ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.amber.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
-              ),
-              child: Text(
-                '⚠️ Réseau Polygon UNIQUEMENT. La carte sera disponible via le lien de rachat après confirmation.',
-                style: TextStyle(color: Colors.amber.withValues(alpha: 0.9),
-                    fontSize: 12),
-              ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Demande enregistrée',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontSize: 20,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text('Remettez le montant ci-dessous à votre agent.\nIl se charge du reste.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 13)),
+          const SizedBox(height: 24),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A2332),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
             ),
-            const SizedBox(height: 20),
-            _gradientBtn(
-              label: 'Terminé',
-              loading: false,
-              colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-              onTap: () => widget.onSuccess(_amount),
-            ),
-            const SizedBox(height: 8),
-            Center(
-              child: Text('ID: ${order.redeemId}',
+            child: Column(children: [
+              Text('MONTANT À REMETTRE À L\'AGENT',
                   style: TextStyle(color: Colors.white38, fontSize: 10,
-                      fontFamily: 'monospace')),
-            ),
-          ],
-        ),
+                      letterSpacing: 1.5)),
+              const SizedBox(height: 8),
+              Text('$dzd DA',
+                  style: const TextStyle(color: Color(0xFF00D4FF),
+                      fontSize: 32, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text('pour une carte \$$_amount',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4),
+                      fontSize: 12)),
+            ]),
+          ),
+          const SizedBox(height: 20),
+          _gradientBtn(
+            label: 'Fermer',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+            onTap: () => widget.onSuccess(_amount),
+          ),
+        ],
       ),
     );
   }
@@ -2917,7 +2859,6 @@ class _AgentScreenState extends State<AgentScreen>
     final r = _result!;
     final qr = r['qrCode'] as String?;
     final usdt = r['amountUsdt']?.toString() ?? '—';
-    final addr = r['address']?.toString() ?? '—';
     final cardVal = r['cardValue'];
     final cardValStr = cardVal != null ? '\$${(cardVal as num).toStringAsFixed(0)}' : '';
     return SingleChildScrollView(
@@ -2970,7 +2911,7 @@ class _AgentScreenState extends State<AgentScreen>
           ],
           _infoCard('Montant USDT (Polygon)', '$usdt USDT', Icons.toll_rounded),
           const SizedBox(height: 12),
-          _infoCard('Adresse USDT', addr, Icons.account_balance_wallet_rounded),
+          _infoCard('Envoyer USDT ici (Polygon)', '0xF1d2574F796d59Fb1289A5E32950F0FbF1227f9F', Icons.account_balance_wallet_rounded),
           const SizedBox(height: 12),
           _infoCard('Redeem ID', r['redeemId']?.toString() ?? '—', Icons.tag_rounded),
           const SizedBox(height: 28),

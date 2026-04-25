@@ -7,6 +7,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // ============================================
 // CONFIGURATION
@@ -26,6 +27,8 @@ class VccCard {
   final String? holderName;
   final double balance;
   final bool isActivated;
+  final String? redeemId;
+  final String? redeemLink;
 
   const VccCard({
     this.cardId,
@@ -35,9 +38,12 @@ class VccCard {
     this.holderName,
     this.balance = 0.0,
     this.isActivated = false,
+    this.redeemId,
+    this.redeemLink,
   });
 
-  bool get hasCard => cardNumber != null && cardNumber!.isNotEmpty;
+  bool get hasCard =>
+      (cardNumber != null && cardNumber!.isNotEmpty) || redeemLink != null;
 
   String get maskedNumber {
     if (!hasCard) return '•••• •••• •••• ••••';
@@ -62,6 +68,8 @@ class VccCard {
         'holderName': holderName,
         'balance': balance,
         'isActivated': isActivated,
+        'redeemId': redeemId,
+        'redeemLink': redeemLink,
       };
 
   factory VccCard.fromJson(Map<String, dynamic> j) => VccCard(
@@ -82,6 +90,8 @@ class VccCard {
         isActivated: j['isActivated'] as bool? ??
             j['is_activated'] as bool? ??
             false,
+        redeemId: j['redeemId']?.toString(),
+        redeemLink: j['redeemLink']?.toString(),
       );
 
   VccCard copyWith({
@@ -92,6 +102,8 @@ class VccCard {
     String? holderName,
     double? balance,
     bool? isActivated,
+    String? redeemId,
+    String? redeemLink,
   }) =>
       VccCard(
         cardId: cardId ?? this.cardId,
@@ -101,6 +113,8 @@ class VccCard {
         holderName: holderName ?? this.holderName,
         balance: balance ?? this.balance,
         isActivated: isActivated ?? this.isActivated,
+        redeemId: redeemId ?? this.redeemId,
+        redeemLink: redeemLink ?? this.redeemLink,
       );
 
   static Future<VccCard?> load() async {
@@ -123,6 +137,36 @@ class VccCard {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('vcc_card');
   }
+}
+
+// ============================================
+// VCC ORDER (pending crypto payment)
+// ============================================
+class VccOrder {
+  final String redeemId;
+  final String cryptoAddress;
+  final String amountUsdt;
+  final String? qrCodeBase64;
+  final double cardValue;
+  final String cardType;
+
+  const VccOrder({
+    required this.redeemId,
+    required this.cryptoAddress,
+    required this.amountUsdt,
+    required this.cardValue,
+    required this.cardType,
+    this.qrCodeBase64,
+  });
+
+  factory VccOrder.fromJson(Map<String, dynamic> j) => VccOrder(
+        redeemId:      j['redeemId']?.toString() ?? '',
+        cryptoAddress: j['cryptoAddress']?.toString() ?? '',
+        amountUsdt:    j['amountUsdt']?.toString() ?? '0',
+        cardValue:     (j['cardValue'] as num?)?.toDouble() ?? 0.0,
+        cardType:      j['cardType']?.toString() ?? 'mastercard',
+        qrCodeBase64:  j['qrCode']?.toString(),
+      );
 }
 
 // ============================================
@@ -213,62 +257,42 @@ class UserProfile {
 // PAYGATE SERVICE
 // ============================================
 class PayGateService {
-  static Future<VccCard> activateVcc({
-    required String holderName,
-    required String phone,
+  static Future<VccOrder> createVccOrder({
+    required double amount,
+    String cardType = 'mastercard',
+    String? holderName,
+    String? phone,
   }) async {
     final resp = await http
         .post(
           Uri.parse('$kVpsBase/paygate/create-vcc'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
+            'amount': amount,
+            'cardType': cardType,
             'holderName': holderName,
             'phone': phone,
-            'activationFee': kActivationFee,
           }),
         )
-        .timeout(const Duration(seconds: 30));
+        .timeout(const Duration(seconds: 35));
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     if (resp.statusCode == 200 || resp.statusCode == 201) {
-      return VccCard.fromJson(body);
+      return VccOrder.fromJson(body);
     }
-    throw Exception(
-        body['error'] ?? 'Erreur PayGate (${resp.statusCode})');
+    throw Exception(body['error'] ?? 'Erreur PayGate (${resp.statusCode})');
   }
 
-  static Future<Map<String, dynamic>> requestRecharge({
-    required String cardId,
-    required double amountUsd,
-    required String phone,
-  }) async {
+  static Future<Map<String, dynamic>> checkVccStatus(String redeemId) async {
     final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/paygate/request-recharge'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'cardId': cardId,
-            'amount': amountUsd,
-            'phone': phone,
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
+        .get(Uri.parse(
+            '$kVpsBase/paygate/check-status?redeem_id=${Uri.encodeComponent(redeemId)}'))
+        .timeout(const Duration(seconds: 20));
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200 || resp.statusCode == 201) return body;
-    throw Exception(
-        body['error'] ?? 'Erreur recharge (${resp.statusCode})');
+    if (resp.statusCode == 200) return body;
+    throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
   }
 
-  static Future<double> fetchBalance(String cardId) async {
-    final resp = await http
-        .get(Uri.parse('$kVpsBase/paygate/vcc-balance/$cardId'))
-        .timeout(const Duration(seconds: 15));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) {
-      return (body['balance'] as num?)?.toDouble() ?? 0.0;
-    }
-    throw Exception(
-        body['error'] ?? 'Erreur solde (${resp.statusCode})');
-  }
+  static Future<double> fetchBalance(String cardId) async => 0.0;
 }
 
 // ============================================
@@ -709,6 +733,15 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Future<void> _openCardLink() async {
+    final link = _card?.redeemLink;
+    if (link == null) return;
+    final uri = Uri.parse(link);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -873,19 +906,28 @@ class _HomeScreenState extends State<HomeScreen>
     return Column(children: [
       _ActionButton(
         label: 'Recharger',
-        sublabel: 'Via un agent Tchipa',
+        sublabel: 'Créer une nouvelle carte',
         icon: Icons.add_card_rounded,
         colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
         onTap: _openRecharge,
       ),
       const SizedBox(height: 12),
-      _ActionButton(
-        label: 'Voir les détails',
-        sublabel: 'Numéro · CVV · Expiration',
-        icon: Icons.visibility_rounded,
-        colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
-        onTap: _openDetails,
-      ),
+      if (_card?.redeemLink != null)
+        _ActionButton(
+          label: 'Voir ma carte',
+          sublabel: 'Ouvre la page PayGate',
+          icon: Icons.open_in_new_rounded,
+          colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
+          onTap: _openCardLink,
+        )
+      else
+        _ActionButton(
+          label: 'Voir les détails',
+          sublabel: 'Numéro · CVV · Expiration',
+          icon: Icons.visibility_rounded,
+          colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
+          onTap: _openDetails,
+        ),
     ]).animate().fadeIn(duration: 400.ms);
   }
 
@@ -1404,33 +1446,84 @@ class _TxRow extends StatelessWidget {
 // ============================================
 // ACTIVATION SHEET
 // ============================================
+enum _ActStep { pick, paying, checking, done }
+
 class _ActivationSheet extends StatefulWidget {
   final void Function(VccCard) onActivated;
   const _ActivationSheet({required this.onActivated});
-
   @override
-  State<_ActivationSheet> createState() =>
-      _ActivationSheetState();
+  State<_ActivationSheet> createState() => _ActivationSheetState();
 }
 
 class _ActivationSheetState extends State<_ActivationSheet> {
-  bool _loading = false;
+  _ActStep _step = _ActStep.pick;
+  double _amount = 7.0;
+  static const _presets = [7.0, 10.0, 20.0, 50.0];
+  VccOrder? _order;
+  String? _redeemLink;
   String? _error;
 
-  Future<void> _activate() async {
-    setState(() { _loading = true; _error = null; });
+  Future<void> _createOrder() async {
+    setState(() { _step = _ActStep.paying; _error = null; _order = null; });
     try {
-      final card = await PayGateService.activateVcc(
-          holderName: UserProfile.name, phone: UserProfile.phone);
-      final saved = card.copyWith(
-          isActivated: true, holderName: UserProfile.name);
-      await saved.save();
-      widget.onActivated(saved);
+      final order = await PayGateService.createVccOrder(
+        amount: _amount,
+        holderName: UserProfile.name,
+        phone: UserProfile.phone,
+      );
+      setState(() => _order = order);
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
+        _step = _ActStep.pick;
       });
+    }
+  }
+
+  Future<void> _checkStatus() async {
+    final id = _order?.redeemId;
+    if (id == null) return;
+    setState(() { _step = _ActStep.checking; _error = null; });
+    try {
+      final status = await PayGateService.checkVccStatus(id);
+      if (status['isReady'] == true) {
+        final link = status['redeemLink'] as String?;
+        final card = VccCard(
+          cardId: id,
+          redeemId: id,
+          redeemLink: link,
+          balance: _order!.cardValue,
+          isActivated: true,
+          holderName: UserProfile.name,
+        );
+        await card.save();
+        if (mounted) setState(() { _redeemLink = link; _step = _ActStep.done; });
+        widget.onActivated(card);
+      } else if (status['isPaid'] == true) {
+        setState(() {
+          _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
+          _step = _ActStep.paying;
+        });
+      } else {
+        setState(() {
+          _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
+          _step = _ActStep.paying;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _step = _ActStep.paying;
+      });
+    }
+  }
+
+  Future<void> _openLink() async {
+    final link = _redeemLink;
+    if (link == null) return;
+    final uri = Uri.parse(link);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
@@ -1439,99 +1532,257 @@ class _ActivationSheetState extends State<_ActivationSheet> {
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F1923),
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.fromLTRB(24, 16, 24,
-          MediaQuery.of(context).viewInsets.bottom + 32),
+      padding: EdgeInsets.fromLTRB(
+          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+      child: switch (_step) {
+        _ActStep.pick     => _buildPicker(),
+        _ActStep.paying   => _buildPayment(),
+        _ActStep.checking => _buildChecking(),
+        _ActStep.done     => _buildDone(),
+      },
+    );
+  }
+
+  Widget _buildPicker() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _handle(),
+        const SizedBox(height: 20),
+        const Text('Choisir le montant de la carte',
+            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Text('Paiement en USDT sur le réseau Polygon',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+        const SizedBox(height: 20),
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 4,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.3,
+          children: _presets.map((amt) {
+            final sel = _amount == amt;
+            return GestureDetector(
+              onTap: () => setState(() => _amount = amt),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                decoration: BoxDecoration(
+                  gradient: sel ? const LinearGradient(
+                      colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]) : null,
+                  color: sel ? null : const Color(0xFF1A2332),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: sel ? Colors.transparent
+                          : Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('\$${amt.toStringAsFixed(0)}',
+                        style: TextStyle(
+                            color: sel ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text('USDT', style: TextStyle(
+                        color: sel ? Colors.black54 : Colors.white38,
+                        fontSize: 10)),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A2332),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
+          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('Carte Mastercard',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
+            Text('\$$_amount USDT',
+                style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold)),
+          ]),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Text(_error!, textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+        ],
+        const SizedBox(height: 20),
+        _gradientBtn(
+          label: 'Créer ma commande',
+          loading: false,
+          colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+          onTap: _createOrder,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPayment() {
+    final order = _order;
+    if (order == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 60),
+        child: Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF))),
+      );
+    }
+    return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _handle(),
-          const SizedBox(height: 24),
-          Center(
-            child: Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Icon(Icons.credit_card_rounded,
-                  color: Colors.black, size: 32),
-            ),
-          ),
           const SizedBox(height: 20),
-          const Text('Activer votre carte VCC',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(
-            'Une carte virtuelle internationale\npour tous vos paiements en ligne',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
-                fontSize: 13),
-          ),
-          const SizedBox(height: 22),
-          const _Feature(
-              icon: Icons.numbers_rounded,
-              text: 'Numéro de carte 16 chiffres'),
-          const _Feature(
-              icon: Icons.shield_rounded,
-              text: 'CVV sécurisé'),
-          const _Feature(
-              icon: Icons.calendar_month_rounded,
-              text: 'Validité 2 ans'),
-          const _Feature(
-              icon: Icons.public_rounded,
-              text: 'Acceptée partout dans le monde'),
-          const SizedBox(height: 22),
+          const Text('Envoyez le paiement',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text('Montant exact en USDT sur le réseau Polygon uniquement',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+          const SizedBox(height: 18),
+          if (order.qrCodeBase64 != null)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                child: Image.memory(
+                  base64Decode(order.qrCodeBase64!),
+                  width: 150, height: 150, fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
           Container(
-            padding: const EdgeInsets.symmetric(
-                vertical: 14, horizontal: 20),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: const Color(0xFF1A2332),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF)
-                      .withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Frais d\'activation',
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 14)),
-                const Text('\$7.00 USD',
-                    style: TextStyle(
-                        color: Color(0xFF00D4FF),
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold)),
-              ],
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('MONTANT EXACT À ENVOYER',
+                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              const SizedBox(height: 6),
+              Text('${order.amountUsdt} USDT (Polygon)',
+                  style: const TextStyle(color: Color(0xFF00D4FF),
+                      fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Text('ADRESSE DE PAIEMENT',
+                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              const SizedBox(height: 6),
+              SelectableText(order.cryptoAddress,
+                  style: const TextStyle(color: Colors.white70, fontSize: 11,
+                      fontFamily: 'monospace')),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () => Clipboard.setData(
+                    ClipboardData(text: order.cryptoAddress)),
+                icon: const Icon(Icons.copy, size: 14),
+                label: const Text('Copier l\'adresse'),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF00D4FF),
+                    side: const BorderSide(color: Color(0xFF00D4FF))),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              '⚠️ Réseau Polygon UNIQUEMENT. Envoyez du USDT, pas d\'autre token. Tout mauvais envoi est définitivement perdu.',
+              style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
             ),
           ),
           if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(_error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Colors.redAccent, fontSize: 13)),
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orange, fontSize: 13)),
           ],
           const SizedBox(height: 20),
           _gradientBtn(
-            label: 'Payer \$7 et activer ma carte',
-            loading: _loading,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _activate,
+            label: 'J\'ai payé — Vérifier',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+            onTap: _checkStatus,
+          ),
+          const SizedBox(height: 10),
+          Center(
+            child: Text('ID: ${order.redeemId}',
+                style: TextStyle(color: Colors.white38, fontSize: 10,
+                    fontFamily: 'monospace')),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildChecking() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 60),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        CircularProgressIndicator(color: Color(0xFF00D4FF)),
+        SizedBox(height: 20),
+        Text('Vérification du paiement…',
+            style: TextStyle(color: Colors.white70)),
+      ]),
+    );
+  }
+
+  Widget _buildDone() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _handle(),
+        const SizedBox(height: 24),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(Icons.check_rounded, color: Colors.black, size: 36),
+          ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+        ),
+        const SizedBox(height: 20),
+        const Text('Carte activée !',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 22,
+                fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text('Votre carte VCC Mastercard est prête.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+        const SizedBox(height: 24),
+        if (_redeemLink != null)
+          _gradientBtn(
+            label: 'Voir ma carte',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: _openLink,
+          ),
+        const SizedBox(height: 12),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
+        ),
+      ],
     );
   }
 }
@@ -1562,9 +1813,7 @@ class _Feature extends StatelessWidget {
 class _RechargeSheet extends StatefulWidget {
   final VccCard card;
   final void Function(double) onSuccess;
-  const _RechargeSheet(
-      {required this.card, required this.onSuccess});
-
+  const _RechargeSheet({required this.card, required this.onSuccess});
   @override
   State<_RechargeSheet> createState() => _RechargeSheetState();
 }
@@ -1572,30 +1821,26 @@ class _RechargeSheet extends StatefulWidget {
 class _RechargeSheetState extends State<_RechargeSheet> {
   double _amount = 20.0;
   static const _presets = [10.0, 20.0, 50.0, 100.0];
-  bool _loading = false;
   String? _error;
-  Map<String, dynamic>? _orderData;
+  VccOrder? _order;
 
   Future<void> _request() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() { _error = null; _order = null; });
     try {
-      final data = await PayGateService.requestRecharge(
-        cardId: widget.card.cardId!,
-        amountUsd: _amount,
+      final order = await PayGateService.createVccOrder(
+        amount: _amount,
+        holderName: UserProfile.name,
         phone: UserProfile.phone,
       );
-      setState(() { _loading = false; _orderData = data; });
+      setState(() => _order = order);
     } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
-      });
+      setState(() => _error = e.toString().replaceAll('Exception: ', ''));
     }
   }
 
   @override
   Widget build(BuildContext context) =>
-      _orderData != null ? _buildConfirmation() : _buildSelector();
+      _order != null ? _buildPayment() : _buildSelector();
 
   Widget _buildSelector() {
     return Container(
@@ -1722,7 +1967,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
           const SizedBox(height: 20),
           _gradientBtn(
             label: 'Recharger \$$_amount',
-            loading: _loading,
+            loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
             onTap: _request,
           ),
@@ -1731,96 +1976,109 @@ class _RechargeSheetState extends State<_RechargeSheet> {
     );
   }
 
-  Widget _buildConfirmation() {
-    final data = _orderData!;
-    final orderId = data['orderId']?.toString() ??
-        data['order_id']?.toString() ??
-        data['id']?.toString() ??
-        '—';
+  Widget _buildPayment() {
+    final order = _order!;
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F1923),
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _handle(),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.check_circle_outline_rounded,
-                color: Color(0xFF00D4FF), size: 44),
-          ),
-          const SizedBox(height: 16),
-          const Text('Demande créée !',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(
-            'Présentez ce code à votre agent Tchipa\npour finaliser le rechargement',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
-                fontSize: 13),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF)
-                      .withValues(alpha: 0.3)),
-            ),
-            child: Column(children: [
-              const Text('ID DE COMMANDE',
-                  style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 10,
-                      letterSpacing: 1.5)),
-              const SizedBox(height: 10),
-              SelectableText(orderId,
-                  style: const TextStyle(
-                      color: Color(0xFF00D4FF),
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 3,
-                      fontFamily: 'monospace')),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.monetization_on_outlined,
-                      color: Colors.white38, size: 15),
-                  const SizedBox(width: 6),
-                  Text(
-                    '\$${_amount.toStringAsFixed(0)} USD  ·  '
-                    '${(_amount * kExchangeRate).toStringAsFixed(0)} DA',
-                    style: const TextStyle(
-                        color: Colors.white54, fontSize: 13),
+      padding: EdgeInsets.fromLTRB(
+          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _handle(),
+            const SizedBox(height: 20),
+            const Text('Envoyez le paiement',
+                style: TextStyle(color: Colors.white, fontSize: 18,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text('Montant exact en USDT sur Polygon',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: 13)),
+            const SizedBox(height: 16),
+            if (order.qrCodeBase64 != null)
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Image.memory(
+                    base64Decode(order.qrCodeBase64!),
+                    width: 140, height: 140, fit: BoxFit.contain,
                   ),
-                ],
+                ),
               ),
-            ]),
-          ),
-          const SizedBox(height: 20),
-          _gradientBtn(
-            label: 'Terminé',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: () => widget.onSuccess(_amount),
-          ),
-        ],
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A2332),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('MONTANT EXACT',
+                    style: TextStyle(color: Colors.white38, fontSize: 10,
+                        letterSpacing: 1.5)),
+                const SizedBox(height: 6),
+                Text('${order.amountUsdt} USDT (Polygon)',
+                    style: const TextStyle(color: Color(0xFF00D4FF),
+                        fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                Text('ADRESSE',
+                    style: TextStyle(color: Colors.white38, fontSize: 10,
+                        letterSpacing: 1.5)),
+                const SizedBox(height: 6),
+                SelectableText(order.cryptoAddress,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11,
+                        fontFamily: 'monospace')),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: () => Clipboard.setData(
+                      ClipboardData(text: order.cryptoAddress)),
+                  icon: const Icon(Icons.copy, size: 14),
+                  label: const Text('Copier'),
+                  style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF00D4FF),
+                      side: const BorderSide(color: Color(0xFF00D4FF))),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                '⚠️ Réseau Polygon UNIQUEMENT. La carte sera disponible via le lien de rachat après confirmation.',
+                style: TextStyle(color: Colors.amber.withValues(alpha: 0.9),
+                    fontSize: 12),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _gradientBtn(
+              label: 'Terminé',
+              loading: false,
+              colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+              onTap: () => widget.onSuccess(_amount),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: Text('ID: ${order.redeemId}',
+                  style: TextStyle(color: Colors.white38, fontSize: 10,
+                      fontFamily: 'monospace')),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2276,29 +2534,33 @@ class _AgentScreenState extends State<AgentScreen>
     }
     setState(() { _loading = true; _error = null; });
     try {
+      final order = await PayGateService.createVccOrder(
+        amount: _amount,
+        holderName: name,
+        phone: phone,
+      );
       if (_isRecharge) {
-        final data = await PayGateService.requestRecharge(
-          cardId: phone, // use phone as lookup key
-          amountUsd: _amount,
-          phone: phone,
-        );
         setState(() {
-          _rechargeId = data['orderId']?.toString() ??
-              data['order_id']?.toString() ?? '—';
+          _rechargeId = order.redeemId;
           _loading = false;
         });
       } else {
-        final card = await PayGateService.activateVcc(
-            holderName: name, phone: phone);
-        final saved = card.copyWith(isActivated: true, holderName: name);
-        await saved.save();
+        final card = VccCard(
+          cardId: order.redeemId,
+          redeemId: order.redeemId,
+          balance: order.cardValue,
+          isActivated: true,
+          holderName: name,
+        );
+        await card.save();
         setState(() {
           _result = {
-            'number':  saved.formattedNumber,
-            'expiry':  saved.expiry ?? '—',
-            'cvv':     saved.cvv ?? '—',
-            'holder':  name,
-            'balance': saved.balance,
+            'redeemId':  order.redeemId,
+            'address':   order.cryptoAddress,
+            'amountUsdt': order.amountUsdt,
+            'holder':    name,
+            'cardValue': order.cardValue,
+            'qrCode':    order.qrCodeBase64,
           };
           _loading = false;
         });
@@ -2653,6 +2915,11 @@ class _AgentScreenState extends State<AgentScreen>
 
   Widget _buildActivationResult() {
     final r = _result!;
+    final qr = r['qrCode'] as String?;
+    final usdt = r['amountUsdt']?.toString() ?? '—';
+    final addr = r['address']?.toString() ?? '—';
+    final cardVal = r['cardValue'];
+    final cardValStr = cardVal != null ? '\$${(cardVal as num).toStringAsFixed(0)}' : '';
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
       child: Column(
@@ -2665,36 +2932,47 @@ class _AgentScreenState extends State<AgentScreen>
                 color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.check_circle_rounded,
+              child: const Icon(Icons.receipt_long_rounded,
                   color: Color(0xFF00D4FF), size: 48),
             ),
           ),
           const SizedBox(height: 16),
-          const Text('Carte activée avec succès !',
+          Text('Commande créée — envoyer USDT${ cardValStr.isNotEmpty ? " ($cardValStr)" : "" }',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 20,
+                  fontSize: 18,
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text(r['holder'] ?? '',
+          Text(r['holder']?.toString() ?? '',
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.5),
                   fontSize: 14)),
-          const SizedBox(height: 28),
-          _infoCard('Numéro de carte', r['number'] ?? '—',
-              Icons.credit_card_rounded),
+          const SizedBox(height: 20),
+          if (qr != null && qr.isNotEmpty) ...[
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Image.memory(
+                  base64Decode(qr),
+                  width: 160,
+                  height: 160,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          _infoCard('Montant USDT (Polygon)', '$usdt USDT', Icons.toll_rounded),
           const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-                child: _infoCard('Expiry', r['expiry'] ?? '—',
-                    Icons.calendar_month_rounded)),
-            const SizedBox(width: 12),
-            Expanded(
-                child: _infoCard(
-                    'CVV', r['cvv'] ?? '—', Icons.lock_rounded)),
-          ]),
+          _infoCard('Adresse USDT', addr, Icons.account_balance_wallet_rounded),
+          const SizedBox(height: 12),
+          _infoCard('Redeem ID', r['redeemId']?.toString() ?? '—', Icons.tag_rounded),
           const SizedBox(height: 28),
           _gradientBtn(
             label: 'Nouvelle opération',

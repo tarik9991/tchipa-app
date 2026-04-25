@@ -2859,6 +2859,7 @@ class _AgentScreenState extends State<AgentScreen>
     final r = _result!;
     final qr = r['qrCode'] as String?;
     final usdt = r['amountUsdt']?.toString() ?? '—';
+    final addr = r['address']?.toString() ?? '—';
     final cardVal = r['cardValue'];
     final cardValStr = cardVal != null ? '\$${(cardVal as num).toStringAsFixed(0)}' : '';
     return SingleChildScrollView(
@@ -2911,7 +2912,7 @@ class _AgentScreenState extends State<AgentScreen>
           ],
           _infoCard('Montant USDT (Polygon)', '$usdt USDT', Icons.toll_rounded),
           const SizedBox(height: 12),
-          _infoCard('Envoyer USDT ici (Polygon)', '0xF1d2574F796d59Fb1289A5E32950F0FbF1227f9F', Icons.account_balance_wallet_rounded),
+          _infoCard('Envoyer USDT ici (Polygon)', addr, Icons.account_balance_wallet_rounded),
           const SizedBox(height: 12),
           _infoCard('Redeem ID', r['redeemId']?.toString() ?? '—', Icons.tag_rounded),
           const SizedBox(height: 28),

@@ -391,13 +391,45 @@ class _SplashScreenState extends State<SplashScreen>
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(fit: StackFit.expand, children: [
-        FadeTransition(
-          opacity: _imgFade,
-          child: AnimatedBuilder(
-            animation: _flagCtrl,
-            builder: (_, __) => CustomPaint(
-              size: Size(size.width, size.height),
-              painter: CircuitBoardFlagPainter(_flagAnim.value),
+        Center(
+          child: FadeTransition(
+            opacity: _imgFade,
+            child: SizedBox(
+              width: 280, height: 280,
+              child: Stack(alignment: Alignment.center, children: [
+                AnimatedBuilder(
+                  animation: _flagCtrl,
+                  builder: (_, __) => CustomPaint(
+                    size: const Size(280, 280),
+                    painter: _ElectricLogoPainter(_flagAnim.value),
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00D4FF).withValues(alpha: 0.35),
+                        blurRadius: 40,
+                        spreadRadius: 8,
+                      ),
+                      BoxShadow(
+                        color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+                        blurRadius: 60,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'assets/nearpay_logo.png',
+                      width: 150, height: 150,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+              ]),
             ),
           ),
         ),
@@ -561,9 +593,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _refreshing = false;
 
   late AnimationController _shimmerCtrl;
-  late AnimationController _flagCtrl;
-  late Animation<double> _flagAnim;
-  late AnimationController _glowCtrl; // pulsing glow on activate button
+  late AnimationController _glowCtrl;
   late Animation<double> _glowAnim;
 
   @override
@@ -572,11 +602,6 @@ class _HomeScreenState extends State<HomeScreen>
     _shimmerCtrl = AnimationController(
         vsync: this, duration: const Duration(seconds: 2))
       ..repeat();
-    _flagCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 4))
-      ..repeat();
-    _flagAnim =
-        Tween<double>(begin: 0, end: 2 * pi).animate(_flagCtrl);
     _glowCtrl = AnimationController(
         vsync: this,
         duration: const Duration(milliseconds: 1400))
@@ -589,7 +614,6 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     _shimmerCtrl.dispose();
-    _flagCtrl.dispose();
     _glowCtrl.dispose();
     super.dispose();
   }
@@ -696,14 +720,21 @@ class _HomeScreenState extends State<HomeScreen>
           elevation: 0,
           titleSpacing: 16,
           title: Row(children: [
-            SizedBox(
+            Container(
               width: 32, height: 32,
-              child: AnimatedBuilder(
-                animation: _flagCtrl,
-                builder: (_, __) => CustomPaint(
-                  painter: CircuitBoardFlagPainter(
-                      _flagAnim.value, isMini: true),
-                ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.45),
+                    blurRadius: 10,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.asset('assets/nearpay_logo.png', fit: BoxFit.cover),
               ),
             ),
             const SizedBox(width: 12),
@@ -2174,353 +2205,127 @@ Widget _gradientBtn({
 }
 
 // ============================================
-// ALGERIAN TECH FLAG — CustomPaint
+// ELECTRIC LOGO PAINTER
 // ============================================
-class CircuitBoardFlagPainter extends CustomPainter {
+class _ElectricLogoPainter extends CustomPainter {
   final double phase;
-  final bool isMini;
+  _ElectricLogoPainter(this.phase);
 
-  CircuitBoardFlagPainter(this.phase, {this.isMini = false});
+  // Precomputed arc offsets seeded at 42 — always same shape, animated by phase
+  static final List<List<Offset>> _arcs = [];
+
+  static List<List<Offset>> _buildArcs(double r0, double r1) {
+    if (_arcs.isNotEmpty) return _arcs;
+    final rng = Random(42);
+    for (int arc = 0; arc < 12; arc++) {
+      final baseAngle = (arc / 12) * 2 * pi;
+      final pts = <Offset>[];
+      double r = r0;
+      double a = baseAngle;
+      while (r < r1) {
+        pts.add(Offset(cos(a) * r, sin(a) * r));
+        r += 5 + rng.nextDouble() * 7;
+        a += (rng.nextDouble() - 0.5) * 0.55;
+      }
+      pts.add(Offset(cos(a) * r1, sin(a) * r1));
+      _arcs.add(pts);
+    }
+    return _arcs;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final center = Offset(cx, cy);
+    final short = size.shortestSide;
+    final r0 = short * 0.30;
+    final r1 = short * 0.50;
+    final t = phase / (2 * pi); // 0..1
 
-    final glow    = (sin(phase * 1.4) + 1) * 0.5;
-    final glow2   = (sin(phase * 0.9 + 1.2) + 1) * 0.5;
-    final shimmer = (sin(phase * 2.1 + 0.5) + 1) * 0.5;
+    final arcs = _buildArcs(r0, r1);
 
-    canvas.drawRect(Rect.fromLTWH(0, 0, w * 0.5, h),
-        Paint()..color = const Color(0xFF041A06));
-    _drawLeftCircuits(canvas, w, h, glow, glow2);
-
-    canvas.drawRect(Rect.fromLTWH(w * 0.5, 0, w * 0.5, h),
-        Paint()..color = Colors.white);
-    _drawRightHolographic(canvas, w, h, shimmer);
-
-    _drawCrescent(canvas, w, h, glow);
-    _drawStar(canvas, w, h, glow, phase * 0.4);
-  }
-
-  void _drawLeftCircuits(Canvas canvas, double w, double h,
-      double glow, double glow2) {
-    canvas.save();
-    canvas.clipRect(Rect.fromLTWH(0, 0, w * 0.5, h));
-
-    final traceAlpha = 0.45 + glow * 0.40;
-    final tw = isMini ? 0.6 : 1.2;
-
-    if (!isMini) {
-      final gridP = Paint()
-        ..color = const Color(0xFF00FF44).withValues(alpha: 0.055)
-        ..strokeWidth = 0.4;
-      for (int i = 1; i < 5; i++) {
-        canvas.drawLine(Offset(w * 0.5 * i / 5, 0),
-            Offset(w * 0.5 * i / 5, h), gridP);
-      }
-      for (int i = 1; i < 8; i++) {
-        canvas.drawLine(
-            Offset(0, h * i / 8), Offset(w * 0.5, h * i / 8), gridP);
-      }
-    }
-
-    const segs = [
-      [0.00, 0.20, 0.46, 0.20],
-      [0.00, 0.50, 0.46, 0.50],
-      [0.00, 0.80, 0.46, 0.80],
-      [0.05, 0.35, 0.30, 0.35],
-      [0.10, 0.65, 0.42, 0.65],
-      [0.10, 0.00, 0.10, 1.00],
-      [0.26, 0.00, 0.26, 0.35],
-      [0.26, 0.65, 0.26, 1.00],
-      [0.40, 0.20, 0.40, 0.80],
-    ];
-
-    final glowP = Paint()
-      ..color = const Color(0xFF00FF44)
-          .withValues(alpha: traceAlpha * 0.4)
-      ..strokeWidth = tw * 4
+    // ── Pulsing concentric rings ──
+    final ringPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
-    final lineP = Paint()
-      ..color = const Color(0xFF00FF44).withValues(alpha: traceAlpha)
-      ..strokeWidth = tw
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    for (final s in segs) {
-      final p1 = Offset(s[0] * w, s[1] * h);
-      final p2 = Offset(s[2] * w, s[3] * h);
-      if (!isMini) canvas.drawLine(p1, p2, glowP);
-      canvas.drawLine(p1, p2, lineP);
-    }
-
-    const pads = [
-      [0.10, 0.20], [0.26, 0.20], [0.40, 0.20],
-      [0.10, 0.35], [0.26, 0.35],
-      [0.10, 0.50], [0.40, 0.50],
-      [0.10, 0.65], [0.26, 0.65], [0.40, 0.65],
-      [0.10, 0.80], [0.40, 0.80],
-    ];
-    final padR = isMini ? 1.2 : 2.5;
-    final padA = 0.55 + glow2 * 0.35;
-    final padGlowP = Paint()
-      ..color = const Color(0xFF00FF44).withValues(alpha: 0.45)
-      ..maskFilter =
-          MaskFilter.blur(BlurStyle.normal, isMini ? 1.5 : 4.0);
-    final padFillP = Paint()
-      ..color = const Color(0xFF00FF44).withValues(alpha: padA);
-    final padRingP = Paint()
-      ..color = const Color(0xCC88FFAA)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = isMini ? 0.4 : 0.7;
-
-    for (final p in pads) {
-      final c = Offset(p[0] * w, p[1] * h);
-      if (!isMini) canvas.drawCircle(c, padR * 2.2, padGlowP);
-      canvas.drawCircle(c, padR, padFillP);
-      canvas.drawCircle(c, padR, padRingP);
-    }
-
-    if (!isMini) {
-      _drawIC(canvas, Offset(w * 0.20, h * 0.50),
-          w * 0.10, h * 0.22, glow);
-    }
-
-    if (!isMini) {
-      _drawElectron(canvas, Offset(0, h * 0.20),
-          Offset(w * 0.46, h * 0.20),
-          (phase / (2 * pi)) % 1.0,
-          const Color(0xFF00FF88));
-      _drawElectron(canvas, Offset(w * 0.10, 0),
-          Offset(w * 0.10, h),
-          ((phase / (2 * pi)) * 0.7 + 0.3) % 1.0,
-          const Color(0xFF00D4FF));
-      _drawSpark(canvas, Offset(w * 0.26, h * 0.35), glow,
-          const Color(0xFF00FF44));
-      _drawSpark(canvas, Offset(w * 0.40, h * 0.65), glow2,
-          const Color(0xFF44FFAA));
-    } else {
-      final tM = (phase / (2 * pi)) % 1.0;
-      final dotC = Offset(tM * w * 0.46, h * 0.50);
-      canvas.drawCircle(dotC, 2.5,
-          Paint()
-            ..color = const Color(0xFF00FF88).withValues(alpha: 0.9)
-            ..maskFilter =
-                const MaskFilter.blur(BlurStyle.normal, 2));
-      canvas.drawCircle(dotC, 1.1,
-          Paint()..color = Colors.white.withValues(alpha: 0.95));
-    }
-
-    canvas.restore();
-  }
-
-  void _drawElectron(Canvas canvas, Offset start, Offset end,
-      double t, Color color) {
-    final pos = Offset.lerp(start, end, t)!;
-    canvas.drawCircle(pos, 5.5,
-        Paint()
-          ..color = color.withValues(alpha: 0.35)
-          ..maskFilter =
-              const MaskFilter.blur(BlurStyle.normal, 5));
-    canvas.drawCircle(pos, 2.2,
-        Paint()..color = color.withValues(alpha: 0.95));
-    canvas.drawCircle(pos, 0.9,
-        Paint()..color = Colors.white.withValues(alpha: 0.9));
-  }
-
-  void _drawSpark(Canvas canvas, Offset center, double intensity,
-      Color color) {
-    if (intensity < 0.5) return;
-    final alpha = ((intensity - 0.5) / 0.5).clamp(0.0, 1.0);
-    final len = 8.0 * alpha;
-    final p = Paint()
-      ..color = color.withValues(alpha: alpha * 0.85)
-      ..strokeWidth = 0.9
-      ..strokeCap = StrokeCap.round;
-    for (int i = 0; i < 6; i++) {
-      final a = i * pi / 3 + phase * 0.6;
-      canvas.drawLine(center,
-          Offset(center.dx + cos(a) * len, center.dy + sin(a) * len),
-          p);
-    }
-    canvas.drawCircle(center, 1.8 * alpha,
-        Paint()..color = color.withValues(alpha: alpha * 0.9));
-  }
-
-  void _drawRightHolographic(Canvas canvas, double w, double h,
-      double shimmer) {
-    canvas.save();
-    canvas.clipRect(Rect.fromLTWH(w * 0.5, 0, w * 0.5, h));
-
-    final gridA = 0.07 + shimmer * 0.07;
-    final gridP = Paint()
-      ..color = const Color(0xFF00CCDD).withValues(alpha: gridA)
-      ..strokeWidth = 0.35;
-
-    for (int i = 1; i <= 9; i++) {
-      final x = w * 0.5 + i * (w * 0.5) / 10;
-      canvas.drawLine(Offset(x, 0), Offset(x, h), gridP);
-    }
-    for (int i = 1; i <= 7; i++) {
-      canvas.drawLine(Offset(w * 0.5, h * i / 8),
-          Offset(w, h * i / 8), gridP);
-    }
-
-    final diagP = Paint()
-      ..color = const Color(0xFF00CCFF)
-          .withValues(alpha: 0.05 + shimmer * 0.07)
-      ..strokeWidth = 0.4;
-    for (int i = -3; i <= 7; i++) {
-      final sx = w * 0.5 + i * w * 0.08;
-      canvas.drawLine(Offset(sx, 0), Offset(sx + w * 0.4, h), diagP);
-    }
-
-    if (!isMini) {
-      const nodes = [
-        [0.62, 0.18], [0.78, 0.32], [0.90, 0.15],
-        [0.68, 0.72], [0.85, 0.82], [0.56, 0.86],
-      ];
-      for (final np in nodes) {
-        final c = Offset(np[0] * w, np[1] * h);
-        final pulse = (sin(phase * 1.5 + np[0] * 8) + 1) * 0.5;
-        canvas.drawCircle(c, 3.5 + pulse * 2.5,
-            Paint()
-              ..color = const Color(0xFF00BBDD)
-                  .withValues(alpha: 0.12 + pulse * 0.14)
-              ..maskFilter =
-                  const MaskFilter.blur(BlurStyle.normal, 4));
-        canvas.drawCircle(c, 1.8,
-            Paint()
-              ..color = const Color(0xFF00BBDD)
-                  .withValues(alpha: 0.5 + pulse * 0.4));
-      }
-    }
-
-    canvas.restore();
-  }
-
-  void _drawCrescent(Canvas canvas, double w, double h, double glow) {
-    final cx = w * 0.42;
-    final cy = h * 0.50;
-    final outerR = h * 0.24;
-    final innerR = h * 0.19;
-    final offset = w * 0.030;
-    const red = Color(0xFFEF2135);
-
-    canvas.drawCircle(Offset(cx, cy), outerR + 5,
-        Paint()
-          ..color = red.withValues(alpha: 0.22 + glow * 0.18)
-          ..maskFilter =
-              const MaskFilter.blur(BlurStyle.normal, 10));
-
-    final path = Path()
-      ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: outerR))
-      ..addOval(
-          Rect.fromCircle(center: Offset(cx + offset, cy), radius: innerR))
-      ..fillType = PathFillType.evenOdd;
-
-    canvas.drawPath(path, Paint()..color = red);
-    canvas.drawPath(path,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.15 + glow * 0.10)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.7);
-  }
-
-  void _drawStar(Canvas canvas, double w, double h, double glow,
-      double angle) {
-    final cx = w * 0.555;
-    final cy = h * 0.50;
-    final outerR = isMini ? h * 0.09 : h * 0.125;
-    final innerR = outerR * 0.40;
-    const red = Color(0xFFEF2135);
-
-    canvas.drawCircle(Offset(cx, cy), outerR + 4,
-        Paint()
-          ..color = red.withValues(alpha: 0.22 + glow * 0.20)
-          ..maskFilter =
-              const MaskFilter.blur(BlurStyle.normal, 8));
-
-    canvas.drawCircle(Offset(cx, cy), outerR + 2 + glow * 4,
-        Paint()
-          ..color = red.withValues(alpha: 0.15 * glow)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0);
-
-    final starPath = Path();
+      ..strokeWidth = 1.0;
     for (int i = 0; i < 5; i++) {
-      final outerPt = Offset(
-        cx + outerR * cos(angle - pi / 2 + i * 2 * pi / 5),
-        cy + outerR * sin(angle - pi / 2 + i * 2 * pi / 5),
-      );
-      final innerPt = Offset(
-        cx + innerR * cos(angle - pi / 2 + (i + 0.5) * 2 * pi / 5),
-        cy + innerR * sin(angle - pi / 2 + (i + 0.5) * 2 * pi / 5),
-      );
-      if (i == 0) {
-        starPath.moveTo(outerPt.dx, outerPt.dy);
-      } else {
-        starPath.lineTo(outerPt.dx, outerPt.dy);
+      final rt = (t + i * 0.2) % 1.0;
+      final radius = r0 + rt * (r1 + short * 0.12 - r0);
+      final opacity = (1 - rt) * 0.5;
+      ringPaint.color = const Color(0xFF00D4FF).withValues(alpha: opacity);
+      canvas.drawCircle(center, radius, ringPaint);
+    }
+
+    // ── Electric arcs ──
+    final arcPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+
+    for (int i = 0; i < arcs.length; i++) {
+      final arcT = (t * 4 + i / arcs.length) % 1.0;
+      final opacity = arcT < 0.5 ? arcT * 2 : (1 - arcT) * 2;
+      final isBlue = i % 3 != 0;
+      arcPaint.color = (isBlue
+              ? const Color(0xFF00D4FF)
+              : const Color(0xFF8B5CF6))
+          .withValues(alpha: (opacity * 0.85).clamp(0.0, 1.0));
+
+      final pts = arcs[i];
+      final path = Path()..moveTo(center.dx + pts[0].dx, center.dy + pts[0].dy);
+      for (int j = 1; j < pts.length; j++) {
+        path.lineTo(center.dx + pts[j].dx, center.dy + pts[j].dy);
       }
-      starPath.lineTo(innerPt.dx, innerPt.dy);
-    }
-    starPath.close();
+      canvas.drawPath(path, arcPaint);
 
-    canvas.drawPath(starPath, Paint()..color = red);
-    canvas.drawPath(starPath,
+      // Spark at tip
+      final tip = Offset(center.dx + pts.last.dx, center.dy + pts.last.dy);
+      canvas.drawCircle(
+        tip,
+        2.5,
         Paint()
-          ..color = Colors.white.withValues(alpha: 0.18 + glow * 0.14)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.6);
-  }
-
-  void _drawIC(Canvas canvas, Offset center, double chipW, double chipH,
-      double glow) {
-    final rect =
-        Rect.fromCenter(center: center, width: chipW, height: chipH);
-    canvas.drawRect(rect, Paint()..color = const Color(0xFF0A1F0A));
-    canvas.drawRect(rect,
-        Paint()
-          ..color = const Color(0xFF00FF44)
-              .withValues(alpha: 0.55 + glow * 0.35)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.9);
-
-    final tp = TextPainter(
-      text: TextSpan(
-        text: 'TC',
-        style: TextStyle(
-          color: const Color(0xFF00FF44)
-              .withValues(alpha: 0.50 + glow * 0.40),
-          fontSize: chipW * 0.28,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 1,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
-
-    const numPins = 3;
-    final pinSpacing = chipH / (numPins + 1);
-    final pinLen = chipW * 0.18;
-    final pinP = Paint()
-      ..color = const Color(0xFF00FF44).withValues(alpha: 0.5)
-      ..strokeWidth = 0.8;
-    for (int i = 0; i < numPins; i++) {
-      final py = center.dy - chipH / 2 + pinSpacing * (i + 1);
-      canvas.drawLine(
-          Offset(center.dx - chipW / 2 - pinLen, py),
-          Offset(center.dx - chipW / 2, py), pinP);
-      canvas.drawLine(
-          Offset(center.dx + chipW / 2, py),
-          Offset(center.dx + chipW / 2 + pinLen, py), pinP);
+          ..color = const Color(0xFF00D4FF).withValues(alpha: opacity * 0.9)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+      );
     }
+
+    // ── Rotating dashed orbit ring ──
+    final orbitPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.7
+      ..color = const Color(0xFF00D4FF).withValues(alpha: 0.18);
+    canvas.drawCircle(center, r0 - 4, orbitPaint);
+
+    // ── Orbiting electron dots ──
+    for (int d = 0; d < 3; d++) {
+      final angle = phase + d * 2 * pi / 3;
+      final pos = Offset(center.dx + cos(angle) * (r0 - 4),
+          center.dy + sin(angle) * (r0 - 4));
+      canvas.drawCircle(
+        pos,
+        4.5,
+        Paint()
+          ..color = const Color(0xFF00D4FF).withValues(alpha: 0.3)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+      );
+      canvas.drawCircle(pos, 2.0,
+          Paint()..color = const Color(0xFF00D4FF).withValues(alpha: 0.95));
+      canvas.drawCircle(pos, 0.8,
+          Paint()..color = Colors.white.withValues(alpha: 0.9));
+    }
+
+    // ── Central glow halo ──
+    final glow = (sin(phase * 2.3) + 1) * 0.5;
+    canvas.drawCircle(
+      center,
+      r0 * 0.85,
+      Paint()
+        ..color = const Color(0xFF00D4FF).withValues(alpha: 0.06 + glow * 0.08)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24),
+    );
   }
 
   @override
-  bool shouldRepaint(CircuitBoardFlagPainter old) => true;
+  bool shouldRepaint(_ElectricLogoPainter old) => old.phase != phase;
 }

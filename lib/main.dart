@@ -2408,11 +2408,13 @@ class _AgentScreenState extends State<AgentScreen>
   late Animation<double> _shakeAnim;
 
   // Form
-  final _phoneCtrl = TextEditingController();
-  final _nameCtrl  = TextEditingController();
-  bool _isRecharge = false;
-  double _amount   = 7.0;
-  static const _presets = [7.0, 10.0, 20.0, 50.0, 100.0];
+  final _phoneCtrl   = TextEditingController();
+  final _nameCtrl    = TextEditingController();
+  final _customCtrl  = TextEditingController();
+  bool _isRecharge   = false;
+  double _amount     = 7.0;
+  bool _customMode   = false;
+  static const _presets = [7.0, 10.0, 20.0, 50.0, 100.0, 200.0, 300.0];
 
   // State
   bool _loading = false;
@@ -2439,6 +2441,7 @@ class _AgentScreenState extends State<AgentScreen>
     _shakeCtrl.dispose();
     _phoneCtrl.dispose();
     _nameCtrl.dispose();
+    _customCtrl.dispose();
     super.dispose();
   }
 
@@ -2521,7 +2524,9 @@ class _AgentScreenState extends State<AgentScreen>
         _error = null;
         _phoneCtrl.clear();
         _nameCtrl.clear();
+        _customCtrl.clear();
         _isRecharge = false;
+        _customMode = false;
         _amount = 7.0;
       });
 
@@ -2737,33 +2742,74 @@ class _AgentScreenState extends State<AgentScreen>
             const _FieldLabel('Montant (USD)'),
             Wrap(
               spacing: 8, runSpacing: 8,
-              children: _presets.where((p) => p != 7.0).map((p) {
-                final sel = _amount == p;
-                return GestureDetector(
-                  onTap: () => setState(() => _amount = p),
+              children: [
+                ..._presets.where((p) => p != 7.0).map((p) {
+                  final sel = !_customMode && _amount == p;
+                  return GestureDetector(
+                    onTap: () => setState(() { _amount = p; _customMode = false; _customCtrl.clear(); }),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        color: sel ? const Color(0xFF00D4FF) : const Color(0xFF1A2332),
+                        border: sel ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                      ),
+                      child: Text('\$${p.toStringAsFixed(0)}',
+                          style: TextStyle(
+                              color: sel ? Colors.black : Colors.white70,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  );
+                }),
+                GestureDetector(
+                  onTap: () => setState(() { _customMode = true; }),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
-                      color: sel
-                          ? const Color(0xFF00D4FF)
-                          : const Color(0xFF1A2332),
-                      border: sel
-                          ? null
-                          : Border.all(
-                              color: Colors.white.withValues(alpha: 0.1)),
+                      color: _customMode ? const Color(0xFF8B5CF6) : const Color(0xFF1A2332),
+                      border: _customMode ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
                     ),
-                    child: Text('\$$p',
+                    child: Text('Autre',
                         style: TextStyle(
-                            color:
-                                sel ? Colors.black : Colors.white70,
+                            color: _customMode ? Colors.white : Colors.white70,
                             fontWeight: FontWeight.w600)),
                   ),
-                );
-              }).toList(),
+                ),
+              ],
             ),
+            if (_customMode) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _customCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                onChanged: (v) {
+                  final parsed = double.tryParse(v);
+                  if (parsed != null && parsed >= 5) setState(() => _amount = parsed);
+                },
+                decoration: InputDecoration(
+                  hintText: 'Montant libre (min 5\$)',
+                  hintStyle: TextStyle(color: Colors.white38),
+                  prefixText: '\$ ',
+                  prefixStyle: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold),
+                  filled: true,
+                  fillColor: const Color(0xFF1A2332),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: Color(0xFF8B5CF6), width: 2)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: const Color(0xFF8B5CF6).withValues(alpha: 0.5))),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+              ),
+            ],
           ],
           const SizedBox(height: 24),
           // Summary box

@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -751,13 +752,14 @@ class TchipaApp extends StatelessWidget {
           locale: Locale(langNotifier.value),
           supportedLocales: const [Locale('fr'), Locale('ar')],
           localizationsDelegates: const [
-            DefaultWidgetsLocalizations.delegate,
-            DefaultMaterialLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
           ],
           theme: _buildTheme(darkModeNotifier.value),
           builder: (ctx, child) => Directionality(
             textDirection: isAr ? TextDirection.rtl : TextDirection.ltr,
-            child: child!,
+            child: child ?? const SizedBox.shrink(),
           ),
           home: const SplashScreen(),
         );

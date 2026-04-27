@@ -355,13 +355,13 @@ class AppColors {
       textDim = Colors.white38;
       border  = const Color(0xFF1A2332);
     } else {
-      bg      = const Color(0xFFF5F7FA);
-      surface = const Color(0xFFFFFFFF);
-      card    = const Color(0xFFE8EDF2);
-      text    = const Color(0xFF111827);
-      textSub = const Color(0xFF6B7280);
-      textDim = const Color(0xFF9CA3AF);
-      border  = const Color(0xFFDDE3EB);
+      bg      = const Color(0xFFEDF1F7);
+      surface = const Color(0xFFF4F7FC);
+      card    = const Color(0xFFDDE5F0);
+      text    = const Color(0xFF0F172A);
+      textSub = const Color(0xFF475569);
+      textDim = const Color(0xFF94A3B8);
+      border  = const Color(0xFFC8D5E8);
     }
   }
 }
@@ -1254,9 +1254,9 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildSubtitle() {
     final active = _card?.isActivated == true;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('MA CARTE VIRTUELLE',
+      Text('MA CARTE VIRTUELLE',
           style: TextStyle(
-              color: Colors.white38,
+              color: AppColors.textDim,
               fontSize: 11,
               letterSpacing: 2,
               fontWeight: FontWeight.w600)),
@@ -1265,7 +1265,7 @@ class _HomeScreenState extends State<HomeScreen>
         active
             ? 'Carte active · Paiements internationaux'
             : 'Activez votre carte pour commencer',
-        style: const TextStyle(color: Colors.white54, fontSize: 13),
+        style: TextStyle(color: AppColors.textSub, fontSize: 13),
       ),
     ]);
   }
@@ -1405,12 +1405,14 @@ class _VccCardVisual extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final active = card?.isActivated == true;
-    final holderName = (card?.holderName?.isNotEmpty == true
-            ? card!.holderName!
-            : UserProfile.name.isNotEmpty
-                ? UserProfile.name
-                : 'NOM COMPLET')
-        .toUpperCase();
+    String _rawName = card?.holderName?.isNotEmpty == true
+        ? card!.holderName!
+        : UserProfile.name.isNotEmpty
+            ? UserProfile.name
+            : 'NOM COMPLET';
+    // strip email address if accidentally included
+    if (_rawName.contains('@')) _rawName = _rawName.split(RegExp(r'[\s<@]')).first;
+    final holderName = _rawName.toUpperCase();
 
     return Container(
       height: 216,
@@ -1786,10 +1788,10 @@ class _TelegramButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () async {
-        final uri = Uri.parse(kAgentTelegram);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
+        try {
+          await launchUrl(Uri.parse(kAgentTelegram),
+              mode: LaunchMode.externalApplication);
+        } catch (_) {}
       },
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
@@ -2196,10 +2198,10 @@ class _ActivationSheetState extends State<_ActivationSheet> {
           // Option agent Telegram
           GestureDetector(
             onTap: () async {
-              final uri = Uri.parse(kAgentTelegram);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
+              try {
+                await launchUrl(Uri.parse(kAgentTelegram),
+                    mode: LaunchMode.externalApplication);
+              } catch (_) {}
             },
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
@@ -2362,19 +2364,29 @@ class _ActivationSheetState extends State<_ActivationSheet> {
                 style: TextStyle(color: Colors.white38, fontSize: 10,
                     fontFamily: 'monospace')),
           ),
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildChecking() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 60),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 60),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        CircularProgressIndicator(color: Color(0xFF00D4FF)),
-        SizedBox(height: 20),
-        Text('Vérification du paiement…',
+        const CircularProgressIndicator(color: Color(0xFF00D4FF)),
+        const SizedBox(height: 20),
+        const Text('Vérification du paiement…',
             style: TextStyle(color: Colors.white70)),
+        const SizedBox(height: 24),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Retour', style: TextStyle(color: Colors.white38)),
+        ),
       ]),
     );
   }

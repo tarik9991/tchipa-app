@@ -3158,8 +3158,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     await AppSettings.setDark(!v);
                     if (mounted) setState(() {});
                   },
-                  activeThumbColor: const Color(0xFF00D4FF),
-                  activeTrackColor: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                  thumbColor: WidgetStateProperty.all(const Color(0xFF00D4FF)),
+                  trackColor: WidgetStateProperty.all(const Color(0xFF00D4FF).withValues(alpha: 0.3)),
                 ),
               ),
               const SizedBox(height: 10),
@@ -3178,8 +3178,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     await AppLock.setEnabled(v);
                     if (mounted) setState(() => _lockEnabled = v);
                   },
-                  activeThumbColor: const Color(0xFF00D4FF),
-                  activeTrackColor: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                  thumbColor: WidgetStateProperty.all(const Color(0xFF00D4FF)),
+                  trackColor: WidgetStateProperty.all(const Color(0xFF00D4FF).withValues(alpha: 0.3)),
                 ),
               ),
               const SizedBox(height: 20),

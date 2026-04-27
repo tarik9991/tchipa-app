@@ -8,13 +8,16 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:local_auth/local_auth.dart';
 
 // ============================================
 // CONFIGURATION
 // ============================================
-const String kVpsBase = 'http://76.13.255.239:3000';
-const double kExchangeRate = 242.0;
+const String kVpsBase       = 'http://76.13.255.239:3000';
+const double kExchangeRate  = 242.0;
 const double kActivationFee = 7.0;
+const String kAgentTelegram = 'https://t.me/c/3983752002/1';
 
 // ============================================
 // VCC CARD MODEL
@@ -298,9 +301,403 @@ class PayGateService {
 // ============================================
 // MAIN
 // ============================================
+// ============================================
+// APP SETTINGS (theme + language)
+// ============================================
+final ValueNotifier<bool>   darkModeNotifier = ValueNotifier(true);
+final ValueNotifier<String> langNotifier     = ValueNotifier('fr');
+
+class AppSettings {
+  static const _kDark = 'dark_mode';
+  static const _kLang = 'app_lang';
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    darkModeNotifier.value = p.getBool(_kDark) ?? true;
+    langNotifier.value     = p.getString(_kLang) ?? 'fr';
+    AppColors.update(darkModeNotifier.value);
+  }
+
+  static Future<void> setDark(bool v) async {
+    darkModeNotifier.value = v;
+    AppColors.update(v);
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kDark, v);
+  }
+
+  static Future<void> setLang(String v) async {
+    langNotifier.value = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kLang, v);
+  }
+}
+
+// ============================================
+// SEMANTIC COLORS (theme-aware)
+// ============================================
+class AppColors {
+  static Color bg      = const Color(0xFF0D1117);
+  static Color surface = const Color(0xFF0F1923);
+  static Color card    = const Color(0xFF1A2332);
+  static Color text    = Colors.white;
+  static Color textSub = Colors.white60;
+  static Color textDim = Colors.white38;
+  static Color border  = const Color(0xFF1A2332);
+
+  static void update(bool dark) {
+    if (dark) {
+      bg      = const Color(0xFF0D1117);
+      surface = const Color(0xFF0F1923);
+      card    = const Color(0xFF1A2332);
+      text    = Colors.white;
+      textSub = Colors.white60;
+      textDim = Colors.white38;
+      border  = const Color(0xFF1A2332);
+    } else {
+      bg      = const Color(0xFFF5F7FA);
+      surface = const Color(0xFFFFFFFF);
+      card    = const Color(0xFFE8EDF2);
+      text    = const Color(0xFF111827);
+      textSub = const Color(0xFF6B7280);
+      textDim = const Color(0xFF9CA3AF);
+      border  = const Color(0xFFDDE3EB);
+    }
+  }
+}
+
+// ============================================
+// TRANSLATIONS (FR / AR)
+// ============================================
+class _L {
+  final String activate;
+  final String activateSubtitle;
+  final String chooseAmount;
+  final String payDirectly;
+  final String sendExactly;
+  final String usdtPolygonOnly;
+  final String exactAmount;
+  final String usdtAddress;
+  final String addressCopied;
+  final String polygonWarning;
+  final String paidVerify;
+  final String orderCreated;
+  final String newVccCard;
+  final String checking;
+  final String cardReady;
+  final String newCardActivated;
+  final String viewCard;
+  final String close;
+  final String paymentReceived;
+  final String paymentNotReceived;
+  final String recharge;
+  final String createOrder;
+  final String myProfile;
+  final String saveProfile;
+  final String biometric;
+  final String biometricSub;
+  final String agentMode;
+  final String settings;
+  final String language;
+  final String theme;
+  final String lightMode;
+  final String darkMode;
+  final String french;
+  final String arabic;
+  final String home;
+  final String transactions;
+  final String profile;
+  final String activate2;
+  final String activated;
+  final String cardActive;
+  final String activateCard;
+  final String cardReady2;
+  final String cardActivated;
+  final String mastercard;
+  final String cardNetwork;
+
+  const _L({
+    required this.activate,
+    required this.activateSubtitle,
+    required this.chooseAmount,
+    required this.payDirectly,
+    required this.sendExactly,
+    required this.usdtPolygonOnly,
+    required this.exactAmount,
+    required this.usdtAddress,
+    required this.addressCopied,
+    required this.polygonWarning,
+    required this.paidVerify,
+    required this.orderCreated,
+    required this.newVccCard,
+    required this.checking,
+    required this.cardReady,
+    required this.newCardActivated,
+    required this.viewCard,
+    required this.close,
+    required this.paymentReceived,
+    required this.paymentNotReceived,
+    required this.recharge,
+    required this.createOrder,
+    required this.myProfile,
+    required this.saveProfile,
+    required this.biometric,
+    required this.biometricSub,
+    required this.agentMode,
+    required this.settings,
+    required this.language,
+    required this.theme,
+    required this.lightMode,
+    required this.darkMode,
+    required this.french,
+    required this.arabic,
+    required this.home,
+    required this.transactions,
+    required this.profile,
+    required this.activate2,
+    required this.activated,
+    required this.cardActive,
+    required this.activateCard,
+    required this.cardReady2,
+    required this.cardActivated,
+    required this.mastercard,
+    required this.cardNetwork,
+  });
+}
+
+const _fr = _L(
+  activate: 'Activer ma carte',
+  activateSubtitle: 'Paiement direct USDT · Réseau Polygon',
+  chooseAmount: 'Choisir le montant de la carte',
+  payDirectly: 'Payez directement en USDT sur le réseau Polygon',
+  sendExactly: 'Envoyez exactement',
+  usdtPolygonOnly: 'USDT sur le réseau Polygon uniquement',
+  exactAmount: 'MONTANT EXACT À ENVOYER',
+  usdtAddress: 'ADRESSE USDT (POLYGON)',
+  addressCopied: 'Adresse copiée',
+  polygonWarning: '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
+  paidVerify: 'J\'ai payé — Vérifier',
+  orderCreated: 'Commande créée',
+  newVccCard: 'Nouvelle carte VCC',
+  checking: 'Vérification du paiement…',
+  cardReady: 'Carte prête !',
+  newCardActivated: 'Votre nouvelle carte VCC Mastercard est activée.',
+  viewCard: 'Voir ma carte',
+  close: 'Fermer',
+  paymentReceived: 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.',
+  paymentNotReceived: 'Paiement non reçu. Vérifiez que vous avez envoyé exactement',
+  recharge: 'Nouvelle carte',
+  createOrder: 'Créer ma commande',
+  myProfile: 'Mon profil',
+  saveProfile: 'Enregistrer',
+  biometric: 'Protection biométrique',
+  biometricSub: 'Empreinte / Face ID au démarrage',
+  agentMode: 'Mode Agent',
+  settings: 'Paramètres',
+  language: 'Langue',
+  theme: 'Thème',
+  lightMode: 'Mode clair',
+  darkMode: 'Mode sombre',
+  french: 'Français',
+  arabic: 'العربية',
+  home: 'Accueil',
+  transactions: 'Transactions',
+  profile: 'Profil',
+  activate2: 'Activer',
+  activated: 'Activée',
+  cardActive: 'Carte active · Paiements internationaux',
+  activateCard: 'Activez votre carte pour commencer',
+  cardReady2: 'Carte activée !',
+  cardActivated: 'Votre carte VCC Mastercard est prête.',
+  mastercard: 'Carte Mastercard',
+  cardNetwork: 'réseau Polygon',
+);
+
+const _ar = _L(
+  activate: 'تفعيل البطاقة',
+  activateSubtitle: 'دفع مباشر بـ USDT · شبكة Polygon',
+  chooseAmount: 'اختر قيمة البطاقة',
+  payDirectly: 'ادفع مباشرةً بـ USDT على شبكة Polygon',
+  sendExactly: 'أرسل بالضبط',
+  usdtPolygonOnly: 'USDT على شبكة Polygon فقط',
+  exactAmount: 'المبلغ الدقيق للإرسال',
+  usdtAddress: 'عنوان USDT (Polygon)',
+  addressCopied: 'تم نسخ العنوان',
+  polygonWarning: '⚠ أرسل فقط على شبكة Polygon. أي إرسال على شبكة أخرى سيُفقد.',
+  paidVerify: 'دفعت — تحقق',
+  orderCreated: 'تم إنشاء الطلب',
+  newVccCard: 'بطاقة VCC جديدة',
+  checking: 'جارٍ التحقق من الدفع…',
+  cardReady: 'البطاقة جاهزة!',
+  newCardActivated: 'بطاقة Mastercard VCC الجديدة مُفعَّلة.',
+  viewCard: 'عرض البطاقة',
+  close: 'إغلاق',
+  paymentReceived: 'تم استلام الدفع — يتم إصدار البطاقة، تحقق خلال دقيقة.',
+  paymentNotReceived: 'لم يُستلم الدفع. تأكد من إرسال بالضبط',
+  recharge: 'بطاقة جديدة',
+  createOrder: 'إنشاء طلب',
+  myProfile: 'ملفي الشخصي',
+  saveProfile: 'حفظ',
+  biometric: 'الحماية البيومترية',
+  biometricSub: 'بصمة الإصبع / Face ID عند التشغيل',
+  agentMode: 'وضع الوكيل',
+  settings: 'الإعدادات',
+  language: 'اللغة',
+  theme: 'المظهر',
+  lightMode: 'المظهر الفاتح',
+  darkMode: 'المظهر الداكن',
+  french: 'Français',
+  arabic: 'العربية',
+  home: 'الرئيسية',
+  transactions: 'المعاملات',
+  profile: 'الملف',
+  activate2: 'تفعيل',
+  activated: 'مُفعَّلة',
+  cardActive: 'بطاقة نشطة · مدفوعات دولية',
+  activateCard: 'فعّل بطاقتك للبدء',
+  cardReady2: 'تم تفعيل البطاقة!',
+  cardActivated: 'بطاقة VCC Mastercard جاهزة.',
+  mastercard: 'بطاقة Mastercard',
+  cardNetwork: 'شبكة Polygon',
+);
+
+_L get L => langNotifier.value == 'ar' ? _ar : _fr;
+
+// ============================================
+// APP LOCK (biometric / device credentials)
+// ============================================
+class AppLock {
+  static const _kEnabled = 'app_lock_enabled';
+
+  static Future<bool> isEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_kEnabled) ?? false;
+  }
+
+  static Future<void> setEnabled(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_kEnabled, v);
+  }
+
+  static Future<bool> authenticate(BuildContext context) async {
+    final auth = LocalAuthentication();
+    try {
+      final available = await auth.canCheckBiometrics || await auth.isDeviceSupported();
+      if (!available) return true;
+      return await auth.authenticate(
+        localizedReason: 'Authentifiez-vous pour accéder à Tchipa',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+    } catch (_) {
+      return true;
+    }
+  }
+}
+
+// ============================================
+// LOCK SCREEN
+// ============================================
+class LockScreen extends StatefulWidget {
+  const LockScreen({super.key});
+
+  @override
+  State<LockScreen> createState() => _LockScreenState();
+}
+
+class _LockScreenState extends State<LockScreen> {
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _tryAuth() async {
+    setState(() { _loading = true; _error = null; });
+    final ok = await AppLock.authenticate(context);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const MainScreen(),
+          transitionDuration: const Duration(milliseconds: 400),
+          transitionsBuilder: (_, anim, __, child) =>
+              FadeTransition(opacity: anim, child: child),
+        ),
+      );
+    } else {
+      setState(() { _loading = false; _error = 'Authentification refusée'; });
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryAuth());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80, height: 80,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Center(
+                child: Text('T', style: TextStyle(color: Colors.black, fontSize: 40,
+                    fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 32),
+            const Text('Tchipa', style: TextStyle(color: Colors.white, fontSize: 28,
+                fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Veuillez vous authentifier',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 14)),
+            const SizedBox(height: 40),
+            if (_loading)
+              const CircularProgressIndicator(color: Color(0xFF00D4FF))
+            else ...[
+              if (_error != null) ...[
+                Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+                const SizedBox(height: 16),
+              ],
+              GestureDetector(
+                onTap: _tryAuth,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.fingerprint_rounded, color: Colors.black, size: 22),
+                      SizedBox(width: 10),
+                      Text('S\'authentifier', style: TextStyle(color: Colors.black,
+                          fontWeight: FontWeight.bold, fontSize: 15)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UserProfile.load();
+  await AppSettings.load();
   runApp(const TchipaApp());
 }
 
@@ -310,36 +707,61 @@ void main() async {
 class TchipaApp extends StatelessWidget {
   const TchipaApp({super.key});
 
+  ThemeData _buildTheme(bool dark) {
+    final brightness = dark ? Brightness.dark : Brightness.light;
+    return ThemeData(
+      brightness: brightness,
+      scaffoldBackgroundColor: AppColors.bg,
+      primaryColor: const Color(0xFF00D4FF),
+      cardColor: AppColors.surface,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF00D4FF),
+        brightness: brightness,
+        surface: AppColors.surface,
+        onSurface: AppColors.text,
+      ),
+      fontFamily: 'SF Pro Display',
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: AppColors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0xFF00D4FF)),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        hintStyle: TextStyle(color: AppColors.textDim),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Tchipa',
-      theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFF0D1117),
-        primaryColor: const Color(0xFF00D4FF),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00D4FF),
-          brightness: Brightness.dark,
-        ),
-        fontFamily: 'SF Pro Display',
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFF0F1923),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
+    return ListenableBuilder(
+      listenable: Listenable.merge([darkModeNotifier, langNotifier]),
+      builder: (_, __) {
+        final isAr = langNotifier.value == 'ar';
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Tchipa',
+          locale: Locale(langNotifier.value),
+          supportedLocales: const [Locale('fr'), Locale('ar')],
+          localizationsDelegates: const [
+            DefaultWidgetsLocalizations.delegate,
+            DefaultMaterialLocalizations.delegate,
+          ],
+          theme: _buildTheme(darkModeNotifier.value),
+          builder: (ctx, child) => Directionality(
+            textDirection: isAr ? TextDirection.rtl : TextDirection.ltr,
+            child: child!,
           ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide:
-                const BorderSide(color: Color(0xFF00D4FF)),
-          ),
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: 18, vertical: 16),
-        ),
-      ),
-      home: const SplashScreen(),
+          home: const SplashScreen(),
+        );
+      },
     );
   }
 }
@@ -390,10 +812,13 @@ class _SplashScreenState extends State<SplashScreen>
             parent: _overlayCtrl, curve: Curves.easeOut));
 
     _imgCtrl.forward().then((_) => _overlayCtrl.forward());
-    Future.delayed(const Duration(milliseconds: 3200), () {
+    Future.delayed(const Duration(milliseconds: 3200), () async {
+      if (!mounted) return;
+      final lockEnabled = await AppLock.isEnabled();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (_, __, ___) => const MainScreen(),
+        pageBuilder: (_, __, ___) =>
+            lockEnabled ? const LockScreen() : const MainScreen(),
         transitionDuration: const Duration(milliseconds: 600),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
@@ -429,23 +854,22 @@ class _SplashScreenState extends State<SplashScreen>
                   ),
                 ),
                 Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF00D4FF).withValues(alpha: 0.35),
+                        color: Color(0x5900D4FF),
                         blurRadius: 40,
                         spreadRadius: 8,
                       ),
                       BoxShadow(
-                        color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+                        color: Color(0x338B5CF6),
                         blurRadius: 60,
                         spreadRadius: 4,
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
+                  child: ClipOval(
                     child: Image.asset(
                       'assets/nearpay_logo.png',
                       width: 150, height: 150,
@@ -554,7 +978,7 @@ class _MainScreenState extends State<MainScreen> {
             Text('Complétez votre profil pour commencer',
                 style: TextStyle(color: Colors.white)),
           ]),
-          backgroundColor: const Color(0xFF0F1923),
+          backgroundColor: AppColors.surface,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
@@ -569,14 +993,14 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: IndexedStack(index: _idx, children: _screens),
       bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           border: Border(
-              top: BorderSide(color: Color(0xFF1A2332), width: 0.5)),
+              top: BorderSide(color: AppColors.card, width: 0.5)),
         ),
         child: BottomNavigationBar(
           currentIndex: _idx,
           onTap: (i) => setState(() => _idx = i),
-          backgroundColor: const Color(0xFF0F1923),
+          backgroundColor: AppColors.surface,
           selectedItemColor: const Color(0xFF00D4FF),
           unselectedItemColor: Colors.white38,
           type: BottomNavigationBarType.fixed,
@@ -745,28 +1169,27 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
+      backgroundColor: AppColors.bg,
       body: CustomScrollView(slivers: [
         SliverAppBar(
           floating: true,
-          backgroundColor: const Color(0xFF0D1117),
+          backgroundColor: AppColors.bg,
           elevation: 0,
           titleSpacing: 16,
           title: Row(children: [
             Container(
-              width: 32, height: 32,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
+              width: 36, height: 36,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF00D4FF).withValues(alpha: 0.45),
-                    blurRadius: 10,
+                    color: Color(0x7300D4FF),
+                    blurRadius: 12,
                     spreadRadius: 1,
                   ),
                 ],
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+              child: ClipOval(
                 child: Image.asset('assets/nearpay_logo.png', fit: BoxFit.cover),
               ),
             ),
@@ -868,39 +1291,42 @@ class _HomeScreenState extends State<HomeScreen>
     final active = _card?.isActivated == true;
 
     if (!active) {
-      return AnimatedBuilder(
-        animation: _glowAnim,
-        builder: (_, child) {
-          final g = _glowAnim.value;
-          return Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF00D4FF)
-                      .withValues(alpha: 0.25 + g * 0.35),
-                  blurRadius: 18 + g * 20,
-                  spreadRadius: g * 4,
-                ),
-                BoxShadow(
-                  color: const Color(0xFF8B5CF6)
-                      .withValues(alpha: 0.2 + g * 0.25),
-                  blurRadius: 28 + g * 16,
-                ),
-              ],
-            ),
-            child: child,
-          );
-        },
-        child: _ActionButton(
-          label: 'Activer ma carte',
-          sublabel:
-              'Frais d\'activation : \$${kActivationFee.toStringAsFixed(0)}',
-          icon: Icons.credit_card_rounded,
-          colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-          onTap: _openActivation,
+      return Column(children: [
+        AnimatedBuilder(
+          animation: _glowAnim,
+          builder: (_, child) {
+            final g = _glowAnim.value;
+            return Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00D4FF)
+                        .withValues(alpha: 0.25 + g * 0.35),
+                    blurRadius: 18 + g * 20,
+                    spreadRadius: g * 4,
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFF8B5CF6)
+                        .withValues(alpha: 0.2 + g * 0.25),
+                    blurRadius: 28 + g * 16,
+                  ),
+                ],
+              ),
+              child: child,
+            );
+          },
+          child: _ActionButton(
+            label: 'Activer ma carte',
+            sublabel: 'Paiement direct USDT · Réseau Polygon',
+            icon: Icons.credit_card_rounded,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: _openActivation,
+          ),
         ),
-      ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08, end: 0);
+        const SizedBox(height: 16),
+        _TelegramButton(),
+      ]).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08, end: 0);
     }
 
     return Column(children: [
@@ -928,6 +1354,8 @@ class _HomeScreenState extends State<HomeScreen>
           colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
           onTap: _openDetails,
         ),
+      const SizedBox(height: 12),
+      _TelegramButton(),
     ]).animate().fadeIn(duration: 400.ms);
   }
 
@@ -1349,6 +1777,75 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
+class _TelegramButton extends StatelessWidget {
+  const _TelegramButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () async {
+        final uri = Uri.parse(kAgentTelegram);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0088CC), Color(0xFF229ED9)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0088CC).withValues(alpha: 0.5),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: const BoxDecoration(
+                color: Colors.white24,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.telegram_rounded,
+                  color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Commander via Telegram',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold)),
+                  SizedBox(height: 3),
+                  Text('Un agent traite ta commande rapidement',
+                      style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11.5)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios_rounded,
+                color: Colors.white54, size: 16),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LoadingCard extends StatelessWidget {
   const _LoadingCard();
 
@@ -1359,7 +1856,7 @@ class _LoadingCard extends StatelessWidget {
       child: Container(
         height: 216,
         decoration: BoxDecoration(
-          color: const Color(0xFF0F1923),
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(22),
         ),
         child: const Center(
@@ -1397,7 +1894,7 @@ class _TxRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(
           horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F1923),
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
             color: Colors.white.withValues(alpha: 0.05)),
@@ -1457,15 +1954,22 @@ class _ActivationSheet extends StatefulWidget {
 
 class _ActivationSheetState extends State<_ActivationSheet> {
   _ActStep _step = _ActStep.pick;
-  double _amount = 7.0;
-  static const _presets = [7.0, 10.0, 20.0, 50.0];
-  static const _kMargin = 0.10; // marge Tchipa 10%
-  // Prix estimé affiché avant la création de commande (PayGate ~6.64% + marge 10%)
+  double _amount = 10.0;
+  static const _presets = [10.0, 20.0, 50.0, 100.0];
+  static const _kMargin = 0.10;
+  bool _customMode = false;
+  final _customCtrl = TextEditingController();
   static double _estimatedUsdt(double cardValue) =>
       double.parse((cardValue * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
   VccOrder? _order;
   String? _redeemLink;
   String? _error;
+
+  @override
+  void dispose() {
+    _customCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _createOrder() async {
     setState(() { _step = _ActStep.paying; _error = null; _order = null; });
@@ -1534,8 +2038,8 @@ class _ActivationSheetState extends State<_ActivationSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F1923),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
@@ -1550,85 +2054,189 @@ class _ActivationSheetState extends State<_ActivationSheet> {
   }
 
   Widget _buildPicker() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _handle(),
-        const SizedBox(height: 20),
-        const Text('Choisir le montant de la carte',
-            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Text('Remettez le montant en DZD à votre agent',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
-        const SizedBox(height: 20),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 4,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.3,
-          children: _presets.map((amt) {
-            final sel = _amount == amt;
-            return GestureDetector(
-              onTap: () => setState(() => _amount = amt),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                decoration: BoxDecoration(
-                  gradient: sel ? const LinearGradient(
-                      colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]) : null,
-                  color: sel ? null : const Color(0xFF1A2332),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: sel ? Colors.transparent
-                          : Colors.white.withValues(alpha: 0.08)),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('\$${amt.toStringAsFixed(0)}',
-                        style: TextStyle(
-                            color: sel ? Colors.black : Colors.white,
-                            fontWeight: FontWeight.bold, fontSize: 16)),
-                    Text('${(_estimatedUsdt(amt) * kExchangeRate).toStringAsFixed(0)} DA',
-                        style: TextStyle(
-                            color: sel ? Colors.black54 : Colors.white38,
-                            fontSize: 10)),
-                  ],
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _handle(),
+          const SizedBox(height: 20),
+          Text(L.chooseAmount,
+              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(L.payDirectly,
+              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
+          const SizedBox(height: 20),
+          // Presets + bouton Autre
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              ..._presets.map((amt) {
+                final sel = !_customMode && _amount == amt;
+                return GestureDetector(
+                  onTap: () => setState(() { _customMode = false; _amount = amt; }),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      gradient: sel ? const LinearGradient(
+                          colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]) : null,
+                      color: sel ? null : AppColors.card,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: sel ? Colors.transparent
+                              : Colors.white.withValues(alpha: 0.08)),
+                    ),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text('\$${amt.toStringAsFixed(0)}',
+                          style: TextStyle(
+                              color: sel ? Colors.black : Colors.white,
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text('${(_estimatedUsdt(amt) * kExchangeRate).toStringAsFixed(0)} DA',
+                          style: TextStyle(
+                              color: sel ? Colors.black54 : Colors.white38,
+                              fontSize: 10)),
+                    ]),
+                  ),
+                );
+              }),
+              // Bouton Autre
+              GestureDetector(
+                onTap: () => setState(() { _customMode = true; }),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _customMode ? const Color(0xFF8B5CF6) : AppColors.card,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: _customMode ? Colors.transparent
+                            : Colors.white.withValues(alpha: 0.08)),
+                  ),
+                  child: Text('Autre',
+                      style: TextStyle(
+                          color: _customMode ? Colors.white : AppColors.textSub,
+                          fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
               ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1A2332),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
+            ],
           ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('Carte Mastercard',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
-            Text('≈ ${_estimatedUsdt(_amount)} USDT · ${(_estimatedUsdt(_amount) * kExchangeRate).toStringAsFixed(0)} DA',
-                style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold)),
-          ]),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 10),
-          Text(_error!, textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          // Champ montant libre
+          if (_customMode) ...[
+            const SizedBox(height: 14),
+            TextField(
+              controller: _customCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: TextStyle(color: AppColors.text, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                prefixStyle: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold),
+                hintText: 'Montant en USD (min \$5)',
+                hintStyle: TextStyle(color: AppColors.textDim),
+                filled: true,
+                fillColor: AppColors.card,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF8B5CF6), width: 2)),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
+              ),
+              onChanged: (v) {
+                final parsed = double.tryParse(v);
+                if (parsed != null && parsed >= 5) setState(() => _amount = parsed);
+              },
+            ),
+          ],
+          const SizedBox(height: 16),
+          // Récap estimé
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Carte Mastercard',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
+              Text('≈ ${_estimatedUsdt(_amount)} USDT',
+                  style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold)),
+            ]),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          ],
+          const SizedBox(height: 20),
+          _gradientBtn(
+            label: L.createOrder,
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+            onTap: () {
+              if (_customMode) {
+                final v = double.tryParse(_customCtrl.text);
+                if (v == null || v < 5) {
+                  setState(() => _error = 'Montant minimum : \$5');
+                  return;
+                }
+                _amount = v;
+              }
+              _createOrder();
+            },
+          ),
+          const SizedBox(height: 16),
+          // Option agent Telegram
+          GestureDetector(
+            onTap: () async {
+              final uri = Uri.parse(kAgentTelegram);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0088CC), Color(0xFF229ED9)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0088CC).withValues(alpha: 0.45),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(children: [
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.telegram_rounded, color: Colors.white, size: 22),
+                  const SizedBox(width: 8),
+                  const Text('Passer commande via un Agent',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 6),
+                Text('Rejoins le groupe Telegram · envoi ton nom + montant',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 11.5)),
+              ]),
+            ),
+          ),
         ],
-        const SizedBox(height: 20),
-        _gradientBtn(
-          label: 'Créer ma commande',
-          loading: false,
-          colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-          onTap: _createOrder,
-        ),
-      ],
+      ),
     );
   }
 
@@ -1640,6 +2248,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         child: Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF))),
       );
     }
+    final addr = order.cryptoAddress;
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1647,41 +2256,89 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         children: [
           _handle(),
           const SizedBox(height: 20),
-          const Text('Commande créée',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(L.sendExactly,
+              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('Remettez le montant ci-dessous à votre agent',
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
-          const SizedBox(height: 24),
+          Text(L.usdtPolygonOnly,
+              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
+          const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
+              color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
             ),
             child: Column(children: [
-              Text('MONTANT À REMETTRE À L\'AGENT',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              Text(L.exactAmount,
+                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
               const SizedBox(height: 8),
-              Text('${(double.tryParse(order.amountUsdt) ?? 0) * kExchangeRate ~/ 1} DA',
+              Text('${order.amountUsdt} USDT',
                   style: const TextStyle(color: Color(0xFF00D4FF),
                       fontSize: 32, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              Text('≈ ${order.amountUsdt} USDT · carte \$${order.cardValue.toStringAsFixed(0)}',
+              Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Column(children: [
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  color: Colors.white,
+                  child: QrImageView(data: addr, size: 150, version: QrVersions.auto),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('ADRESSE USDT (POLYGON)',
+                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(
+                  child: Text(addr,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11,
+                          fontFamily: 'monospace'),
+                      maxLines: 2),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: addr));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Adresse copiée'),
+                      duration: Duration(seconds: 2),
+                    ));
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00D4FF).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.copy_rounded, color: Color(0xFF00D4FF), size: 18),
+                  ),
+                ),
+              ]),
             ]),
           ),
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.1),
+              color: Colors.amber.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
             ),
             child: Text(
-              'Votre agent traitera le paiement. Une fois confirmé, votre carte sera prête.',
+              '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
               style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
             ),
           ),
@@ -1788,6 +2445,8 @@ class _Feature extends StatelessWidget {
 // ============================================
 // RECHARGE SHEET
 // ============================================
+enum _RechStep { pick, paying, checking, done }
+
 class _RechargeSheet extends StatefulWidget {
   final VccCard card;
   final void Function(double) onSuccess;
@@ -1797,211 +2456,362 @@ class _RechargeSheet extends StatefulWidget {
 }
 
 class _RechargeSheetState extends State<_RechargeSheet> {
+  _RechStep _step = _RechStep.pick;
   double _amount = 20.0;
   static const _presets = [10.0, 20.0, 50.0, 100.0];
-  bool _requested = false;
+  static const _kMargin = 0.10;
+  static double _estimatedUsdt(double v) =>
+      double.parse((v * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
+  VccOrder? _order;
+  String? _error;
+  String? _redeemLink;
+
+  Future<void> _createOrder() async {
+    setState(() { _step = _RechStep.paying; _error = null; _order = null; });
+    try {
+      final order = await PayGateService.createVccOrder(
+        amount: _amount,
+        holderName: UserProfile.name,
+        phone: UserProfile.phone,
+      );
+      setState(() => _order = order);
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _step = _RechStep.pick;
+      });
+    }
+  }
+
+  Future<void> _checkStatus() async {
+    final id = _order?.redeemId;
+    if (id == null) return;
+    setState(() { _step = _RechStep.checking; _error = null; });
+    try {
+      final status = await PayGateService.checkVccStatus(id);
+      if (status['isReady'] == true) {
+        final link = status['redeemLink'] as String?;
+        final card = VccCard(
+          cardId: id,
+          redeemId: id,
+          redeemLink: link,
+          balance: _order!.cardValue,
+          isActivated: true,
+          holderName: UserProfile.name,
+        );
+        await card.save();
+        if (mounted) setState(() { _redeemLink = link; _step = _RechStep.done; });
+        widget.onSuccess(_order!.cardValue);
+      } else if (status['isPaid'] == true) {
+        setState(() {
+          _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
+          _step = _RechStep.paying;
+        });
+      } else {
+        setState(() {
+          _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
+          _step = _RechStep.paying;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _step = _RechStep.paying;
+      });
+    }
+  }
+
+  Future<void> _openLink() async {
+    final link = _redeemLink;
+    if (link == null) return;
+    final uri = Uri.parse(link);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) =>
-      _requested ? _buildConfirm() : _buildSelector();
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
+    child: switch (_step) {
+      _RechStep.pick     => _buildSelector(),
+      _RechStep.paying   => _buildPayment(),
+      _RechStep.checking => _buildChecking(),
+      _RechStep.done     => _buildDone(),
+    },
+  );
 
   Widget _buildSelector() {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F1923),
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(24, 16, 24,
-          MediaQuery.of(context).viewInsets.bottom + 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _handle(),
-          const SizedBox(height: 24),
-          const Text('Recharger ma carte',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(
-            'Payez votre agent en DZD, la valeur sera créditée en USD',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.5),
-                fontSize: 13),
-          ),
-          const SizedBox(height: 22),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 4,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 1.3,
-            children: _presets.map((amt) {
-              final sel = _amount == amt;
-              return GestureDetector(
-                onTap: () => setState(() => _amount = amt),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  decoration: BoxDecoration(
-                    gradient: sel
-                        ? const LinearGradient(colors: [
-                            Color(0xFF00D4FF),
-                            Color(0xFF0096FF)
-                          ])
-                        : null,
-                    color: sel ? null : const Color(0xFF1A2332),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: sel
-                            ? Colors.transparent
-                            : Colors.white.withValues(alpha: 0.08)),
-                    boxShadow: sel
-                        ? [
-                            BoxShadow(
-                              color: const Color(0xFF00D4FF)
-                                  .withValues(alpha: 0.3),
-                              blurRadius: 10,
-                            )
-                          ]
-                        : [],
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('\$$amt',
-                          style: TextStyle(
-                              color: sel
-                                  ? Colors.black
-                                  : Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16)),
-                      Text(
-                          '${(amt * kExchangeRate).toStringAsFixed(0)} DA',
-                          style: TextStyle(
-                              color: sel
-                                  ? Colors.black54
-                                  : Colors.white38,
-                              fontSize: 10)),
-                    ],
-                  ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _handle(),
+        const SizedBox(height: 24),
+        const Text('Nouvelle carte VCC',
+            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Text('Payez directement en USDT sur le réseau Polygon',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
+        const SizedBox(height: 22),
+        GridView.count(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisCount: 4,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
+          childAspectRatio: 1.3,
+          children: _presets.map((amt) {
+            final sel = _amount == amt;
+            return GestureDetector(
+              onTap: () => setState(() => _amount = amt),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                decoration: BoxDecoration(
+                  gradient: sel
+                      ? const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)])
+                      : null,
+                  color: sel ? null : AppColors.card,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: sel ? Colors.transparent : Colors.white.withValues(alpha: 0.08)),
+                  boxShadow: sel
+                      ? [BoxShadow(color: const Color(0xFF00D4FF).withValues(alpha: 0.3), blurRadius: 10)]
+                      : [],
                 ),
-              );
-            }).toList(),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('\$$amt',
+                        style: TextStyle(
+                            color: sel ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text('${_estimatedUsdt(amt)} USDT',
+                        style: TextStyle(
+                            color: sel ? Colors.black54 : Colors.white38, fontSize: 10)),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
           ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(
-                vertical: 14, horizontal: 18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF)
-                      .withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('À payer à l\'agent',
-                    style: TextStyle(
-                        color:
-                            Colors.white.withValues(alpha: 0.6))),
-                Text(
-                  '${(_amount * kExchangeRate).toStringAsFixed(0)} DA',
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Total à payer',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+              Text('${_estimatedUsdt(_amount)} USDT',
                   style: const TextStyle(
                       color: Color(0xFF00D4FF),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16),
-                ),
-              ],
-            ),
+                      fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
           ),
-          const SizedBox(height: 20),
-          _gradientBtn(
-            label: 'Demander recharge \$$_amount',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: () => setState(() => _requested = true),
-          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Text(_error!, textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
         ],
-      ),
+        const SizedBox(height: 20),
+        _gradientBtn(
+          label: 'Créer ma commande',
+          loading: false,
+          colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+          onTap: _createOrder,
+        ),
+      ],
     );
   }
 
-  Widget _buildConfirm() {
-    final dzd = (_amount * kExchangeRate).toStringAsFixed(0);
-    return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F1923),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 40),
+  Widget _buildPayment() {
+    final order = _order;
+    if (order == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 60),
+        child: Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF))),
+      );
+    }
+    final addr = order.cryptoAddress;
+    return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _handle(),
-          const SizedBox(height: 24),
-          Center(
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check_circle_rounded,
-                  color: Color(0xFF00D4FF), size: 48),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text('Demande enregistrée',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text('Remettez le montant ci-dessous à votre agent.\nIl se charge du reste.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.5),
-                  fontSize: 13)),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+          Text(L.sendExactly,
+              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(L.usdtPolygonOnly,
+              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
+          const SizedBox(height: 20),
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
+              color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
             ),
             child: Column(children: [
-              Text('MONTANT À REMETTRE À L\'AGENT',
-                  style: TextStyle(color: Colors.white38, fontSize: 10,
-                      letterSpacing: 1.5)),
+              Text(L.exactAmount,
+                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
               const SizedBox(height: 8),
-              Text('$dzd DA',
+              Text('${order.amountUsdt} USDT',
                   style: const TextStyle(color: Color(0xFF00D4FF),
                       fontSize: 32, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              Text('pour une carte \$$_amount',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4),
-                      fontSize: 12)),
+              Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
             ]),
           ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Column(children: [
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  color: Colors.white,
+                  child: QrImageView(data: addr, size: 150, version: QrVersions.auto),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('ADRESSE USDT (POLYGON)',
+                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(
+                  child: Text(addr,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11,
+                          fontFamily: 'monospace'),
+                      maxLines: 2),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: addr));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Adresse copiée'),
+                      duration: Duration(seconds: 2),
+                    ));
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00D4FF).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.copy_rounded, color: Color(0xFF00D4FF), size: 18),
+                  ),
+                ),
+              ]),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
+              style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orange, fontSize: 13)),
+          ],
           const SizedBox(height: 20),
           _gradientBtn(
-            label: 'Fermer',
+            label: 'J\'ai payé — Vérifier',
             loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: () => widget.onSuccess(_amount),
+            onTap: _checkStatus,
+          ),
+          const SizedBox(height: 10),
+          Center(
+            child: Text('ID: ${order.redeemId}',
+                style: TextStyle(color: Colors.white38, fontSize: 10, fontFamily: 'monospace')),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildChecking() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 60),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        CircularProgressIndicator(color: Color(0xFF00D4FF)),
+        SizedBox(height: 20),
+        Text('Vérification du paiement…', style: TextStyle(color: Colors.white70)),
+      ]),
+    );
+  }
+
+  Widget _buildDone() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _handle(),
+        const SizedBox(height: 24),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)]),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Icon(Icons.check_rounded, color: Colors.black, size: 36),
+          ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+        ),
+        const SizedBox(height: 20),
+        const Text('Carte prête !',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text('Votre nouvelle carte VCC Mastercard est activée.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+        const SizedBox(height: 24),
+        if (_redeemLink != null)
+          _gradientBtn(
+            label: 'Voir ma carte',
+            loading: false,
+            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+            onTap: _openLink,
+          ),
+        const SizedBox(height: 12),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
+        ),
+      ],
+    );
+  }
+
 }
 
 // ============================================
@@ -2014,8 +2824,8 @@ class _CardDetailsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F1923),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
         borderRadius:
             BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -2091,7 +2901,7 @@ class _DetailRow extends StatelessWidget {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content: Text('$label copié'),
                   duration: const Duration(seconds: 1),
-                  backgroundColor: const Color(0xFF1A2332),
+                  backgroundColor: AppColors.card,
                   behavior: SnackBarBehavior.floating,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10)),
@@ -2116,9 +2926,9 @@ class TransactionsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0D1117),
+        backgroundColor: AppColors.bg,
         elevation: 0,
         title: const Text('Historique',
             style: TextStyle(
@@ -2186,6 +2996,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late TextEditingController _phoneCtrl;
   late TextEditingController _emailCtrl;
   bool _saving = false;
+  bool _lockEnabled = false;
 
   @override
   void initState() {
@@ -2193,6 +3004,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _nameCtrl  = TextEditingController(text: UserProfile.name);
     _phoneCtrl = TextEditingController(text: UserProfile.phone);
     _emailCtrl = TextEditingController(text: UserProfile.email);
+    AppLock.isEnabled().then((v) { if (mounted) setState(() => _lockEnabled = v); });
   }
 
   @override
@@ -2219,7 +3031,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Text('Profil enregistré',
             style: TextStyle(color: Colors.white)),
       ]),
-      backgroundColor: const Color(0xFF0F1923),
+      backgroundColor: AppColors.surface,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12)),
@@ -2233,9 +3045,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ? UserProfile.name[0].toUpperCase()
         : '?';
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0D1117),
+        backgroundColor: AppColors.bg,
         elevation: 0,
         title: const Text('Mon profil',
             style: TextStyle(
@@ -2312,7 +3124,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
                 onTap: _save,
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 28),
+              Text(L.settings,
+                  style: TextStyle(color: AppColors.textSub, fontSize: 12,
+                      fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+              const SizedBox(height: 12),
+              // — Langue
+              _SettingsTile(
+                icon: Icons.language_rounded,
+                title: L.language,
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  _LangBtn('FR', langNotifier.value == 'fr', () async {
+                    await AppSettings.setLang('fr');
+                    if (mounted) setState(() {});
+                  }),
+                  const SizedBox(width: 8),
+                  _LangBtn('AR', langNotifier.value == 'ar', () async {
+                    await AppSettings.setLang('ar');
+                    if (mounted) setState(() {});
+                  }),
+                ]),
+              ),
+              const SizedBox(height: 10),
+              // — Thème
+              _SettingsTile(
+                icon: darkModeNotifier.value
+                    ? Icons.dark_mode_rounded
+                    : Icons.light_mode_rounded,
+                title: darkModeNotifier.value ? L.darkMode : L.lightMode,
+                trailing: Switch(
+                  value: !darkModeNotifier.value,
+                  onChanged: (v) async {
+                    await AppSettings.setDark(!v);
+                    if (mounted) setState(() {});
+                  },
+                  activeThumbColor: const Color(0xFF00D4FF),
+                  activeTrackColor: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // — Biométrique
+              _SettingsTile(
+                icon: Icons.fingerprint_rounded,
+                title: L.biometric,
+                subtitle: L.biometricSub,
+                trailing: Switch(
+                  value: _lockEnabled,
+                  onChanged: (v) async {
+                    if (v) {
+                      final ok = await AppLock.authenticate(context);
+                      if (!ok) return;
+                    }
+                    await AppLock.setEnabled(v);
+                    if (mounted) setState(() => _lockEnabled = v);
+                  },
+                  activeThumbColor: const Color(0xFF00D4FF),
+                  activeTrackColor: const Color(0xFF00D4FF).withValues(alpha: 0.3),
+                ),
+              ),
+              const SizedBox(height: 20),
               GestureDetector(
                 onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const AgentScreen())),
@@ -2324,14 +3194,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     borderRadius: BorderRadius.circular(14),
                     color: const Color(0xFF00D4FF).withValues(alpha: 0.05),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.shield_outlined,
+                      const Icon(Icons.shield_outlined,
                           color: Color(0xFF00D4FF), size: 18),
-                      SizedBox(width: 10),
-                      Text('Mode Agent',
-                          style: TextStyle(
+                      const SizedBox(width: 10),
+                      Text(L.agentMode,
+                          style: const TextStyle(
                               color: Color(0xFF00D4FF),
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
@@ -2343,6 +3213,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget trailing;
+  const _SettingsTile({required this.icon, required this.title,
+      this.subtitle, required this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(children: [
+        Icon(icon, color: const Color(0xFF00D4FF), size: 22),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: TextStyle(color: AppColors.text, fontSize: 14,
+                fontWeight: FontWeight.w600)),
+            if (subtitle != null)
+              Text(subtitle!, style: TextStyle(color: AppColors.textDim, fontSize: 11)),
+          ]),
+        ),
+        trailing,
+      ]),
+    );
+  }
+}
+
+class _LangBtn extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _LangBtn(this.label, this.selected, this.onTap);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          gradient: selected ? const LinearGradient(
+              colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]) : null,
+          color: selected ? null : AppColors.card,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(label, style: TextStyle(
+            color: selected ? Colors.black : AppColors.textSub,
+            fontWeight: FontWeight.bold, fontSize: 13)),
       ),
     );
   }
@@ -2511,9 +3442,9 @@ class _AgentScreenState extends State<AgentScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0D1117),
+        backgroundColor: AppColors.bg,
         foregroundColor: Colors.white,
         elevation: 0,
         title: const Text('Mode Agent',
@@ -2613,7 +3544,7 @@ class _AgentScreenState extends State<AgentScreen>
                           decoration: BoxDecoration(
                             color: d == '⌫'
                                 ? Colors.transparent
-                                : const Color(0xFF1A2332),
+                                : AppColors.card,
                             borderRadius: BorderRadius.circular(14),
                             border: d == '⌫'
                                 ? null
@@ -2659,7 +3590,7 @@ class _AgentScreenState extends State<AgentScreen>
           // Type toggle
           Container(
             decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
+              color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(children: [
@@ -2681,7 +3612,7 @@ class _AgentScreenState extends State<AgentScreen>
               hintText: '+213 XXX XXX XXX',
               hintStyle: const TextStyle(color: Colors.white30),
               filled: true,
-              fillColor: const Color(0xFF1A2332),
+              fillColor: AppColors.card,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: BorderSide.none),
@@ -2703,7 +3634,7 @@ class _AgentScreenState extends State<AgentScreen>
               hintText: 'Prénom Nom',
               hintStyle: const TextStyle(color: Colors.white30),
               filled: true,
-              fillColor: const Color(0xFF1A2332),
+              fillColor: AppColors.card,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: BorderSide.none),
@@ -2730,7 +3661,7 @@ class _AgentScreenState extends State<AgentScreen>
                       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(10),
-                        color: sel ? const Color(0xFF00D4FF) : const Color(0xFF1A2332),
+                        color: sel ? const Color(0xFF00D4FF) : AppColors.card,
                         border: sel ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
                       ),
                       child: Text('\$${p.toStringAsFixed(0)}',
@@ -2747,7 +3678,7 @@ class _AgentScreenState extends State<AgentScreen>
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
-                      color: _customMode ? const Color(0xFF8B5CF6) : const Color(0xFF1A2332),
+                      color: _customMode ? const Color(0xFF8B5CF6) : AppColors.card,
                       border: _customMode ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
                     ),
                     child: Text('Autre',
@@ -2774,7 +3705,7 @@ class _AgentScreenState extends State<AgentScreen>
                   prefixText: '\$ ',
                   prefixStyle: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold),
                   filled: true,
-                  fillColor: const Color(0xFF1A2332),
+                  fillColor: AppColors.card,
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
                       borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
@@ -2795,7 +3726,7 @@ class _AgentScreenState extends State<AgentScreen>
             padding: const EdgeInsets.symmetric(
                 vertical: 14, horizontal: 20),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A2332),
+              color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
                   color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
@@ -2958,7 +3889,7 @@ class _AgentScreenState extends State<AgentScreen>
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('$label copié'),
           duration: const Duration(seconds: 1),
-          backgroundColor: const Color(0xFF1A2332),
+          backgroundColor: AppColors.card,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10)),
@@ -2967,7 +3898,7 @@ class _AgentScreenState extends State<AgentScreen>
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A2332),
+          color: AppColors.card,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
               color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),

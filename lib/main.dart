@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 // ============================================
 // CONFIGURATION
@@ -50,14 +51,14 @@ class VccCard {
       (cardNumber != null && cardNumber!.isNotEmpty) || redeemLink != null;
 
   String get maskedNumber {
-    if (!hasCard) return '•••• •••• •••• ••••';
+    if (cardNumber == null || cardNumber!.isEmpty) return '•••• •••• •••• ••••';
     final n = cardNumber!.replaceAll(RegExp(r'[\s\-]'), '');
     if (n.length != 16) return cardNumber!;
     return '•••• •••• •••• ${n.substring(12)}';
   }
 
   String get formattedNumber {
-    if (!hasCard) return '•••• •••• •••• ••••';
+    if (cardNumber == null || cardNumber!.isEmpty) return '•••• •••• •••• ••••';
     final n = cardNumber!.replaceAll(RegExp(r'[\s\-]'), '');
     if (n.length != 16) return cardNumber!;
     return '${n.substring(0, 4)} ${n.substring(4, 8)} '
@@ -1159,13 +1160,11 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Future<void> _openCardLink() async {
+  void _openCardLink() {
     final link = _card?.redeemLink;
     if (link == null) return;
-    final uri = Uri.parse(link);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
   }
 
   @override
@@ -1470,7 +1469,7 @@ class _VccCardVisual extends StatelessWidget {
                   ],
                 ),
                 const Spacer(),
-                _buildNumberRow(active),
+                _buildNumberRow(active, context),
                 const SizedBox(height: 16),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
@@ -1555,7 +1554,7 @@ class _VccCardVisual extends StatelessWidget {
     ]);
   }
 
-  Widget _buildNumberRow(bool active) {
+  Widget _buildNumberRow(bool active, BuildContext context) {
     if (!active) {
       // blurred placeholder — BackdropFilter blurs everything behind it
       return ClipRect(
@@ -1579,6 +1578,37 @@ class _VccCardVisual extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      );
+    }
+    final hasNumber = card!.cardNumber != null && card!.cardNumber!.isNotEmpty;
+    if (!hasNumber) {
+      final link = card!.redeemLink;
+      return GestureDetector(
+        onTap: link != null
+            ? () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)))
+            : null,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Voir ma carte',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.75),
+                fontSize: 13,
+                letterSpacing: 0.5,
+                fontStyle: FontStyle.italic,
+                decoration: link != null ? TextDecoration.underline : null,
+                decorationColor: Colors.white54,
+              ),
+            ),
+            if (link != null) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.open_in_new_rounded,
+                  size: 13, color: Colors.white.withValues(alpha: 0.55)),
+            ],
+          ],
         ),
       );
     }
@@ -2030,13 +2060,11 @@ class _ActivationSheetState extends State<_ActivationSheet> {
     }
   }
 
-  Future<void> _openLink() async {
+  void _openLink() {
     final link = _redeemLink;
     if (link == null) return;
-    final uri = Uri.parse(link);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
   }
 
   @override
@@ -2535,13 +2563,11 @@ class _RechargeSheetState extends State<_RechargeSheet> {
     }
   }
 
-  Future<void> _openLink() async {
+  void _openLink() {
     final link = _redeemLink;
     if (link == null) return;
-    final uri = Uri.parse(link);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
   }
 
   @override
@@ -3224,6 +3250,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      backgroundColor: AppColors.surface,
+                      title: Text('Réinitialiser la carte',
+                          style: TextStyle(color: AppColors.text)),
+                      content: Text(
+                          'Cette action supprimera toutes les données de ta carte VCC de l\'appareil.',
+                          style: TextStyle(color: AppColors.textDim)),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Annuler',
+                              style: TextStyle(color: Colors.white54)),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Supprimer',
+                              style: TextStyle(color: Colors.redAccent)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await VccCard.remove();
+                    if (mounted) setState(() {});
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: Colors.redAccent.withValues(alpha: 0.25)),
+                    borderRadius: BorderRadius.circular(14),
+                    color: Colors.redAccent.withValues(alpha: 0.05),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.delete_outline_rounded,
+                          color: Colors.redAccent, size: 18),
+                      SizedBox(width: 10),
+                      Text('Réinitialiser ma carte',
+                          style: TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5)),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -3416,8 +3497,8 @@ class _AgentScreenState extends State<AgentScreen>
         final card = VccCard(
           cardId: order.redeemId,
           redeemId: order.redeemId,
-          balance: order.cardValue,
-          isActivated: true,
+          balance: 0,
+          isActivated: false,
           holderName: name,
         );
         await card.save();
@@ -4154,4 +4235,67 @@ class _ElectricLogoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ElectricLogoPainter old) => old.phase != phase;
+}
+
+// ============================================
+// CARD WEBVIEW SCREEN
+// ============================================
+class CardWebViewScreen extends StatefulWidget {
+  final String url;
+  final String title;
+  const CardWebViewScreen({super.key, required this.url, this.title = 'Ma carte'});
+
+  @override
+  State<CardWebViewScreen> createState() => _CardWebViewScreenState();
+}
+
+class _CardWebViewScreenState extends State<CardWebViewScreen> {
+  late final WebViewController _controller;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(AppColors.bg)
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageStarted: (_) => setState(() => _loading = true),
+        onPageFinished: (_) => setState(() => _loading = false),
+      ))
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(widget.title,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white54),
+            onPressed: () => _controller.reload(),
+          ),
+        ],
+      ),
+      body: Stack(children: [
+        WebViewWidget(controller: _controller),
+        if (_loading)
+          const Center(
+            child: CircularProgressIndicator(
+              color: Color(0xFF00D4FF),
+              strokeWidth: 2,
+            ),
+          ),
+      ]),
+    );
+  }
 }

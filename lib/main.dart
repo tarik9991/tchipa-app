@@ -1161,10 +1161,37 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _openCardLink() {
-    final link = _card?.redeemLink;
+    final card = _card;
+    final link = card?.redeemLink;
     if (link == null) return;
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
+    bool extracted = false;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CardWebViewScreen(
+          url: link,
+          title: 'Récupération carte…',
+          onCardData: (number, cvv, expiry) async {
+            extracted = true;
+            final updated = card!.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
+            await updated.save();
+            if (mounted) Navigator.of(context).pop();
+          },
+        ),
+      ),
+    ).then((_) async {
+      if (!extracted || !mounted) return;
+      final latest = await VccCard.load();
+      if (!mounted) return;
+      if (latest != null) setState(() => _card = latest);
+      if (latest?.cardNumber != null) {
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: Colors.transparent,
+          builder: (_) => _CardDetailsSheet(card: latest!),
+        );
+      }
+    });
   }
 
   @override
@@ -1339,11 +1366,11 @@ class _HomeScreenState extends State<HomeScreen>
         onTap: _openRecharge,
       ),
       const SizedBox(height: 12),
-      if (_card?.redeemLink != null)
+      if (_card?.cardNumber == null && _card?.redeemLink != null)
         _ActionButton(
-          label: 'Voir ma carte',
-          sublabel: 'Ouvre la page PayGate',
-          icon: Icons.open_in_new_rounded,
+          label: 'Récupérer ma carte',
+          sublabel: 'Extraction automatique des détails',
+          icon: Icons.credit_card_rounded,
           colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
           onTap: _openCardLink,
         )
@@ -1997,6 +2024,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
       double.parse((cardValue * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
   VccOrder? _order;
   String? _redeemLink;
+  VccCard? _activatedCard;
   String? _error;
 
   @override
@@ -2039,6 +2067,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
           holderName: UserProfile.name,
         );
         await card.save();
+        _activatedCard = card;
         if (mounted) setState(() { _redeemLink = link; _step = _ActStep.done; });
         widget.onActivated(card);
       } else if (status['isPaid'] == true) {
@@ -2062,9 +2091,23 @@ class _ActivationSheetState extends State<_ActivationSheet> {
 
   void _openLink() {
     final link = _redeemLink;
+    final card = _activatedCard;
     if (link == null) return;
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CardWebViewScreen(
+        url: link,
+        title: 'Récupération carte…',
+        onCardData: card == null ? null : (number, cvv, expiry) async {
+          final updated = card.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
+          await updated.save();
+          widget.onActivated(updated);
+          if (mounted) {
+            Navigator.of(context).pop(); // ferme WebView
+            Navigator.of(context).pop(); // ferme bottom sheet
+          }
+        },
+      ),
+    ));
   }
 
   @override
@@ -2507,6 +2550,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
   VccOrder? _order;
   String? _error;
   String? _redeemLink;
+  VccCard? _rechargedCard;
 
   Future<void> _createOrder() async {
     setState(() { _step = _RechStep.paying; _error = null; _order = null; });
@@ -2542,6 +2586,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
           holderName: UserProfile.name,
         );
         await card.save();
+        _rechargedCard = card;
         if (mounted) setState(() { _redeemLink = link; _step = _RechStep.done; });
         widget.onSuccess(_order!.cardValue);
       } else if (status['isPaid'] == true) {
@@ -2565,9 +2610,22 @@ class _RechargeSheetState extends State<_RechargeSheet> {
 
   void _openLink() {
     final link = _redeemLink;
+    final card = _rechargedCard;
     if (link == null) return;
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)));
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CardWebViewScreen(
+        url: link,
+        title: 'Récupération carte…',
+        onCardData: card == null ? null : (number, cvv, expiry) async {
+          final updated = card.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
+          await updated.save();
+          if (mounted) {
+            Navigator.of(context).pop(); // ferme WebView
+            Navigator.of(context).pop(); // ferme bottom sheet
+          }
+        },
+      ),
+    ));
   }
 
   @override
@@ -4243,7 +4301,8 @@ class _ElectricLogoPainter extends CustomPainter {
 class CardWebViewScreen extends StatefulWidget {
   final String url;
   final String title;
-  const CardWebViewScreen({super.key, required this.url, this.title = 'Ma carte'});
+  final void Function(String? cardNumber, String? cvv, String? expiry)? onCardData;
+  const CardWebViewScreen({super.key, required this.url, this.title = 'Ma carte', this.onCardData});
 
   @override
   State<CardWebViewScreen> createState() => _CardWebViewScreenState();
@@ -4252,6 +4311,51 @@ class CardWebViewScreen extends StatefulWidget {
 class _CardWebViewScreenState extends State<CardWebViewScreen> {
   late final WebViewController _controller;
   bool _loading = true;
+  bool _extracted = false;
+
+  // Injected after page load to pull card details from the DOM + regex fallback
+  static const _kExtractJs = r'''
+(function(){
+  setTimeout(function(){
+    try {
+      var b = document.body ? document.body.innerText : '';
+      var r = {};
+      function tryEl(sels) {
+        for (var i = 0; i < sels.length; i++) {
+          try {
+            var el = document.querySelector(sels[i]);
+            if (el) {
+              var t = (el.value||el.textContent||el.innerText||'').trim().replace(/\s+/g,' ');
+              if (t.length > 0) return t;
+            }
+          } catch(e) {}
+        }
+        return null;
+      }
+      r.n = tryEl(["[class*='card-number']","[class*='cardNumber']","[class*='card_number']",
+                   "[id*='card-number']","[id*='cardNumber']","[data-card-number]",
+                   "[class*='pan']","[id*='pan']"]);
+      r.c = tryEl(["[class*='cvv']","[class*='cvc']","[id*='cvv']","[id*='cvc']","[data-cvv]"]);
+      r.e = tryEl(["[class*='expiry']","[class*='expir']","[class*='exp-date']",
+                   "[class*='expDate']","[id*='expiry']","[data-expiry]","[class*='valid']"]);
+      if (!r.n || !/\d{4}/.test(r.n)) {
+        var m = b.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
+        r.n = m ? m[1].replace(/[\s-]/g,'') : r.n;
+      } else { r.n = r.n.replace(/[\s-]/g,''); }
+      if (!r.c || !/^\d{3,4}$/.test(r.c.trim())) {
+        var m2 = b.match(/CVV[^\d]{0,10}(\d{3,4})/i)||b.match(/CVC[^\d]{0,10}(\d{3,4})/i)
+                ||b.match(/Security[^\d]{0,15}(\d{3,4})/i);
+        if (m2) r.c = m2[1];
+      }
+      if (!r.e || !/\d[\/]\d/.test(r.e)) {
+        var m3 = b.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/);
+        if (m3) r.e = m3[0];
+      }
+      TchipaCard.postMessage(JSON.stringify({cardNumber:r.n,cvv:r.c,expiry:r.e}));
+    } catch(err){TchipaCard.postMessage(JSON.stringify({error:err.toString()}));}
+  },1500);
+})();
+''';
 
   @override
   void initState() {
@@ -4259,9 +4363,26 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(AppColors.bg)
+      ..addJavaScriptChannel('TchipaCard', onMessageReceived: (msg) {
+        if (_extracted || widget.onCardData == null) return;
+        try {
+          final data = jsonDecode(msg.message) as Map<String, dynamic>;
+          if (data['error'] != null) return;
+          final number = data['cardNumber'] as String?;
+          final cvv = data['cvv'] as String?;
+          final expiry = data['expiry'] as String?;
+          if (number != null && number.length >= 15) {
+            _extracted = true;
+            widget.onCardData!(number, cvv, expiry);
+          }
+        } catch (_) {}
+      })
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) => setState(() => _loading = true),
-        onPageFinished: (_) => setState(() => _loading = false),
+        onPageFinished: (_) {
+          setState(() => _loading = false);
+          if (widget.onCardData != null) _controller.runJavaScript(_kExtractJs);
+        },
       ))
       ..loadRequest(Uri.parse(widget.url));
   }

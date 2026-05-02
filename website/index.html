@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" id="root">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tchipa — Virtual Credit Card App | بطاقة افتراضية</title>
+  <meta name="description" content="Generate Mastercard Virtual Credit Cards instantly with USDT on Polygon. No KYC. Pay worldwide.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    /* ── VARIABLES ─────────────────────────────────────────── */
+    :root {
+      --bg:       #0D1117;
+      --surface:  #161B22;
+      --card:     #21262D;
+      --border:   rgba(255,255,255,0.07);
+      --cyan:     #00D4FF;
+      --purple:   #8B5CF6;
+      --gold:     #F59E0B;
+      --green:    #10B981;
+      --text:     #F0F6FC;
+      --sub:      rgba(240,246,252,0.52);
+      --font-en:  'Inter', sans-serif;
+      --font-ar:  'Tajawal', sans-serif;
+      --radius:   20px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-en);
+      overflow-x: hidden;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    [dir="rtl"] body { font-family: var(--font-ar); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--card); border-radius: 3px; }
+    ::selection { background: rgba(0,212,255,.28); color: #fff; }
+
+    /* ── CANVAS ─────────────────────────────────────────────── */
+    #c { position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.45; }
+
+    /* ── UTILITIES ──────────────────────────────────────────── */
+    .grad-text {
+      background: linear-gradient(135deg,var(--cyan) 0%,var(--purple) 55%,var(--gold) 100%);
+      background-size: 200% 200%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: grad-move 5s ease infinite;
+    }
+    @keyframes grad-move {
+      0%,100% { background-position:0% 50%; }
+      50%      { background-position:100% 50%; }
+    }
+    .reveal { opacity:0; transform:translateY(28px); transition:opacity .7s ease,transform .7s ease; }
+    .reveal.in { opacity:1; transform:none; }
+    .reveal-d1 { transition-delay:.1s; }
+    .reveal-d2 { transition-delay:.2s; }
+    .reveal-d3 { transition-delay:.3s; }
+    .reveal-d4 { transition-delay:.4s; }
+
+    /* ── NAVBAR ─────────────────────────────────────────────── */
+    nav {
+      position: fixed; top:0; left:0; right:0; z-index:200;
+      padding: 1rem 4%;
+      display: flex; align-items:center; justify-content:space-between;
+      background: rgba(13,17,23,.85);
+      backdrop-filter: blur(24px);
+      border-bottom: 1px solid var(--border);
+      transition: padding .3s;
+    }
+    nav.scrolled { padding: .6rem 4%; box-shadow:0 4px 40px rgba(0,0,0,.4); }
+    .logo {
+      font-size: 1.55rem; font-weight:900; letter-spacing:-.03em;
+      background: linear-gradient(135deg,var(--cyan),var(--purple));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+      text-decoration: none;
+    }
+    .nav-mid { display:flex; gap:2.25rem; align-items:center; }
+    .nav-mid a {
+      color:var(--sub); text-decoration:none; font-size:.9rem; font-weight:500;
+      transition:color .2s;
+    }
+    .nav-mid a:hover { color:var(--text); }
+    .nav-right { display:flex; gap:.75rem; align-items:center; }
+    .lang-btn {
+      display:flex; align-items:center; gap:.45rem;
+      background:var(--card); border:1px solid var(--border); border-radius:100px;
+      padding:.3rem .85rem; cursor:pointer; font-size:.82rem; font-weight:600;
+      color:var(--sub); transition:all .2s; font-family:inherit;
+    }
+    .lang-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+    .btn-nav {
+      padding:.45rem 1.2rem; border-radius:100px;
+      background:linear-gradient(135deg,var(--cyan),var(--purple));
+      color:#000; font-weight:700; font-size:.85rem; text-decoration:none;
+      transition:all .25s;
+    }
+    .btn-nav:hover { transform:scale(1.05); box-shadow:0 0 22px rgba(0,212,255,.45); }
+
+    /* ── HERO ────────────────────────────────────────────────── */
+    .hero {
+      min-height:100vh;
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 9rem 6% 5rem;
+      position:relative; overflow:hidden; gap:3rem;
+    }
+    /* Orbs */
+    .orb {
+      position:absolute; border-radius:50%; filter:blur(90px); pointer-events:none;
+      animation:orb-drift 10s ease-in-out infinite;
+    }
+    .orb1 { width:700px;height:700px; background:radial-gradient(circle,rgba(0,212,255,.13) 0%,transparent 70%); top:-180px;left:-180px; animation-duration:9s; }
+    .orb2 { width:550px;height:550px; background:radial-gradient(circle,rgba(139,92,246,.18) 0%,transparent 70%); bottom:-150px;right:-100px; animation-duration:12s; animation-direction:reverse; }
+    .orb3 { width:350px;height:350px; background:radial-gradient(circle,rgba(245,158,11,.1) 0%,transparent 70%); top:45%;left:45%; animation-duration:15s; }
+    @keyframes orb-drift {
+      0%,100% { transform:translate(0,0); }
+      33%      { transform:translate(40px,-40px); }
+      66%      { transform:translate(-25px,30px); }
+    }
+    /* Hero content */
+    .hero-left { flex:1; max-width:620px; position:relative; z-index:2; }
+    .badge {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:rgba(0,212,255,.09); border:1px solid rgba(0,212,255,.28);
+      border-radius:100px; padding:.38rem 1rem;
+      font-size:.78rem; font-weight:700; color:var(--cyan);
+      margin-bottom:1.6rem;
+      animation:fade-up .6s ease both;
+    }
+    .badge::before { content:''; width:7px;height:7px; background:var(--cyan); border-radius:50%; animation:blink 2s infinite; }
+    @keyframes blink { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.4;transform:scale(.75);} }
+    .hero-h1 {
+      font-size: clamp(2.6rem,5.5vw,5rem);
+      font-weight:900; line-height:1.08; letter-spacing:-.035em;
+      margin-bottom:1.5rem;
+      animation:fade-up .65s .08s ease both;
+    }
+    [dir="rtl"] .hero-h1 { letter-spacing:0; line-height:1.25; }
+    .hero-sub {
+      font-size:1.08rem; color:var(--sub); line-height:1.75;
+      max-width:540px; margin-bottom:2.5rem;
+      animation:fade-up .65s .18s ease both;
+    }
+    .hero-btns {
+      display:flex; gap:1rem; flex-wrap:wrap;
+      animation:fade-up .65s .28s ease both;
+    }
+    .btn-primary {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:linear-gradient(135deg,var(--cyan),var(--purple));
+      color:#000; font-weight:800; padding:.9rem 2rem;
+      border-radius:100px; text-decoration:none; font-size:1rem;
+      transition:all .3s; position:relative; overflow:hidden;
+      animation:glow-pulse 3.5s ease-in-out infinite;
+    }
+    @keyframes glow-pulse {
+      0%,100% { box-shadow:0 0 20px rgba(0,212,255,.3); }
+      50%      { box-shadow:0 0 45px rgba(139,92,246,.55),0 0 70px rgba(0,212,255,.2); }
+    }
+    .btn-primary:hover { transform:translateY(-3px) scale(1.02); }
+    .btn-ghost {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:transparent; color:var(--text); font-weight:600; padding:.9rem 2rem;
+      border-radius:100px; border:1px solid var(--border); text-decoration:none;
+      font-size:1rem; transition:all .3s;
+    }
+    .btn-ghost:hover { border-color:rgba(139,92,246,.5); background:rgba(139,92,246,.08); transform:translateY(-3px); }
+
+    /* ── VCC CARD ───────────────────────────────────────────── */
+    .hero-right {
+      flex:1; display:flex; justify-content:center; align-items:center;
+      position:relative; z-index:2;
+      animation:fade-up .85s .35s ease both;
+    }
+    .card-wrap { position:relative; padding:2.5rem 5rem 2.5rem 2.5rem; }
+    .card-scene { width:370px;height:225px; perspective:1100px; cursor:pointer; }
+    .card-inner {
+      width:100%;height:100%; position:relative;
+      transform-style:preserve-3d;
+      transition:transform .85s cubic-bezier(.4,0,.2,1);
+      animation:card-float 7s ease-in-out infinite;
+    }
+    .card-scene:hover .card-inner { transform:rotateY(180deg)!important; }
+    @keyframes card-float {
+      0%,100% { transform:translateY(0) rotateX(3deg) rotateY(-6deg); }
+      50%      { transform:translateY(-18px) rotateX(-2deg) rotateY(6deg); }
+    }
+    .card-face {
+      position:absolute; inset:0; border-radius:20px;
+      backface-visibility:hidden; -webkit-backface-visibility:hidden; overflow:hidden;
+    }
+    /* Front */
+    .cf {
+      background:linear-gradient(135deg,#1a1f2e 0%,#0d1220 40%,#1b0d2e 100%);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:0 30px 60px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);
+    }
+    .cf::before {
+      content:''; position:absolute; inset:0;
+      background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.07) 50%,transparent 60%);
+      background-size:200% 100%;
+      animation:shimmer 3.5s linear infinite;
+    }
+    @keyframes shimmer { 0%{background-position:-200% center;} 100%{background-position:200% center;} }
+    .card-holo {
+      position:absolute; inset:0;
+      background:conic-gradient(from 0deg,rgba(0,212,255,.06),rgba(139,92,246,.06),rgba(245,158,11,.04),rgba(0,212,255,.06));
+      mix-blend-mode:screen;
+      animation:holo 9s linear infinite;
+    }
+    @keyframes holo { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    /* Chip */
+    .chip {
+      position:absolute; top:1.4rem;left:1.6rem;
+      width:44px;height:33px;
+      background:linear-gradient(135deg,#c9a227,#f0c040,#c9a227);
+      border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,.5);
+    }
+    .chip::after {
+      content:''; position:absolute; top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:70%;height:1px; background:rgba(0,0,0,.3);
+      box-shadow:0 4px 0 rgba(0,0,0,.3),0 8px 0 rgba(0,0,0,.3),0 -4px 0 rgba(0,0,0,.3);
+    }
+    /* NFC */
+    .nfc {
+      position:absolute; top:1.55rem; left:4.5rem;
+      width:22px;height:22px; border-radius:50%;
+      border:2px solid rgba(255,255,255,.12);
+      display:flex;align-items:center;justify-content:center;
+      font-size:.7rem; color:rgba(255,255,255,.25);
+    }
+    /* Logo */
+    .c-logo {
+      position:absolute; top:1.2rem; right:1.4rem;
+      font-size:1rem; font-weight:900; letter-spacing:-.02em;
+      background:linear-gradient(135deg,var(--cyan),var(--purple));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    /* Number */
+    .c-num {
+      position:absolute; bottom:3.6rem; left:1.6rem; right:1.6rem;
+      font-family:'Courier New',monospace; font-size:1.05rem; font-weight:700;
+      letter-spacing:.16em; color:rgba(255,255,255,.88);
+    }
+    /* Info */
+    .c-info {
+      position:absolute; bottom:1.1rem; left:1.6rem; right:1.6rem;
+      display:flex; justify-content:space-between; align-items:flex-end;
+    }
+    .c-label { font-size:.62rem; color:rgba(255,255,255,.38); text-transform:uppercase; letter-spacing:.1em; }
+    .c-val   { font-size:.88rem; color:rgba(255,255,255,.85); font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+    /* MC logo */
+    .mc { position:absolute; bottom:1.1rem; right:1.4rem; display:flex; }
+    .mc-c { width:30px;height:30px; border-radius:50%; opacity:.92; }
+    .mc-red  { background:#EB001B; margin-right:-9px; }
+    .mc-yel  { background:#F79E1B; }
+    /* Back */
+    .cb {
+      transform:rotateY(180deg);
+      background:linear-gradient(135deg,#0d1220 0%,#1a1f2e 100%);
+      border:1px solid rgba(255,255,255,.1);
+      box-shadow:0 30px 60px rgba(0,0,0,.55);
+    }
+    .cb-stripe { position:absolute; top:2rem; left:0;right:0; height:42px; background:rgba(0,0,0,.85); }
+    .cb-cvv-row { position:absolute; top:5.2rem; left:1.4rem;right:1.4rem; }
+    .cb-cvv-lbl { font-size:.68rem; color:rgba(255,255,255,.35); margin-bottom:.3rem; }
+    .cb-cvv-bar { background:#fff; border-radius:5px; padding:.38rem .8rem; display:flex; justify-content:flex-end; }
+    .cb-cvv { font-family:'Courier New',monospace; font-size:.95rem; color:#000; font-weight:800; letter-spacing:.22em; }
+    .cb-note { position:absolute; bottom:1rem; left:1.4rem;right:1.4rem; text-align:center; font-size:.62rem; color:rgba(255,255,255,.25); line-height:1.5; }
+    /* Floating badges */
+    .fb {
+      position:absolute; display:flex; align-items:center; gap:.45rem;
+      background:rgba(22,27,34,.92); border:1px solid var(--border);
+      border-radius:12px; padding:.5rem .8rem;
+      font-size:.78rem; font-weight:700;
+      backdrop-filter:blur(12px); white-space:nowrap;
+      box-shadow:0 8px 30px rgba(0,0,0,.35);
+    }
+    .fb1 { top:-1rem;right:-1rem; color:#26A17B; border-color:rgba(38,161,123,.35); animation:fb-float 4.5s ease-in-out infinite; }
+    .fb2 { bottom:-1rem;left:-1rem; color:var(--cyan); border-color:rgba(0,212,255,.3); animation:fb-float 5.5s ease-in-out infinite .8s; }
+    .fb3 { top:50%;right:-4.5rem; color:var(--purple); border-color:rgba(139,92,246,.3); animation:fb-float3 6s ease-in-out infinite .4s; }
+    @keyframes fb-float  { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-9px);} }
+    @keyframes fb-float3 { 0%,100%{transform:translateY(-50%);} 50%{transform:translateY(calc(-50% - 9px));} }
+
+    /* ── SECTION BASE ────────────────────────────────────────── */
+    section { position:relative; z-index:2; }
+    .sec { padding:7rem 6%; }
+    .sec-tag {
+      display:inline-block; font-size:.76rem; font-weight:800;
+      text-transform:uppercase; letter-spacing:.18em; color:var(--cyan);
+      margin-bottom:.9rem;
+    }
+    .sec-h2 {
+      font-size:clamp(2rem,4vw,3.2rem); font-weight:900; line-height:1.15;
+      letter-spacing:-.025em; margin-bottom:.9rem;
+    }
+    [dir="rtl"] .sec-h2 { letter-spacing:0; line-height:1.35; }
+    .sec-lead { font-size:1.05rem; color:var(--sub); max-width:580px; line-height:1.75; }
+
+    /* ── STATS BAR ───────────────────────────────────────────── */
+    .stats-bar {
+      margin:0 6% 5rem; position:relative; z-index:2;
+      background:rgba(22,27,34,.65); border:1px solid var(--border);
+      border-radius:22px; overflow:hidden;
+      display:grid; grid-template-columns:repeat(4,1fr);
+      backdrop-filter:blur(20px);
+    }
+    .stats-bar::before {
+      content:''; position:absolute; top:0;left:0;right:0; height:1px;
+      background:linear-gradient(90deg,transparent,var(--cyan),var(--purple),transparent);
+    }
+    .stat-cell {
+      padding:2.2rem 1.5rem; text-align:center;
+      border-right:1px solid var(--border);
+    }
+    .stat-cell:last-child { border-right:none; }
+    .stat-v {
+      font-size:2.2rem; font-weight:900; letter-spacing:-.04em;
+      line-height:1; margin-bottom:.45rem;
+    }
+    .stat-l { font-size:.82rem; color:var(--sub); font-weight:500; }
+
+    /* ── FEATURES GRID ───────────────────────────────────────── */
+    .feat-grid {
+      display:grid; grid-template-columns:repeat(3,1fr);
+      gap:1.4rem; margin-top:3rem;
+    }
+    .feat-card {
+      background:rgba(22,27,34,.6); border:1px solid var(--border);
+      border-radius:var(--radius); padding:2rem;
+      backdrop-filter:blur(20px); transition:all .3s; position:relative; overflow:hidden;
+    }
+    .feat-card::after {
+      content:''; position:absolute; inset:0; border-radius:var(--radius);
+      background:linear-gradient(135deg,rgba(0,212,255,.04),rgba(139,92,246,.06));
+      opacity:0; transition:opacity .3s;
+    }
+    .feat-card:hover::after { opacity:1; }
+    .feat-card:hover {
+      border-color:rgba(0,212,255,.22);
+      transform:translateY(-5px);
+      box-shadow:0 20px 60px rgba(0,0,0,.3),0 0 0 1px rgba(0,212,255,.1);
+    }
+    .f-icon {
+      width:54px;height:54px; border-radius:15px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:1.4rem; margin-bottom:1.2rem;
+    }
+    .fi1{background:rgba(0,212,255,.14);box-shadow:0 0 22px rgba(0,212,255,.18);}
+    .fi2{background:rgba(139,92,246,.14);box-shadow:0 0 22px rgba(139,92,246,.18);}
+    .fi3{background:rgba(245,158,11,.14);box-shadow:0 0 22px rgba(245,158,11,.18);}
+    .fi4{background:rgba(16,185,129,.14);box-shadow:0 0 22px rgba(16,185,129,.18);}
+    .fi5{background:rgba(236,72,153,.14);box-shadow:0 0 22px rgba(236,72,153,.18);}
+    .fi6{background:rgba(6,182,212,.14);box-shadow:0 0 22px rgba(6,182,212,.18);}
+    .f-title { font-size:1.1rem; font-weight:700; margin-bottom:.5rem; letter-spacing:-.01em; }
+    .f-desc  { font-size:.88rem; color:var(--sub); line-height:1.65; }
+
+    /* ── HOW IT WORKS ────────────────────────────────────────── */
+    .how-sec {
+      background:rgba(22,27,34,.35);
+      border-top:1px solid var(--border);
+      border-bottom:1px solid var(--border);
+    }
+    .steps-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:2rem; margin-top:3rem; }
+    .step {
+      text-align:center; padding:2rem 1.5rem; position:relative;
+    }
+    .step:not(:last-child)::after {
+      content:'→'; position:absolute; top:2.2rem; right:-1rem;
+      font-size:1.3rem; color:rgba(255,255,255,.18); z-index:1;
+    }
+    [dir="rtl"] .step:not(:last-child)::after { right:auto; left:-1rem; content:'←'; }
+    .step-num {
+      width:58px;height:58px; border-radius:50%;
+      display:flex;align-items:center;justify-content:center;
+      font-size:1.3rem; font-weight:900; margin:0 auto 1.4rem;
+    }
+    .sn1{background:rgba(0,212,255,.12);border:2px solid rgba(0,212,255,.38);color:var(--cyan);box-shadow:0 0 28px rgba(0,212,255,.2);}
+    .sn2{background:rgba(139,92,246,.12);border:2px solid rgba(139,92,246,.38);color:var(--purple);box-shadow:0 0 28px rgba(139,92,246,.2);}
+    .sn3{background:rgba(245,158,11,.12);border:2px solid rgba(245,158,11,.38);color:var(--gold);box-shadow:0 0 28px rgba(245,158,11,.2);}
+    .step-t { font-size:1.15rem; font-weight:700; margin-bottom:.65rem; }
+    .step-d { font-size:.88rem; color:var(--sub); line-height:1.65; }
+
+    /* ── PLATFORMS ───────────────────────────────────────────── */
+    .platforms { padding:2rem 6% 5.5rem; position:relative; z-index:2; }
+    .plat-label { text-align:center; font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.18em; color:var(--sub); margin-bottom:1.8rem; }
+    .plat-row {
+      display:flex; gap:3rem; justify-content:center; align-items:center;
+      flex-wrap:wrap; opacity:.42; filter:grayscale(1);
+    }
+    .plat-name { font-size:1.05rem; font-weight:800; letter-spacing:-.01em; }
+
+    /* ── MOCKUP SECTION ──────────────────────────────────────── */
+    .mockup-sec { padding:7rem 6%; display:flex; align-items:center; gap:5rem; }
+    .mock-left { flex:1; }
+    .mock-phone {
+      flex:1; display:flex; justify-content:center; align-items:center;
+      position:relative;
+    }
+    .phone-frame {
+      width:280px;height:560px; background:var(--surface); border-radius:38px;
+      border:2px solid rgba(255,255,255,.1);
+      box-shadow:0 40px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.06);
+      overflow:hidden; position:relative;
+      animation:phone-bob 6s ease-in-out infinite;
+    }
+    @keyframes phone-bob { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-14px);} }
+    .phone-notch {
+      width:90px;height:22px; background:var(--bg); border-radius:0 0 14px 14px;
+      margin:0 auto; position:relative; z-index:10;
+    }
+    .phone-screen {
+      padding:1rem 1rem 1rem;
+      height:calc(100% - 22px);
+      background:linear-gradient(180deg,#161b22 0%,#0d1117 100%);
+      display:flex; flex-direction:column; gap:.8rem; overflow:hidden;
+    }
+    /* Mini card in phone */
+    .mini-card {
+      width:100%; height:115px; border-radius:14px;
+      background:linear-gradient(135deg,#1a1f2e,#0d1220,#1b0d2e);
+      border:1px solid rgba(255,255,255,.1); position:relative; overflow:hidden;
+      animation:shimmer 3s linear infinite;
+    }
+    .mini-card::before {
+      content:''; position:absolute; inset:0;
+      background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.07) 50%,transparent 60%);
+      background-size:200% 100%;
+      animation:shimmer 3.5s linear infinite;
+    }
+    .mini-card-num {
+      position:absolute; bottom:2.2rem; left:1rem;
+      font-family:'Courier New',monospace; font-size:.72rem; letter-spacing:.12em;
+      color:rgba(255,255,255,.75);
+    }
+    .mini-mc { position:absolute; bottom:.7rem; right:.8rem; display:flex; }
+    .mini-mc-c { width:20px;height:20px; border-radius:50%; }
+    .mini-mc-r { background:#EB001B; margin-right:-6px; opacity:.9; }
+    .mini-mc-y { background:#F79E1B; opacity:.9; }
+    .mini-tchipa { position:absolute; top:.7rem; right:.8rem; font-size:.7rem; font-weight:900; background:linear-gradient(135deg,var(--cyan),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    /* Phone UI rows */
+    .phone-row {
+      background:rgba(255,255,255,.04); border-radius:10px;
+      padding:.6rem .8rem; display:flex; align-items:center; justify-content:space-between;
+    }
+    .phone-row-icon { width:28px;height:28px; border-radius:8px; display:flex;align-items:center;justify-content:center; font-size:.8rem; }
+    .phone-row-text { flex:1; margin-left:.6rem; }
+    .phone-row-t { font-size:.72rem; font-weight:700; color:var(--text); }
+    .phone-row-s { font-size:.62rem; color:var(--sub); }
+    .phone-row-val { font-size:.78rem; font-weight:700; }
+    .phone-cta {
+      margin-top:auto; padding:.6rem; border-radius:12px;
+      background:linear-gradient(135deg,var(--cyan),var(--purple));
+      text-align:center; font-size:.78rem; font-weight:800; color:#000;
+    }
+    /* Glow behind phone */
+    .phone-glow {
+      position:absolute; width:350px;height:350px; border-radius:50%;
+      background:radial-gradient(circle,rgba(139,92,246,.18),transparent 70%);
+      filter:blur(40px); z-index:-1;
+    }
+
+    /* ── CTA SECTION ─────────────────────────────────────────── */
+    .cta-sec { padding:7rem 6%; }
+    .cta-card {
+      background:linear-gradient(135deg,rgba(0,212,255,.07) 0%,rgba(139,92,246,.11) 50%,rgba(245,158,11,.05) 100%);
+      border:1px solid rgba(0,212,255,.18); border-radius:32px;
+      padding:5.5rem 4rem; text-align:center; position:relative; overflow:hidden;
+    }
+    .cta-card::before {
+      content:''; position:absolute; inset:0; border-radius:32px;
+      background:repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(255,255,255,.015) 39px,rgba(255,255,255,.015) 40px),
+                 repeating-linear-gradient(90deg,transparent,transparent 39px,rgba(255,255,255,.015) 39px,rgba(255,255,255,.015) 40px);
+    }
+    .cta-h2 {
+      font-size:clamp(2.2rem,4.5vw,4rem); font-weight:900; line-height:1.1;
+      letter-spacing:-.035em; margin-bottom:1rem; position:relative;
+    }
+    [dir="rtl"] .cta-h2 { letter-spacing:0; }
+    .cta-sub { font-size:1.05rem; color:var(--sub); max-width:480px; margin:0 auto 2.5rem; line-height:1.7; position:relative; }
+    .cta-btns { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; position:relative; }
+
+    /* ── FOOTER ──────────────────────────────────────────────── */
+    footer {
+      padding:4rem 6% 2rem;
+      border-top:1px solid var(--border);
+      position:relative; z-index:2;
+    }
+    .footer-top {
+      display:grid; grid-template-columns:2.2fr 1fr 1fr 1fr;
+      gap:3rem; margin-bottom:3rem;
+    }
+    .footer-logo-area p { font-size:.88rem; color:var(--sub); line-height:1.7; margin-top:.75rem; max-width:300px; }
+    .foot-col h4 { font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.15em; color:var(--sub); margin-bottom:1.1rem; }
+    .foot-col a { display:block; color:var(--sub); text-decoration:none; font-size:.88rem; margin-bottom:.55rem; transition:color .2s; }
+    .foot-col a:hover { color:var(--text); }
+    .footer-bot {
+      display:flex; align-items:center; justify-content:space-between;
+      padding-top:1.5rem; border-top:1px solid var(--border);
+      font-size:.78rem; color:var(--sub);
+    }
+    [dir="rtl"] .footer-bot { flex-direction:row-reverse; }
+
+    /* ── ANIMATIONS (shared) ─────────────────────────────────── */
+    @keyframes fade-up { from{opacity:0;transform:translateY(28px);} to{opacity:1;transform:none;} }
+
+    /* ── RESPONSIVE ──────────────────────────────────────────── */
+    @media(max-width:1024px){
+      .hero{flex-direction:column;padding:8rem 6% 4rem;text-align:center;}
+      .hero-left{max-width:100%;}
+      .hero-sub{max-width:100%;}
+      .hero-btns{justify-content:center;}
+      .hero-right{display:none;}
+      .stats-bar{grid-template-columns:repeat(2,1fr);}
+      .stat-cell:nth-child(2){border-right:none;}
+      .stat-cell:nth-child(3){border-top:1px solid var(--border);}
+      .feat-grid{grid-template-columns:repeat(2,1fr);}
+      .steps-grid{grid-template-columns:1fr;gap:1.5rem;}
+      .step:not(:last-child)::after{display:none;}
+      .mockup-sec{flex-direction:column;}
+      .footer-top{grid-template-columns:1fr 1fr;}
+    }
+    @media(max-width:640px){
+      .hero{padding:7rem 5% 3rem;}
+      .sec{padding:4rem 5%;}
+      .stats-bar{margin:0 5% 4rem; grid-template-columns:repeat(2,1fr);}
+      .feat-grid{grid-template-columns:1fr;}
+      .nav-mid{display:none;}
+      .cta-card{padding:3.5rem 1.5rem;}
+      .footer-top{grid-template-columns:1fr;}
+    }
+
+    /* ── RTL OVERRIDES ───────────────────────────────────────── */
+    [dir="rtl"] .feat-card{ text-align:right; }
+    [dir="rtl"] .cta-card { text-align:right; }
+    [dir="rtl"] .cta-card .cta-sub { margin:0 0 2.5rem 0; text-align:right; }
+    [dir="rtl"] .cta-btns { justify-content:flex-start; }
+    [dir="rtl"] .footer-bot { text-align:right; }
+    [dir="rtl"] .foot-col { text-align:right; }
+    [dir="rtl"] nav { flex-direction:row-reverse; }
+    [dir="rtl"] .nav-mid { flex-direction:row-reverse; }
+    [dir="rtl"] .nav-right { flex-direction:row-reverse; }
+    [dir="rtl"] .hero-btns { flex-direction:row-reverse; }
+  </style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<!-- ── NAVBAR ─────────────────────────────────────────────── -->
+<nav id="nav">
+  <a href="#home" class="logo">Tchipa</a>
+  <div class="nav-mid">
+    <a href="#features" data-k="nav.features">Features</a>
+    <a href="#how"      data-k="nav.how">How it Works</a>
+    <a href="#download" data-k="nav.download">Download</a>
+  </div>
+  <div class="nav-right">
+    <button class="lang-btn" onclick="toggleLang()" id="lang-btn">🌐 عربي</button>
+    <a href="#download" class="btn-nav" data-k="nav.cta">Get the App</a>
+  </div>
+</nav>
+
+<!-- ── HERO ───────────────────────────────────────────────── -->
+<section id="home" class="hero">
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+
+  <div class="hero-left">
+    <div class="badge" data-k="hero.badge">🚀 Now Available — Powered by Polygon</div>
+    <h1 class="hero-h1">
+      <span data-k="hero.h1a">Your Virtual Card,</span><br>
+      <span class="grad-text" data-k="hero.h1b">Activated Instantly</span>
+    </h1>
+    <p class="hero-sub" data-k="hero.sub">
+      Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.
+    </p>
+    <div class="hero-btns">
+      <a href="#download" class="btn-primary">
+        <span>⚡</span><span data-k="hero.cta1">Get Your Card Now</span>
+      </a>
+      <a href="#how" class="btn-ghost">
+        <span>▶</span><span data-k="hero.cta2">See How it Works</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="hero-right">
+    <div class="card-wrap">
+      <div class="card-scene" title="Hover to flip">
+        <div class="card-inner" id="ci">
+          <!-- Front -->
+          <div class="card-face cf">
+            <div class="card-holo"></div>
+            <div class="chip"></div>
+            <div class="nfc">))))</div>
+            <div class="c-logo">tchipa</div>
+            <div class="c-num">4716 •••• •••• 9421</div>
+            <div class="c-info">
+              <div>
+                <div class="c-label">Card Holder</div>
+                <div class="c-val">Virtual User</div>
+              </div>
+              <div style="text-align:right">
+                <div class="c-label">Expires</div>
+                <div class="c-val" style="font-family:'Courier New',monospace">12/27</div>
+              </div>
+            </div>
+            <div class="mc">
+              <div class="mc-c mc-red"></div>
+              <div class="mc-c mc-yel"></div>
+            </div>
+          </div>
+          <!-- Back -->
+          <div class="card-face cb">
+            <div class="cb-stripe"></div>
+            <div class="cb-cvv-row">
+              <div class="cb-cvv-lbl">CVV / Security Code</div>
+              <div class="cb-cvv-bar"><span class="cb-cvv">• • •</span></div>
+            </div>
+            <div class="cb-note">Issued by Tchipa via PayGate · Valid for online purchases worldwide</div>
+            <div class="mc" style="bottom:1rem;right:1.4rem;">
+              <div class="mc-c mc-red"></div>
+              <div class="mc-c mc-yel"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Floating badges -->
+      <div class="fb fb1"><span>🟢</span> USDT · Polygon</div>
+      <div class="fb fb2"><span>⚡</span> <span data-k="badge.instant">Instant</span></div>
+      <div class="fb fb3"><span>🌍</span> <span data-k="badge.global">Worldwide</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATS BAR ────────────────────────────────────────────── -->
+<div class="stats-bar reveal">
+  <div class="stat-cell">
+    <div class="stat-v grad-text">$5–$1000</div>
+    <div class="stat-l" data-k="stat1">Card Value Range</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-v" style="color:var(--cyan)">&lt;2<span style="font-size:1.1rem"> min</span></div>
+    <div class="stat-l" data-k="stat2">Activation Time</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-v" style="color:var(--purple)">0 <span style="font-size:1.1rem">KYC</span></div>
+    <div class="stat-l" data-k="stat3">No Documents Needed</div>
+  </div>
+  <div class="stat-cell" style="border-right:none">
+    <div class="stat-v" style="color:var(--gold)">Polygon</div>
+    <div class="stat-l" data-k="stat4">Fast &amp; Cheap Network</div>
+  </div>
+</div>
+
+<!-- ── FEATURES ─────────────────────────────────────────────── -->
+<section id="features" class="sec">
+  <span class="sec-tag" data-k="feat.tag">Features</span>
+  <h2 class="sec-h2"><span data-k="feat.h2a">Everything you need</span><br><span class="grad-text" data-k="feat.h2b">to pay online</span></h2>
+  <p class="sec-lead" data-k="feat.lead">Tchipa combines crypto payments with instant virtual card generation so you can shop anywhere on the internet.</p>
+
+  <div class="feat-grid">
+    <div class="feat-card reveal"><div class="f-icon fi1">⚡</div><div class="f-title" data-k="f1t">Instant Activation</div><p class="f-desc" data-k="f1d">Get your virtual Mastercard in under 2 minutes. Send USDT, receive your card details immediately.</p></div>
+    <div class="feat-card reveal reveal-d1"><div class="f-icon fi2">🔒</div><div class="f-title" data-k="f2t">Anonymous & Secure</div><p class="f-desc" data-k="f2d">No KYC required. Your card is tied to your crypto wallet, not your personal identity.</p></div>
+    <div class="feat-card reveal reveal-d2"><div class="f-icon fi3">🌐</div><div class="f-title" data-k="f3t">Pay Anywhere Online</div><p class="f-desc" data-k="f3d">Works on Amazon, AliExpress, Netflix, Temu, Shopify stores and any website accepting Mastercard.</p></div>
+    <div class="feat-card reveal"><div class="f-icon fi4">💎</div><div class="f-title" data-k="f4t">USDT on Polygon</div><p class="f-desc" data-k="f4d">Pay using USDT on the Polygon network — ultra-low fees, instant confirmation, no gas wars.</p></div>
+    <div class="feat-card reveal reveal-d1"><div class="f-icon fi5">📱</div><div class="f-title" data-k="f5t">Mobile First App</div><p class="f-desc" data-k="f5d">Beautiful Android app with biometric security, card management and real-time balance tracking.</p></div>
+    <div class="feat-card reveal reveal-d2"><div class="f-icon fi6">💳</div><div class="f-title" data-k="f6t">Real Mastercard</div><p class="f-desc" data-k="f6d">Not a gift card — a real virtual Mastercard with BIN, CVV and expiry date for full online use.</p></div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ──────────────────────────────────────────── -->
+<section id="how" class="sec how-sec">
+  <span class="sec-tag" data-k="how.tag">How it Works</span>
+  <h2 class="sec-h2"><span data-k="how.h2a">Three steps to your</span><br><span class="grad-text" data-k="how.h2b">virtual card</span></h2>
+  <p class="sec-lead" data-k="how.lead">The entire process takes under 2 minutes from payment to card in hand.</p>
+
+  <div class="steps-grid">
+    <div class="step reveal">
+      <div class="step-num sn1">1</div>
+      <div class="step-t" data-k="s1t">Choose Amount</div>
+      <p class="step-d" data-k="s1d">Open Tchipa, select from $5 to $1000 for your Mastercard virtual card. USDT price is auto-calculated.</p>
+    </div>
+    <div class="step reveal reveal-d2">
+      <div class="step-num sn2">2</div>
+      <div class="step-t" data-k="s2t">Send USDT</div>
+      <p class="step-d" data-k="s2d">Scan the QR code and send the exact USDT amount on Polygon network. Transaction confirms in seconds.</p>
+    </div>
+    <div class="step reveal reveal-d4">
+      <div class="step-num sn3">3</div>
+      <div class="step-t" data-k="s3t">Get Your Card</div>
+      <p class="step-d" data-k="s3d">Your virtual Mastercard is ready. Card number, CVV and expiry shown directly in the app. Start shopping!</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── PLATFORMS ─────────────────────────────────────────────── -->
+<div class="platforms reveal">
+  <p class="plat-label" data-k="plat.label">Works on all major platforms</p>
+  <div class="plat-row">
+    <span class="plat-name">Amazon</span>
+    <span class="plat-name">AliExpress</span>
+    <span class="plat-name">Netflix</span>
+    <span class="plat-name">Spotify</span>
+    <span class="plat-name">Temu</span>
+    <span class="plat-name">PayPal</span>
+    <span class="plat-name">Shopify</span>
+    <span class="plat-name">eBay</span>
+  </div>
+</div>
+
+<!-- ── APP MOCKUP ────────────────────────────────────────────── -->
+<section class="mockup-sec sec">
+  <div class="mock-left reveal">
+    <span class="sec-tag" data-k="mock.tag">Mobile App</span>
+    <h2 class="sec-h2"><span data-k="mock.h2a">Manage your card</span><br><span class="grad-text" data-k="mock.h2b">from your pocket</span></h2>
+    <p class="sec-lead" data-k="mock.lead">The Tchipa Android app gives you full control over your virtual cards — activate, view details, check balance and recharge, all secured with biometrics.</p>
+    <br>
+    <ul style="list-style:none;display:flex;flex-direction:column;gap:.75rem;margin-top:.5rem;">
+      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li1">Biometric fingerprint protection</span></li>
+      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li2">One-tap copy for card number &amp; CVV</span></li>
+      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li3">Transaction history &amp; receipts</span></li>
+      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li4">Recharge with new USDT payment</span></li>
+    </ul>
+  </div>
+
+  <div class="mock-phone reveal reveal-d2">
+    <div class="phone-glow"></div>
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+        <!-- Mini VCC card -->
+        <div class="mini-card">
+          <div class="mini-tchipa">tchipa</div>
+          <div class="mini-card-num">4716 •••• •••• 9421</div>
+          <div class="mini-mc">
+            <div class="mini-mc-c mini-mc-r"></div>
+            <div class="mini-mc-c mini-mc-y"></div>
+          </div>
+        </div>
+        <!-- Balance row -->
+        <div class="phone-row">
+          <div class="phone-row-icon" style="background:rgba(0,212,255,.15);font-size:.85rem">💳</div>
+          <div class="phone-row-text">
+            <div class="phone-row-t" data-k="app.balance">Balance</div>
+            <div class="phone-row-s">Mastercard Virtual</div>
+          </div>
+          <div class="phone-row-val" style="color:var(--cyan)">$50.00</div>
+        </div>
+        <!-- Status row -->
+        <div class="phone-row">
+          <div class="phone-row-icon" style="background:rgba(16,185,129,.15);font-size:.85rem">✅</div>
+          <div class="phone-row-text">
+            <div class="phone-row-t" data-k="app.status">Card Status</div>
+            <div class="phone-row-s">Polygon · USDT</div>
+          </div>
+          <div class="phone-row-val" style="color:var(--green);font-size:.72rem" data-k="app.active">Active</div>
+        </div>
+        <!-- Tx row -->
+        <div class="phone-row">
+          <div class="phone-row-icon" style="background:rgba(245,158,11,.15);font-size:.85rem">📦</div>
+          <div class="phone-row-text">
+            <div class="phone-row-t">Amazon.com</div>
+            <div class="phone-row-s" data-k="app.today">Today</div>
+          </div>
+          <div class="phone-row-val" style="color:var(--sub);font-size:.78rem">-$12.49</div>
+        </div>
+        <!-- CTA -->
+        <div class="phone-cta" data-k="app.btn">+ Recharge Card</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA SECTION ───────────────────────────────────────────── -->
+<section class="cta-sec" id="download">
+  <div class="cta-card reveal">
+    <div class="badge" style="display:inline-flex;margin-bottom:1.4rem" data-k="cta.badge">📲 Available for Android</div>
+    <h2 class="cta-h2"><span data-k="cta.h2a">Start paying online</span><br><span class="grad-text" data-k="cta.h2b">with crypto today</span></h2>
+    <p class="cta-sub" data-k="cta.sub">Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.</p>
+    <div class="cta-btns">
+      <a href="#" class="btn-primary"><span>⬇</span><span data-k="cta.btn1">Download APK</span></a>
+      <a href="https://t.me/c/3983752002/1" target="_blank" class="btn-ghost"><span>💬</span><span data-k="cta.btn2">Telegram Support</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-top">
+    <div class="footer-logo-area">
+      <div class="logo">Tchipa</div>
+      <p data-k="foot.desc">Virtual credit cards powered by crypto. Pay online worldwide without a bank account. Powered by Polygon &amp; PayGate.</p>
+    </div>
+    <div class="foot-col">
+      <h4 data-k="foot.h1">Product</h4>
+      <a href="#features" data-k="foot.l1a">Features</a>
+      <a href="#how"      data-k="foot.l1b">How it Works</a>
+      <a href="#download" data-k="foot.l1c">Download</a>
+    </div>
+    <div class="foot-col">
+      <h4 data-k="foot.h2">Support</h4>
+      <a href="https://t.me/c/3983752002/1" target="_blank" data-k="foot.l2a">Telegram Agent</a>
+      <a href="#" data-k="foot.l2b">FAQ</a>
+    </div>
+    <div class="foot-col">
+      <h4 data-k="foot.h3">Network</h4>
+      <a href="#">Polygon USDT</a>
+      <a href="#">Mastercard</a>
+      <a href="#">PayGate</a>
+    </div>
+  </div>
+  <div class="footer-bot">
+    <span data-k="foot.copy">© 2025 Tchipa. All rights reserved.</span>
+    <span data-k="foot.tag">Built with 💙 for digital payments</span>
+  </div>
+</footer>
+
+<!-- ── SCRIPTS ────────────────────────────────────────────────── -->
+<script>
+/* ── TRANSLATIONS ────────────────────────────────────────── */
+const T = {
+  en: {
+    'nav.features':'Features','nav.how':'How it Works','nav.download':'Download','nav.cta':'Get the App',
+    'hero.badge':'🚀 Now Available — Powered by Polygon',
+    'hero.h1a':'Your Virtual Card,','hero.h1b':'Activated Instantly',
+    'hero.sub':'Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.',
+    'hero.cta1':'Get Your Card Now','hero.cta2':'See How it Works',
+    'badge.instant':'Instant','badge.global':'Worldwide',
+    'stat1':'Card Value Range','stat2':'Activation Time','stat3':'No Documents Needed','stat4':'Fast & Cheap Network',
+    'feat.tag':'Features','feat.h2a':'Everything you need','feat.h2b':'to pay online',
+    'feat.lead':'Tchipa combines crypto payments with instant virtual card generation so you can shop anywhere on the internet.',
+    'f1t':'Instant Activation','f1d':'Get your virtual Mastercard in under 2 minutes. Send USDT, receive your card details immediately.',
+    'f2t':'Anonymous & Secure','f2d':'No KYC required. Your card is tied to your crypto wallet, not your personal identity.',
+    'f3t':'Pay Anywhere Online','f3d':'Works on Amazon, AliExpress, Netflix, Temu, Shopify stores and any website accepting Mastercard.',
+    'f4t':'USDT on Polygon','f4d':'Pay using USDT on the Polygon network — ultra-low fees, instant confirmation, no gas wars.',
+    'f5t':'Mobile First App','f5d':'Beautiful Android app with biometric security, card management and real-time balance tracking.',
+    'f6t':'Real Mastercard','f6d':'Not a gift card — a real virtual Mastercard with BIN, CVV and expiry date for full online use.',
+    'how.tag':'How it Works','how.h2a':'Three steps to your','how.h2b':'virtual card',
+    'how.lead':'The entire process takes under 2 minutes from payment to card in hand.',
+    's1t':'Choose Amount','s1d':'Open Tchipa, select from $5 to $1000 for your Mastercard virtual card. USDT price is auto-calculated.',
+    's2t':'Send USDT','s2d':'Scan the QR code and send the exact USDT amount on Polygon network. Transaction confirms in seconds.',
+    's3t':'Get Your Card','s3d':'Your virtual Mastercard is ready. Card number, CVV and expiry shown directly in the app. Start shopping!',
+    'plat.label':'Works on all major platforms',
+    'mock.tag':'Mobile App','mock.h2a':'Manage your card','mock.h2b':'from your pocket',
+    'mock.lead':'The Tchipa Android app gives you full control over your virtual cards — activate, view details, check balance and recharge, all secured with biometrics.',
+    'mock.li1':'Biometric fingerprint protection','mock.li2':'One-tap copy for card number & CVV',
+    'mock.li3':'Transaction history & receipts','mock.li4':'Recharge with new USDT payment',
+    'app.balance':'Balance','app.status':'Card Status','app.active':'Active','app.today':'Today','app.btn':'+ Recharge Card',
+    'cta.badge':'📲 Available for Android',
+    'cta.h2a':'Start paying online','cta.h2b':'with crypto today',
+    'cta.sub':'Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.',
+    'cta.btn1':'Download APK','cta.btn2':'Telegram Support',
+    'foot.desc':'Virtual credit cards powered by crypto. Pay online worldwide without a bank account. Powered by Polygon & PayGate.',
+    'foot.h1':'Product','foot.h2':'Support','foot.h3':'Network',
+    'foot.l1a':'Features','foot.l1b':'How it Works','foot.l1c':'Download',
+    'foot.l2a':'Telegram Agent','foot.l2b':'FAQ',
+    'foot.copy':'© 2025 Tchipa. All rights reserved.','foot.tag':'Built with 💙 for digital payments',
+  },
+  ar: {
+    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
+    'hero.badge':'🚀 متوفر الآن — مدعوم بـ Polygon',
+    'hero.h1a':'بطاقتك الافتراضية،','hero.h1b':'مُفعَّلة فوراً',
+    'hero.sub':'تشيبا تتيح لك إنشاء بطاقات ماستركارد الافتراضية في دقائق. ادفع عبر الإنترنت حول العالم بـ USDT على شبكة Polygon — دون حاجة لحساب بنكي.',
+    'hero.cta1':'احصل على بطاقتك الآن','hero.cta2':'شاهد كيف يعمل',
+    'badge.instant':'فوري','badge.global':'عالمي',
+    'stat1':'نطاق قيمة البطاقة','stat2':'وقت التفعيل','stat3':'بدون وثائق مطلوبة','stat4':'شبكة سريعة ورخيصة',
+    'feat.tag':'الميزات','feat.h2a':'كل ما تحتاجه','feat.h2b':'للدفع عبر الإنترنت',
+    'feat.lead':'تشيبا تجمع بين مدفوعات الكريبتو وإنشاء البطاقات الافتراضية الفورية حتى تتسوق من أي مكان على الإنترنت.',
+    'f1t':'تفعيل فوري','f1d':'احصل على ماستركاردك الافتراضية في أقل من دقيقتين. أرسل USDT واستلم تفاصيل بطاقتك فوراً.',
+    'f2t':'مجهول وآمن','f2d':'لا حاجة للتحقق من الهوية. بطاقتك مرتبطة بمحفظتك المشفرة وليس بهويتك الشخصية.',
+    'f3t':'ادفع في أي مكان','f3d':'يعمل على أمازون، علي إكسبريس، نتفليكس، تيمو، متاجر Shopify وأي موقع يقبل ماستركارد.',
+    'f4t':'USDT على Polygon','f4d':'ادفع بـ USDT على شبكة Polygon — رسوم منخفضة جداً، تأكيد فوري، بدون صعوبات.',
+    'f5t':'تطبيق موبايل','f5d':'تطبيق أندرويد رائع مع حماية بيومترية، إدارة البطاقات وتتبع الرصيد في الوقت الفعلي.',
+    'f6t':'ماستركارد حقيقية','f6d':'ليست بطاقة هدية — ماستركارد افتراضية حقيقية برقم BIN وCVV وتاريخ انتهاء.',
+    'how.tag':'كيف يعمل','how.h2a':'ثلاث خطوات للحصول على','how.h2b':'بطاقتك الافتراضية',
+    'how.lead':'العملية بأكملها تستغرق أقل من دقيقتين من الدفع حتى استلام البطاقة.',
+    's1t':'اختر المبلغ','s1d':'افتح تشيبا، حدد من $5 إلى $1000 لبطاقتك الافتراضية. الأسعار بـ USDT محسوبة تلقائياً.',
+    's2t':'أرسل USDT','s2d':'امسح رمز QR وأرسل المبلغ الدقيق بـ USDT على شبكة Polygon. التحقق يتم في ثوانٍ.',
+    's3t':'استلم بطاقتك','s3d':'ماستركاردك الافتراضية جاهزة. رقم البطاقة والـ CVV وتاريخ الانتهاء يظهر مباشرة في التطبيق. ابدأ التسوق!',
+    'plat.label':'يعمل على جميع المنصات الكبرى',
+    'mock.tag':'التطبيق المحمول','mock.h2a':'تحكم في بطاقتك','mock.h2b':'من جيبك',
+    'mock.lead':'تطبيق تشيبا لأندرويد يمنحك تحكماً كاملاً في بطاقاتك الافتراضية — تفعيل، عرض التفاصيل، فحص الرصيد والشحن، كل ذلك محمي بالبيومترية.',
+    'mock.li1':'حماية بصمة الإصبع البيومترية','mock.li2':'نسخ رقم البطاقة والـ CVV بنقرة واحدة',
+    'mock.li3':'سجل المعاملات والإيصالات','mock.li4':'إعادة شحن بدفعة USDT جديدة',
+    'app.balance':'الرصيد','app.status':'حالة البطاقة','app.active':'نشطة','app.today':'اليوم','app.btn':'+ شحن البطاقة',
+    'cta.badge':'📲 متوفر لأندرويد',
+    'cta.h2a':'ابدأ الدفع عبر الإنترنت','cta.h2b':'بالكريبتو اليوم',
+    'cta.sub':'حمّل تشيبا لأندرويد واحصل على أول بطاقة افتراضية في أقل من دقيقتين. بدون بنك، بدون KYC، بدون حدود.',
+    'cta.btn1':'تحميل APK','cta.btn2':'دعم عبر تيليغرام',
+    'foot.desc':'بطاقات ائتمان افتراضية مدعومة بالكريبتو. ادفع عبر الإنترنت حول العالم دون حساب بنكي. مدعوم بـ Polygon و PayGate.',
+    'foot.h1':'المنتج','foot.h2':'الدعم','foot.h3':'الشبكة',
+    'foot.l1a':'الميزات','foot.l1b':'كيف يعمل','foot.l1c':'تحميل',
+    'foot.l2a':'وكيل تيليغرام','foot.l2b':'الأسئلة الشائعة',
+    'foot.copy':'© 2025 تشيبا. جميع الحقوق محفوظة.','foot.tag':'مبني بـ 💙 للمدفوعات الرقمية',
+  }
+};
+
+let lang = 'en';
+
+function toggleLang() {
+  lang = lang === 'en' ? 'ar' : 'en';
+  const root = document.getElementById('root');
+  root.setAttribute('lang', lang);
+  root.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+  document.body.style.fontFamily = lang === 'ar' ? "'Tajawal',sans-serif" : "'Inter',sans-serif";
+  document.getElementById('lang-btn').textContent = lang === 'en' ? '🌐 عربي' : '🌐 English';
+  document.querySelectorAll('[data-k]').forEach(el => {
+    const v = T[lang][el.getAttribute('data-k')];
+    if (v) el.textContent = v;
+  });
+}
+
+/* ── PARTICLES ───────────────────────────────────────────── */
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+let pts = [];
+const N = 55, CON = 130;
+
+function resize() { cv.width = innerWidth; cv.height = innerHeight; }
+
+class P {
+  constructor() {
+    this.x = Math.random()*innerWidth; this.y = Math.random()*innerHeight;
+    this.vx = (Math.random()-.5)*.38; this.vy = (Math.random()-.5)*.38;
+    this.r = Math.random()*1.8+.5;
+    this.op = Math.random()*.45+.08;
+    this.col = ['0,212,255','139,92,246','245,158,11'][Math.floor(Math.random()*3)];
+  }
+  tick() {
+    this.x+=this.vx; this.y+=this.vy;
+    if(this.x<0||this.x>innerWidth)  this.vx*=-1;
+    if(this.y<0||this.y>innerHeight) this.vy*=-1;
+  }
+  draw() {
+    cx.beginPath(); cx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    cx.fillStyle=`rgba(${this.col},${this.op})`; cx.fill();
+  }
+}
+
+function init() { pts=[]; for(let i=0;i<N;i++) pts.push(new P()); }
+
+function frame() {
+  cx.clearRect(0,0,cv.width,cv.height);
+  for(let i=0;i<N;i++) {
+    pts[i].tick(); pts[i].draw();
+    for(let j=i+1;j<N;j++) {
+      const dx=pts[i].x-pts[j].x, dy=pts[i].y-pts[j].y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<CON) {
+        cx.beginPath(); cx.moveTo(pts[i].x,pts[i].y); cx.lineTo(pts[j].x,pts[j].y);
+        cx.strokeStyle=`rgba(0,212,255,${(1-d/CON)*.14})`; cx.lineWidth=.7; cx.stroke();
+      }
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ── SCROLL REVEAL ───────────────────────────────────────── */
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('in'); });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+
+/* ── NAV SCROLL ──────────────────────────────────────────── */
+window.addEventListener('scroll',()=>{
+  document.getElementById('nav').classList.toggle('scrolled', scrollY > 60);
+});
+
+/* ── SMOOTH SCROLL ───────────────────────────────────────── */
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    const t=document.querySelector(a.getAttribute('href'));
+    if(t){ e.preventDefault(); t.scrollIntoView({behavior:'smooth'}); }
+  });
+});
+
+/* ── TYPEWRITER on hero badge (subtle) ──────────────────── */
+const badge = document.querySelector('.badge');
+const badgeOriginal = badge ? badge.getAttribute('data-k') : null;
+
+/* ── CARD PARALLAX on mouse ─────────────────────────────── */
+const scene = document.querySelector('.card-scene');
+if(scene) {
+  document.addEventListener('mousemove', e => {
+    if(document.querySelector('.card-inner').style.transform.includes('180')) return;
+    const cx2 = innerWidth/2, cy2 = innerHeight/2;
+    const rx = (e.clientY - cy2) / cy2 * 6;
+    const ry = (e.clientX - cx2) / cx2 * -6;
+    document.querySelector('.card-inner').style.animation = 'none';
+    document.querySelector('.card-inner').style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
+  });
+  scene.addEventListener('mouseleave', () => {
+    const ci = document.querySelector('.card-inner');
+    if(!ci.style.transform.includes('180')) {
+      ci.style.animation = 'card-float 7s ease-in-out infinite';
+      ci.style.transform = '';
+    }
+  });
+}
+
+/* ── INIT ────────────────────────────────────────────────── */
+window.addEventListener('resize', resize);
+resize(); init(); frame();
+
+// Flash-in elements already in viewport
+setTimeout(()=>{
+  document.querySelectorAll('.reveal').forEach(el=>{
+    if(el.getBoundingClientRect().top < innerHeight) el.classList.add('in');
+  });
+},100);
+</script>
+</body>
+</html>

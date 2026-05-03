@@ -338,31 +338,49 @@ class AppSettings {
 // SEMANTIC COLORS (theme-aware)
 // ============================================
 class AppColors {
-  static Color bg      = const Color(0xFF0D1117);
-  static Color surface = const Color(0xFF0F1923);
-  static Color card    = const Color(0xFF1A2332);
-  static Color text    = Colors.white;
-  static Color textSub = Colors.white60;
-  static Color textDim = Colors.white38;
-  static Color border  = const Color(0xFF1A2332);
+  static Color bg       = const Color(0xFF0D1117);
+  static Color surface  = const Color(0xFF0F1923);
+  static Color card     = const Color(0xFF1A2332);
+  static Color text     = Colors.white;
+  static Color textSub  = Colors.white60;
+  static Color textDim  = Colors.white38;
+  static Color border   = const Color(0xFF1A2332);
+  // Adaptive helpers — always readable on bg/surface/card
+  static Color label    = Colors.white;       // primary label on bg
+  static Color sublabel = Colors.white60;     // secondary label
+  static Color hint     = Colors.white38;     // placeholder / hint
+  static Color inputFg  = Colors.white;       // text-field input text
+  static Color navUnsel = Colors.white38;     // unselected nav icon/label
+  static bool  isDark   = true;
 
   static void update(bool dark) {
+    isDark = dark;
     if (dark) {
-      bg      = const Color(0xFF0D1117);
-      surface = const Color(0xFF0F1923);
-      card    = const Color(0xFF1A2332);
-      text    = Colors.white;
-      textSub = Colors.white60;
-      textDim = Colors.white38;
-      border  = const Color(0xFF1A2332);
+      bg       = const Color(0xFF0D1117);
+      surface  = const Color(0xFF0F1923);
+      card     = const Color(0xFF1A2332);
+      text     = Colors.white;
+      textSub  = Colors.white60;
+      textDim  = Colors.white38;
+      border   = const Color(0xFF2A3347);
+      label    = Colors.white;
+      sublabel = Colors.white60;
+      hint     = Colors.white38;
+      inputFg  = Colors.white;
+      navUnsel = Colors.white38;
     } else {
-      bg      = const Color(0xFFEDF1F7);
-      surface = const Color(0xFFF4F7FC);
-      card    = const Color(0xFFDDE5F0);
-      text    = const Color(0xFF0F172A);
-      textSub = const Color(0xFF475569);
-      textDim = const Color(0xFF94A3B8);
-      border  = const Color(0xFFC8D5E8);
+      bg       = const Color(0xFFF0F5FF);
+      surface  = const Color(0xFFFFFFFF);
+      card     = const Color(0xFFEAF0FB);
+      text     = const Color(0xFF0D1117);
+      textSub  = const Color(0xFF334155);
+      textDim  = const Color(0xFF64748B);
+      border   = const Color(0xFFD1DCF0);
+      label    = const Color(0xFF0D1117);
+      sublabel = const Color(0xFF334155);
+      hint     = const Color(0xFF94A3B8);
+      inputFg  = const Color(0xFF0D1117);
+      navUnsel = const Color(0xFF64748B);
     }
   }
 }
@@ -975,11 +993,11 @@ class _MainScreenState extends State<MainScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         setState(() => _idx = 2);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Row(children: [
-            Icon(Icons.person_outline, color: Color(0xFF00D4FF)),
-            SizedBox(width: 10),
+          content: Row(children: [
+            const Icon(Icons.person_outline, color: Color(0xFF00D4FF)),
+            const SizedBox(width: 10),
             Text('Complétez votre profil pour commencer',
-                style: TextStyle(color: Colors.white)),
+                style: TextStyle(color: AppColors.label)),
           ]),
           backgroundColor: AppColors.surface,
           behavior: SnackBarBehavior.floating,
@@ -1005,7 +1023,7 @@ class _MainScreenState extends State<MainScreen> {
           onTap: (i) => setState(() => _idx = i),
           backgroundColor: AppColors.surface,
           selectedItemColor: const Color(0xFF00D4FF),
-          unselectedItemColor: Colors.white38,
+          unselectedItemColor: AppColors.navUnsel,
           type: BottomNavigationBarType.fixed,
           selectedFontSize: 11,
           unselectedFontSize: 11,
@@ -1198,10 +1216,38 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
-      body: CustomScrollView(slivers: [
+      body: Stack(children: [
+        // Ambient background blobs — visible in light mode, subtle in dark
+        Positioned(
+          top: -60, right: -80,
+          child: Container(
+            width: 280, height: 280,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(colors: [
+                const Color(0xFF00D4FF).withValues(alpha: AppColors.isDark ? 0.05 : 0.12),
+                Colors.transparent,
+              ]),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 160, left: -100,
+          child: Container(
+            width: 260, height: 260,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(colors: [
+                const Color(0xFF8B5CF6).withValues(alpha: AppColors.isDark ? 0.04 : 0.08),
+                Colors.transparent,
+              ]),
+            ),
+          ),
+        ),
+        CustomScrollView(slivers: [
         SliverAppBar(
           floating: true,
-          backgroundColor: AppColors.bg,
+          backgroundColor: Colors.transparent,
           elevation: 0,
           titleSpacing: 16,
           title: Row(children: [
@@ -1274,6 +1320,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
         ),
       ]),
+      ]), // close Stack
     );
   }
 
@@ -1396,9 +1443,9 @@ class _HomeScreenState extends State<HomeScreen>
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('ACTIVITÉ RÉCENTE',
+            Text('ACTIVITÉ RÉCENTE',
                 style: TextStyle(
-                    color: Colors.white38,
+                    color: AppColors.textDim,
                     fontSize: 11,
                     letterSpacing: 2,
                     fontWeight: FontWeight.w600)),
@@ -1462,10 +1509,13 @@ class _VccCardVisual extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: active
-                ? const Color(0xFF00D4FF).withValues(alpha: 0.28)
-                : Colors.black.withValues(alpha: 0.5),
-            blurRadius: 26,
-            offset: const Offset(0, 10),
+                ? const Color(0xFF00D4FF).withValues(alpha: 0.30)
+                : const Color(0xFF0F3460).withValues(alpha: 0.45),
+            blurRadius: 32, offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
+            blurRadius: 48, offset: const Offset(0, 18),
           ),
         ],
       ),
@@ -1785,7 +1835,7 @@ class _CardGridPainter extends CustomPainter {
 // ============================================
 // ACTION BUTTON
 // ============================================
-class _ActionButton extends StatelessWidget {
+class _ActionButton extends StatefulWidget {
   final String label;
   final String sublabel;
   final IconData icon;
@@ -1801,37 +1851,75 @@ class _ActionButton extends StatelessWidget {
   });
 
   @override
+  State<_ActionButton> createState() => _ActionButtonState();
+}
+
+class _ActionButtonState extends State<_ActionButton>
+    with SingleTickerProviderStateMixin {
+  double _scale = 1.0;
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-            vertical: 16, horizontal: 22),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: colors),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Colors.black87, size: 22),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(label,
-                    style: const TextStyle(
-                        color: Colors.black,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15)),
-                Text(sublabel,
-                    style: TextStyle(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        fontSize: 11)),
-              ],
+      onTapDown: (_) => setState(() => _scale = 0.97),
+      onTapUp: (_) { setState(() => _scale = 1.0); widget.onTap(); },
+      onTapCancel: () => setState(() => _scale = 1.0),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 120),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 22),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: widget.colors,
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
             ),
-          ],
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: widget.colors.first.withValues(alpha: 0.35),
+                blurRadius: 18, offset: const Offset(0, 6),
+              ),
+              BoxShadow(
+                color: widget.colors.last.withValues(alpha: 0.20),
+                blurRadius: 28, offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 38, height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(widget.icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(widget.label,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15)),
+                  const SizedBox(height: 2),
+                  Text(widget.sublabel,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.70),
+                          fontSize: 11)),
+                ],
+              ),
+              const Spacer(),
+              Icon(Icons.arrow_forward_ios_rounded,
+                  color: Colors.white.withValues(alpha: 0.5), size: 14),
+            ],
+          ),
         ),
       ),
     );
@@ -1953,19 +2041,23 @@ class _TxRow extends StatelessWidget {
     }
     return Container(
       padding: const EdgeInsets.symmetric(
-          horizontal: 16, vertical: 12),
+          horizontal: 16, vertical: 13),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color: Colors.white.withValues(alpha: 0.05)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppColors.isDark ? null : [
+          BoxShadow(
+            color: const Color(0xFF6B8EF2).withValues(alpha: 0.07),
+            blurRadius: 12, offset: const Offset(0, 3)),
+        ],
       ),
       child: Row(children: [
         Container(
-          width: 40, height: 40,
+          width: 42, height: 42,
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12),
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(13),
           ),
           child: Icon(ico, color: color, size: 20),
         ),
@@ -1975,9 +2067,10 @@ class _TxRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(tx.label,
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 14)),
-              const SizedBox(height: 2),
+                  style: TextStyle(
+                      color: AppColors.label, fontSize: 14,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 3),
               Text(
                 '${tx.date.day.toString().padLeft(2, '0')}/'
                 '${tx.date.month.toString().padLeft(2, '0')}/'
@@ -1985,7 +2078,7 @@ class _TxRow extends StatelessWidget {
                 '${tx.date.hour.toString().padLeft(2, '0')}:'
                 '${tx.date.minute.toString().padLeft(2, '0')}',
                 style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.35),
+                    color: AppColors.textDim,
                     fontSize: 11),
               ),
             ],
@@ -2315,6 +2408,12 @@ class _ActivationSheetState extends State<_ActivationSheet> {
     );
   }
 
+  static String _paymentUri(String toAddress, String amountUsdt) {
+    const usdtPolygon = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
+    final micro = (double.tryParse(amountUsdt) ?? 0) * 1e6;
+    return 'ethereum:$usdtPolygon@137/transfer?address=$toAddress&uint256=${micro.toStringAsFixed(0)}';
+  }
+
   Widget _buildPayment() {
     final order = _order;
     if (order == null) {
@@ -2324,6 +2423,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
       );
     }
     final addr = order.cryptoAddress;
+    final qrData = _paymentUri(addr, order.amountUsdt);
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2353,7 +2453,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
                       fontSize: 32, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+                  style: TextStyle(color: AppColors.textDim, fontSize: 12)),
             ]),
           ),
           const SizedBox(height: 12),
@@ -2362,24 +2462,24 @@ class _ActivationSheetState extends State<_ActivationSheet> {
             decoration: BoxDecoration(
               color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              border: Border.all(color: AppColors.border),
             ),
             child: Column(children: [
               Center(
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   color: Colors.white,
-                  child: QrImageView(data: addr, size: 150, version: QrVersions.auto),
+                  child: QrImageView(data: qrData, size: 150, version: QrVersions.auto),
                 ),
               ),
               const SizedBox(height: 12),
-              const Text('ADRESSE USDT (POLYGON)',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              Text('ADRESSE USDT (POLYGON)',
+                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
               const SizedBox(height: 6),
               Row(children: [
                 Expanded(
                   child: Text(addr,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11,
+                      style: TextStyle(color: AppColors.textSub, fontSize: 11,
                           fontFamily: 'monospace'),
                       maxLines: 2),
                 ),
@@ -2432,7 +2532,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
           const SizedBox(height: 10),
           Center(
             child: Text('ID: ${order.redeemId}',
-                style: TextStyle(color: Colors.white38, fontSize: 10,
+                style: TextStyle(color: AppColors.textDim, fontSize: 10,
                     fontFamily: 'monospace')),
           ),
           const SizedBox(height: 6),
@@ -2733,6 +2833,12 @@ class _RechargeSheetState extends State<_RechargeSheet> {
     );
   }
 
+  static String _paymentUri(String toAddress, String amountUsdt) {
+    const usdtPolygon = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
+    final micro = (double.tryParse(amountUsdt) ?? 0) * 1e6;
+    return 'ethereum:$usdtPolygon@137/transfer?address=$toAddress&uint256=${micro.toStringAsFixed(0)}';
+  }
+
   Widget _buildPayment() {
     final order = _order;
     if (order == null) {
@@ -2742,6 +2848,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
       );
     }
     final addr = order.cryptoAddress;
+    final qrData = _paymentUri(addr, order.amountUsdt);
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2771,7 +2878,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
                       fontSize: 32, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 12)),
+                  style: TextStyle(color: AppColors.textDim, fontSize: 12)),
             ]),
           ),
           const SizedBox(height: 12),
@@ -2780,24 +2887,24 @@ class _RechargeSheetState extends State<_RechargeSheet> {
             decoration: BoxDecoration(
               color: AppColors.card,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              border: Border.all(color: AppColors.border),
             ),
             child: Column(children: [
               Center(
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   color: Colors.white,
-                  child: QrImageView(data: addr, size: 150, version: QrVersions.auto),
+                  child: QrImageView(data: qrData, size: 150, version: QrVersions.auto),
                 ),
               ),
               const SizedBox(height: 12),
-              const Text('ADRESSE USDT (POLYGON)',
-                  style: TextStyle(color: Colors.white38, fontSize: 10, letterSpacing: 1.5)),
+              Text('ADRESSE USDT (POLYGON)',
+                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
               const SizedBox(height: 6),
               Row(children: [
                 Expanded(
                   child: Text(addr,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11,
+                      style: TextStyle(color: AppColors.textSub, fontSize: 11,
                           fontFamily: 'monospace'),
                       maxLines: 2),
                 ),
@@ -2850,7 +2957,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
           const SizedBox(height: 10),
           Center(
             child: Text('ID: ${order.redeemId}',
-                style: TextStyle(color: Colors.white38, fontSize: 10, fontFamily: 'monospace')),
+                style: TextStyle(color: AppColors.textDim, fontSize: 10, fontFamily: 'monospace')),
           ),
         ],
       ),
@@ -3028,9 +3135,9 @@ class TransactionsScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         elevation: 0,
-        title: const Text('Historique',
+        title: Text('Historique',
             style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold)),
+                color: AppColors.label, fontWeight: FontWeight.bold)),
       ),
       body: FutureBuilder<List<VccTx>>(
         future: VccTx.loadAll(),
@@ -3047,19 +3154,17 @@ class TransactionsScreen extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.receipt_long_rounded,
-                      color: Colors.white.withValues(alpha: 0.1),
+                      color: AppColors.border,
                       size: 72),
                   const SizedBox(height: 16),
                   Text('Aucune transaction',
                       style: TextStyle(
-                          color:
-                              Colors.white.withValues(alpha: 0.35),
+                          color: AppColors.textSub,
                           fontSize: 16)),
                   const SizedBox(height: 6),
                   Text('Activez votre carte pour commencer',
                       style: TextStyle(
-                          color:
-                              Colors.white.withValues(alpha: 0.2),
+                          color: AppColors.textDim,
                           fontSize: 13)),
                 ],
               ),
@@ -3147,9 +3252,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         elevation: 0,
-        title: const Text('Mon profil',
+        title: Text('Mon profil',
             style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold)),
+                color: AppColors.label, fontWeight: FontWeight.bold)),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
@@ -3180,11 +3285,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const _FieldLabel('Nom complet *'),
               TextFormField(
                 controller: _nameCtrl,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: AppColors.inputFg),
                 textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: 'Prénom Nom',
-                  hintStyle: TextStyle(color: Colors.white30),
+                  hintStyle: TextStyle(color: AppColors.hint),
                 ),
                 validator: (v) =>
                     v?.trim().isEmpty == true ? 'Requis' : null,
@@ -3194,10 +3299,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               TextFormField(
                 controller: _phoneCtrl,
                 keyboardType: TextInputType.phone,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
+                style: TextStyle(color: AppColors.inputFg),
+                decoration: InputDecoration(
                   hintText: '+213 XXX XXX XXX',
-                  hintStyle: TextStyle(color: Colors.white30),
+                  hintStyle: TextStyle(color: AppColors.hint),
                 ),
                 validator: (v) =>
                     v?.trim().isEmpty == true ? 'Requis' : null,
@@ -3207,10 +3312,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               TextFormField(
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
+                style: TextStyle(color: AppColors.inputFg),
+                decoration: InputDecoration(
                   hintText: 'vous@email.com',
-                  hintStyle: TextStyle(color: Colors.white30),
+                  hintStyle: TextStyle(color: AppColors.hint),
                 ),
               ),
               const SizedBox(height: 32),
@@ -3598,7 +3703,7 @@ class _AgentScreenState extends State<AgentScreen>
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: AppColors.bg,
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.label,
         elevation: 0,
         title: const Text('Mode Agent',
             style: TextStyle(fontWeight: FontWeight.bold)),
@@ -3628,15 +3733,14 @@ class _AgentScreenState extends State<AgentScreen>
               color: Color(0xFF00D4FF), size: 40),
         ),
         const SizedBox(height: 24),
-        const Text('Code Agent',
+        Text('Code Agent',
             style: TextStyle(
-                color: Colors.white,
+                color: AppColors.label,
                 fontSize: 22,
                 fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         Text('Entrez votre code à 4 chiffres',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.45), fontSize: 13)),
+            style: TextStyle(color: AppColors.hint, fontSize: 13)),
         const SizedBox(height: 36),
         AnimatedBuilder(
           animation: _shakeAnim,
@@ -3763,7 +3867,7 @@ class _AgentScreenState extends State<AgentScreen>
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
               hintText: '+213 XXX XXX XXX',
-              hintStyle: const TextStyle(color: Colors.white30),
+              hintStyle: TextStyle(color: AppColors.hint),
               filled: true,
               fillColor: AppColors.card,
               border: OutlineInputBorder(
@@ -3785,7 +3889,7 @@ class _AgentScreenState extends State<AgentScreen>
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
               hintText: 'Prénom Nom',
-              hintStyle: const TextStyle(color: Colors.white30),
+              hintStyle: TextStyle(color: AppColors.hint),
               filled: true,
               fillColor: AppColors.card,
               border: OutlineInputBorder(
@@ -3847,7 +3951,7 @@ class _AgentScreenState extends State<AgentScreen>
               TextField(
                 controller: _customCtrl,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: AppColors.inputFg),
                 onChanged: (v) {
                   final parsed = double.tryParse(v);
                   if (parsed != null && parsed >= 5) setState(() => _amount = parsed);
@@ -3874,7 +3978,8 @@ class _AgentScreenState extends State<AgentScreen>
             ],
           ],
           const SizedBox(height: 24),
-          // Summary box
+          // Summary box — shown only for recharge (no fee display for activation)
+          if (_isRecharge)
           Container(
             padding: const EdgeInsets.symmetric(
                 vertical: 14, horizontal: 20),
@@ -3887,12 +3992,9 @@ class _AgentScreenState extends State<AgentScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                    _isRecharge
-                        ? 'Montant à encaisser'
-                        : 'Frais d\'activation',
+                Text('Montant à encaisser',
                     style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.65),
+                        color: AppColors.textSub,
                         fontSize: 13)),
                 Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Text('\$${_amount.toStringAsFixed(0)} USD',
@@ -3903,7 +4005,7 @@ class _AgentScreenState extends State<AgentScreen>
                   Text(
                       '${(_amount * kExchangeRate).toStringAsFixed(0)} DA',
                       style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45),
+                          color: AppColors.textDim,
                           fontSize: 11)),
                 ]),
               ],
@@ -3955,7 +4057,7 @@ class _AgentScreenState extends State<AgentScreen>
           child: Text(label,
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: active ? Colors.black : Colors.white54,
+                  color: active ? Colors.black : AppColors.sublabel,
                   fontWeight: FontWeight.w600,
                   fontSize: 13)),
         ),

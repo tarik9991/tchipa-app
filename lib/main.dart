@@ -1012,31 +1012,78 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true,
       body: IndexedStack(index: _idx, children: _screens),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(
-              top: BorderSide(color: AppColors.card, width: 0.5)),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(32),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              height: 68,
+              decoration: BoxDecoration(
+                color: AppColors.surface.withValues(alpha: AppColors.isDark ? 0.82 : 0.92),
+                borderRadius: BorderRadius.circular(32),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.8), width: 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 24, offset: const Offset(0, 8)),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _NavPill(icon: Icons.credit_card_rounded, label: 'Carte',     sel: _idx == 0, onTap: () => setState(() => _idx = 0)),
+                  _NavPill(icon: Icons.receipt_long_rounded, label: 'Historique', sel: _idx == 1, onTap: () => setState(() => _idx = 1)),
+                  _NavPill(icon: Icons.person_rounded,       label: 'Profil',    sel: _idx == 2, onTap: () => setState(() => _idx = 2)),
+                ],
+              ),
+            ),
+          ),
         ),
-        child: BottomNavigationBar(
-          currentIndex: _idx,
-          onTap: (i) => setState(() => _idx = i),
-          backgroundColor: AppColors.surface,
-          selectedItemColor: const Color(0xFF00D4FF),
-          unselectedItemColor: AppColors.navUnsel,
-          type: BottomNavigationBarType.fixed,
-          selectedFontSize: 11,
-          unselectedFontSize: 11,
-          items: const [
-            BottomNavigationBarItem(
-                icon: Icon(Icons.credit_card_rounded),
-                label: 'Ma carte'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.receipt_long_rounded),
-                label: 'Historique'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.person_rounded),
-                label: 'Profil'),
+      ),
+    );
+  }
+}
+
+class _NavPill extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool sel;
+  final VoidCallback onTap;
+  const _NavPill({required this.icon, required this.label, required this.sel, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+        padding: EdgeInsets.symmetric(horizontal: sel ? 18 : 14, vertical: 8),
+        decoration: BoxDecoration(
+          gradient: sel ? const LinearGradient(
+            colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
+          ) : null,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20,
+                color: sel ? Colors.white : AppColors.navUnsel),
+            if (sel) ...[
+              const SizedBox(width: 6),
+              Text(label,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ],
           ],
         ),
       ),
@@ -1064,6 +1111,7 @@ class _HomeScreenState extends State<HomeScreen>
   late AnimationController _shimmerCtrl;
   late AnimationController _glowCtrl;
   late Animation<double> _glowAnim;
+  late AnimationController _bgCtrl;
 
   @override
   void initState() {
@@ -1077,6 +1125,9 @@ class _HomeScreenState extends State<HomeScreen>
       ..repeat(reverse: true);
     _glowAnim =
         CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut);
+    _bgCtrl = AnimationController(
+        vsync: this, duration: const Duration(seconds: 8))
+      ..repeat(reverse: true);
     _load();
   }
 
@@ -1084,6 +1135,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _shimmerCtrl.dispose();
     _glowCtrl.dispose();
+    _bgCtrl.dispose();
     super.dispose();
   }
 
@@ -1217,30 +1269,63 @@ class _HomeScreenState extends State<HomeScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: Stack(children: [
-        // Ambient background blobs — visible in light mode, subtle in dark
+        // Animated mesh gradient background
+        AnimatedBuilder(
+          animation: _bgCtrl,
+          builder: (_, __) {
+            final t = _bgCtrl.value;
+            return Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment(-1 + t * 0.6, -1),
+                  end: Alignment(1 - t * 0.4, 1),
+                  colors: AppColors.isDark
+                      ? [
+                          Color.lerp(const Color(0xFF0D1117), const Color(0xFF0A1628), t)!,
+                          Color.lerp(const Color(0xFF0F1923), const Color(0xFF120820), t)!,
+                          Color.lerp(const Color(0xFF0D1117), const Color(0xFF0A1020), t)!,
+                        ]
+                      : [
+                          Color.lerp(const Color(0xFFEEF4FF), const Color(0xFFF5F0FF), t)!,
+                          Color.lerp(const Color(0xFFF0F5FF), const Color(0xFFEFF8FF), t)!,
+                          Color.lerp(const Color(0xFFF5F0FF), const Color(0xFFEEF4FF), t)!,
+                        ],
+                ),
+              ),
+            );
+          },
+        ),
+        // Cyan blob top-right
         Positioned(
-          top: -60, right: -80,
-          child: Container(
-            width: 280, height: 280,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(colors: [
-                const Color(0xFF00D4FF).withValues(alpha: AppColors.isDark ? 0.05 : 0.12),
-                Colors.transparent,
-              ]),
+          top: -80, right: -60,
+          child: AnimatedBuilder(
+            animation: _bgCtrl,
+            builder: (_, __) => Container(
+              width: 320, height: 320,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [
+                  const Color(0xFF00D4FF).withValues(alpha: (AppColors.isDark ? 0.10 : 0.18) + _bgCtrl.value * 0.06),
+                  Colors.transparent,
+                ]),
+              ),
             ),
           ),
         ),
+        // Purple blob bottom-left
         Positioned(
-          top: 160, left: -100,
-          child: Container(
-            width: 260, height: 260,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(colors: [
-                const Color(0xFF8B5CF6).withValues(alpha: AppColors.isDark ? 0.04 : 0.08),
-                Colors.transparent,
-              ]),
+          bottom: 80, left: -80,
+          child: AnimatedBuilder(
+            animation: _bgCtrl,
+            builder: (_, __) => Container(
+              width: 300, height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [
+                  const Color(0xFF8B5CF6).withValues(alpha: (AppColors.isDark ? 0.08 : 0.12) + (1 - _bgCtrl.value) * 0.05),
+                  Colors.transparent,
+                ]),
+              ),
             ),
           ),
         ),
@@ -1326,20 +1411,74 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildSubtitle() {
     final active = _card?.isActivated == true;
+    final name = UserProfile.name.isNotEmpty ? UserProfile.name.split(' ').first : null;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('MA CARTE VIRTUELLE',
-          style: TextStyle(
-              color: AppColors.textDim,
-              fontSize: 11,
-              letterSpacing: 2,
-              fontWeight: FontWeight.w600)),
-      const SizedBox(height: 4),
-      Text(
-        active
-            ? 'Carte active · Paiements internationaux'
-            : 'Activez votre carte pour commencer',
-        style: TextStyle(color: AppColors.textSub, fontSize: 13),
-      ),
+      Row(children: [
+        Text(name != null ? 'Bonjour, $name' : 'Bonjour',
+            style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
+        const Spacer(),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: active
+                ? const Color(0xFF00D4FF).withValues(alpha: 0.12)
+                : AppColors.card.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: active
+                  ? const Color(0xFF00D4FF).withValues(alpha: 0.35)
+                  : AppColors.border,
+            ),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 6, height: 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active ? const Color(0xFF00D4FF) : AppColors.textDim,
+                boxShadow: active ? [BoxShadow(color: const Color(0xFF00D4FF).withValues(alpha: 0.6), blurRadius: 4)] : null,
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(active ? 'Active' : 'Inactive',
+                style: TextStyle(
+                    color: active ? const Color(0xFF00D4FF) : AppColors.textDim,
+                    fontSize: 11, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      ]),
+      const SizedBox(height: 14),
+      if (active) ...[
+        Text('SOLDE DISPONIBLE',
+            style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 2.5, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text('\$', style: TextStyle(color: AppColors.textSub, fontSize: 22, fontWeight: FontWeight.w300, height: 1.6)),
+          const SizedBox(width: 2),
+          Text(_card!.balance.toStringAsFixed(2),
+              style: TextStyle(
+                  color: AppColors.label,
+                  fontSize: 48,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -2,
+                  height: 1)),
+          const SizedBox(width: 8),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00D4FF).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
+              ),
+              child: const Text('USD', style: TextStyle(color: Color(0xFF00D4FF), fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+            ),
+          ),
+        ]),
+      ] else
+        Text('Activez votre carte pour commencer',
+            style: TextStyle(color: AppColors.textSub, fontSize: 13)),
     ]);
   }
 
@@ -2207,17 +2346,50 @@ class _ActivationSheetState extends State<_ActivationSheet> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+          colors: AppColors.isDark
+              ? [const Color(0xFF111827), const Color(0xFF0D1117)]
+              : [Colors.white, const Color(0xFFF0F5FF)],
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
-      child: switch (_step) {
-        _ActStep.pick     => _buildPicker(),
-        _ActStep.paying   => _buildPayment(),
-        _ActStep.checking => _buildChecking(),
-        _ActStep.done     => _buildDone(),
-      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
+            child: Column(children: [
+              Center(child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(2)),
+              )),
+              const SizedBox(height: 8),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.credit_card_rounded, color: Colors.white, size: 16),
+                const SizedBox(width: 8),
+                Text(_step == _ActStep.done ? 'Carte activée !' : 'Activer ma carte',
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+              ]),
+            ]),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 28),
+            child: switch (_step) {
+              _ActStep.pick     => _buildPicker(),
+              _ActStep.paying   => _buildPayment(),
+              _ActStep.checking => _buildChecking(),
+              _ActStep.done     => _buildDone(),
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -2227,8 +2399,6 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _handle(),
-          const SizedBox(height: 20),
           Text(L.chooseAmount,
               style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
@@ -2429,8 +2599,6 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _handle(),
-          const SizedBox(height: 20),
           Text(L.sendExactly,
               style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
@@ -2567,8 +2735,6 @@ class _ActivationSheetState extends State<_ActivationSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _handle(),
-        const SizedBox(height: 24),
         Center(
           child: Container(
             padding: const EdgeInsets.all(18),
@@ -2731,16 +2897,50 @@ class _RechargeSheetState extends State<_RechargeSheet> {
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft, end: Alignment.bottomRight,
+        colors: AppColors.isDark
+            ? [const Color(0xFF111827), const Color(0xFF0D1117)]
+            : [Colors.white, const Color(0xFFF0F5FF)],
+      ),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
     ),
-    padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 32),
-    child: switch (_step) {
-      _RechStep.pick     => _buildSelector(),
-      _RechStep.paying   => _buildPayment(),
-      _RechStep.checking => _buildChecking(),
-      _RechStep.done     => _buildDone(),
-    },
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)]),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
+          child: Column(children: [
+            Center(child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2)),
+            )),
+            const SizedBox(height: 8),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.add_card_rounded, color: Colors.white, size: 16),
+              const SizedBox(width: 8),
+              Text(_step == _RechStep.done ? 'Carte créée !' : 'Nouvelle carte VCC',
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+            ]),
+          ]),
+        ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 28),
+          child: switch (_step) {
+            _RechStep.pick     => _buildSelector(),
+            _RechStep.paying   => _buildPayment(),
+            _RechStep.checking => _buildChecking(),
+            _RechStep.done     => _buildDone(),
+          },
+        ),
+      ],
+    ),
   );
 
   Widget _buildSelector() {
@@ -2748,8 +2948,6 @@ class _RechargeSheetState extends State<_RechargeSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _handle(),
-        const SizedBox(height: 24),
         const Text('Nouvelle carte VCC',
             style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
@@ -2854,8 +3052,6 @@ class _RechargeSheetState extends State<_RechargeSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _handle(),
-          const SizedBox(height: 20),
           Text(L.sendExactly,
               style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
@@ -2980,8 +3176,6 @@ class _RechargeSheetState extends State<_RechargeSheet> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _handle(),
-        const SizedBox(height: 24),
         Center(
           child: Container(
             padding: const EdgeInsets.all(18),
@@ -3030,44 +3224,92 @@ class _CardDetailsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(24)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: AppColors.isDark
+              ? [const Color(0xFF111827), const Color(0xFF0D1117)]
+              : [Colors.white, const Color(0xFFF0F5FF)],
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 44),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _handle(),
-          const SizedBox(height: 24),
-          const Text('Détails de la carte',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
-          _DetailRow(label: 'NUMÉRO', value: card.formattedNumber),
-          const Divider(color: Colors.white10, height: 1),
-          _DetailRow(
-              label: 'EXPIRATION', value: card.expiry ?? '—'),
-          const Divider(color: Colors.white10, height: 1),
-          _DetailRow(label: 'CVV', value: card.cvv ?? '•••'),
-          const Divider(color: Colors.white10, height: 1),
-          _DetailRow(
-              label: 'TITULAIRE',
-              value: card.holderName ?? UserProfile.name),
-          const Divider(color: Colors.white10, height: 1),
-          _DetailRow(
-              label: 'SOLDE',
-              value: '\$${card.balance.toStringAsFixed(2)} USD'),
-          const SizedBox(height: 16),
-          Text(
-            'Ne partagez jamais ces informations',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.25),
-                fontSize: 11,
-                fontStyle: FontStyle.italic),
+          // Gradient header strip
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
+            child: Column(children: [
+              Center(child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(2)),
+              )),
+              const SizedBox(height: 10),
+              const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.credit_card_rounded, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text('Détails de la carte',
+                      style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ]),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).padding.bottom + 24),
+            child: Column(children: [
+              _GlassDetailCard(
+                icon: Icons.numbers_rounded,
+                iconColor: const Color(0xFF00D4FF),
+                label: 'NUMÉRO DE CARTE',
+                value: card.formattedNumber,
+                mono: true,
+                context: context,
+              ),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(child: _GlassDetailCard(
+                  icon: Icons.calendar_today_rounded,
+                  iconColor: const Color(0xFF8B5CF6),
+                  label: 'EXPIRATION',
+                  value: card.expiry ?? '—',
+                  mono: true,
+                  context: context,
+                )),
+                const SizedBox(width: 10),
+                Expanded(child: _GlassDetailCard(
+                  icon: Icons.lock_rounded,
+                  iconColor: const Color(0xFFEC4899),
+                  label: 'CVV',
+                  value: card.cvv ?? '•••',
+                  mono: true,
+                  context: context,
+                )),
+              ]),
+              const SizedBox(height: 10),
+              _GlassDetailCard(
+                icon: Icons.person_rounded,
+                iconColor: const Color(0xFF10B981),
+                label: 'TITULAIRE',
+                value: card.holderName ?? UserProfile.name,
+                mono: false,
+                context: context,
+              ),
+              const SizedBox(height: 16),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.shield_outlined, size: 13, color: AppColors.textDim),
+                const SizedBox(width: 5),
+                Text('Ne partagez jamais ces informations',
+                    style: TextStyle(color: AppColors.textDim, fontSize: 11, fontStyle: FontStyle.italic)),
+              ]),
+            ]),
           ),
         ],
       ),
@@ -3075,52 +3317,77 @@ class _CardDetailsSheet extends StatelessWidget {
   }
 }
 
-class _DetailRow extends StatelessWidget {
+class _GlassDetailCard extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
   final String label;
   final String value;
-  const _DetailRow({required this.label, required this.value});
+  final bool mono;
+  final BuildContext context;
+  const _GlassDetailCard({
+    required this.icon, required this.iconColor,
+    required this.label, required this.value,
+    required this.mono, required this.context,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 11,
-                  letterSpacing: 1.2)),
-          Row(children: [
-            Text(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontFamily: 'monospace',
-                    letterSpacing: 0.8)),
-            const SizedBox(width: 10),
-            GestureDetector(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: value));
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text('$label copié'),
-                  duration: const Duration(seconds: 1),
-                  backgroundColor: AppColors.card,
-                  behavior: SnackBarBehavior.floating,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ));
-              },
-              child: const Icon(Icons.copy_rounded,
-                  color: Colors.white24, size: 15),
-            ),
+  Widget build(BuildContext _) {
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: value));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(children: [
+            const Icon(Icons.check_circle_rounded, color: Color(0xFF00D4FF), size: 16),
+            const SizedBox(width: 8),
+            Text('$label copié !'),
           ]),
-        ],
+          backgroundColor: AppColors.card,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 1),
+        ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+          boxShadow: AppColors.isDark ? null : [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2)),
+          ],
+        ),
+        child: Row(children: [
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: TextStyle(color: AppColors.textDim, fontSize: 9, letterSpacing: 1.5, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 3),
+              Text(value,
+                  style: TextStyle(
+                      color: AppColors.label,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: mono ? 'monospace' : null,
+                      letterSpacing: mono ? 1.2 : 0)),
+            ],
+          )),
+          Icon(Icons.copy_rounded, color: AppColors.textDim, size: 15),
+        ]),
       ),
     );
   }
 }
+
 
 // ============================================
 // TRANSACTIONS SCREEN
@@ -4229,15 +4496,6 @@ class _AgentScreenState extends State<AgentScreen>
 // ============================================
 // SHARED HELPERS
 // ============================================
-Widget _handle() => Center(
-      child: Container(
-        width: 40, height: 4,
-        decoration: BoxDecoration(
-          color: Colors.white24,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-    );
 
 Widget _gradientBtn({
   required String label,

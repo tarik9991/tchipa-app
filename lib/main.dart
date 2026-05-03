@@ -4414,6 +4414,7 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
   late final WebViewController _controller;
   bool _loading = true;
   bool _extracted = false;
+  bool _showFallback = false; // true only if extraction failed after timeout
 
   // Injected after page load to pull card details from the DOM + regex fallback
   static const _kExtractJs = r'''
@@ -4483,7 +4484,13 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
         onPageStarted: (_) => setState(() => _loading = true),
         onPageFinished: (_) {
           setState(() => _loading = false);
-          if (widget.onCardData != null) _controller.runJavaScript(_kExtractJs);
+          if (widget.onCardData != null) {
+            _controller.runJavaScript(_kExtractJs);
+            // If extraction hasn't succeeded after 6s, reveal the page as fallback
+            Future.delayed(const Duration(seconds: 6), () {
+              if (!_extracted && mounted) setState(() => _showFallback = true);
+            });
+          }
         },
       ))
       ..loadRequest(Uri.parse(widget.url));
@@ -4511,11 +4518,30 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
       ),
       body: Stack(children: [
         WebViewWidget(controller: _controller),
-        if (_loading)
-          const Center(
-            child: CircularProgressIndicator(
-              color: Color(0xFF00D4FF),
-              strokeWidth: 2,
+        // Hide the PayGate page behind our loading screen until extraction succeeds.
+        // Only removed (_showFallback) if JS extraction fails after 6s.
+        if (!_showFallback)
+          Container(
+            color: AppColors.bg,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 56, height: 56,
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF00D4FF),
+                      strokeWidth: 2.5,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text('Récupération de votre carte…',
+                      style: TextStyle(color: AppColors.sublabel, fontSize: 15)),
+                  const SizedBox(height: 8),
+                  Text('Quelques secondes',
+                      style: TextStyle(color: AppColors.hint, fontSize: 13)),
+                ],
+              ),
             ),
           ),
       ]),

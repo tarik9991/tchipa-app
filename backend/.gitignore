@@ -1,0 +1,8 @@
+node_modules/
+.env
+orders.db
+orders.db-journal
+*.before-fix-*
+*.before-cleanup-*
+logs/
+*.log

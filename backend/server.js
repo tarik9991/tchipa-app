@@ -34,7 +34,39 @@ db.exec(`
     received_at      TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_tx_ref ON transactions(ref);
+
+  -- Bridge between agent-created orders and the client app:
+  -- agent creates with phone X → row inserted here →
+  -- client app polls /cards/for-phone/:X → fetches issued cards.
+  -- Agents never see card details: redeem_link is only ever shared
+  -- with the client device whose phone matches.
+  CREATE TABLE IF NOT EXISTS agent_orders (
+    redeem_id    TEXT PRIMARY KEY,
+    phone        TEXT NOT NULL,
+    holder_name  TEXT,
+    amount_usd   REAL NOT NULL,
+    flow         TEXT NOT NULL DEFAULT 'activation', -- 'activation' | 'recharge'
+    status       TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'paid' | 'completed'
+    redeem_link  TEXT,
+    delivered_at TEXT,                               -- set when client app has fetched it
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_phone  ON agent_orders(phone);
+  CREATE INDEX IF NOT EXISTS idx_agent_status ON agent_orders(status);
 `);
+
+// Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.
+// '+213 555-12 34 56' → '+213555123456'. Used by both write (agent) and read (client).
+function normalizePhone(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const hasPlus = s.startsWith('+');
+  const digits  = s.replace(/\D/g, '');
+  if (digits.length < 6) return null;
+  return (hasPlus ? '+' : '') + digits;
+}
 console.log('[db] Orders DB ready at', DB_PATH);
 
 
@@ -280,10 +312,11 @@ const PAYGATE_VCC_STATUS = 'https://api.paygate.to/crypto/cards/status.php';
 const TCHIPA_MARGIN = 0.10; // 10% majoration sur le prix PayGate
 
 // POST /paygate/create-vcc
-// Body: { amount, cardType?, holderName?, phone?, paypalEmail? }
+// Body: { amount, cardType?, holderName?, phone?, paypalEmail?, flow? }
 // cardType: 'mastercard' (5-499 USD) | 'visa' (5-1000 USD) | 'paypal' (5-1000 USD)
+// flow (only with phone): 'activation' (default) | 'recharge'
 app.post('/paygate/create-vcc', async (req, res) => {
-  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress } = req.body || {};
+  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress, flow } = req.body || {};
   const parsed = parseFloat(amount);
   if (!parsed || isNaN(parsed) || parsed < 5) {
     return res.status(400).json({ error: 'amount doit etre >= 5 USD' });
@@ -316,6 +349,24 @@ app.post('/paygate/create-vcc', async (req, res) => {
     const { clientAmount, suffix } = forwarder.buildUniqueClientAmount(baseClient);
     forwarder.addOrder(data.redeem_id, clientAmount, paygateAmount, data.address_in, fromAddr);
     console.log('[/paygate/create-vcc] paygate=' + paygateAmount + ' client=' + clientAmount.toFixed(6) + ' USDT (base=' + baseClient + ', suffix=' + suffix + ')');
+
+    // Agent flow: if a phone is supplied, record the bridge row so the
+    // card can later surface on the client's device (by phone lookup).
+    const normPhone = normalizePhone(phone);
+    if (normPhone) {
+      try {
+        db.prepare(`
+          INSERT INTO agent_orders (redeem_id, phone, holder_name, amount_usd, flow, status)
+          VALUES (?, ?, ?, ?, ?, 'pending')
+        `).run(data.redeem_id, normPhone, holderName || null,
+               parseFloat(String(data.card_value || parsed)),
+               flow === 'recharge' ? 'recharge' : 'activation');
+        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone);
+      } catch (e) {
+        console.error('[/paygate/create-vcc] agent_orders insert error:', e.message);
+      }
+    }
+
     return res.json({
       redeemId:      data.redeem_id,
       cryptoAddress: forwarder.getAddress(),
@@ -332,27 +383,126 @@ app.post('/paygate/create-vcc', async (req, res) => {
   }
 });
 
-// GET /paygate/check-status?redeem_id=XXX
+// Shared helper: hit PayGate status + sync any agent_orders bridge row.
+async function fetchPayGateStatus(redeemId) {
+  const url = PAYGATE_VCC_STATUS + '?redeem_id=' + encodeURIComponent(redeemId);
+  const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const data = await resp.json();
+  if (!data.payment_status) throw new Error('redeem_id invalide ou erreur PayGate');
+  const redeemLink = (data.redeem_link && data.redeem_link !== 'N/A') ? data.redeem_link : null;
+  const isPaid     = data.payment_status === 'paid';
+  const isReady    = data.card_issuer_status === 'completed';
+
+  // Mirror progress into agent_orders if this redeem_id was created via the agent flow.
+  const agentRow = db.prepare('SELECT status FROM agent_orders WHERE redeem_id = ?').get(redeemId);
+  if (agentRow) {
+    const newStatus = isReady ? 'completed' : (isPaid ? 'paid' : 'pending');
+    if (newStatus !== agentRow.status || (isReady && redeemLink)) {
+      db.prepare(`
+        UPDATE agent_orders
+           SET status = ?, redeem_link = COALESCE(?, redeem_link), updated_at = datetime('now')
+         WHERE redeem_id = ?
+      `).run(newStatus, redeemLink, redeemId);
+    }
+  }
+
+  return {
+    paymentStatus: data.payment_status,
+    cardStatus:    data.card_issuer_status || 'pending',
+    redeemLink,
+    isPaid,
+    isReady,
+  };
+}
+
+// GET /paygate/check-status?redeem_id=XXX  (client-side polling — full response with link)
 app.get('/paygate/check-status', async (req, res) => {
   const { redeem_id } = req.query;
   if (!redeem_id) return res.status(400).json({ error: 'Parametre redeem_id manquant' });
-  const url = PAYGATE_VCC_STATUS + '?redeem_id=' + encodeURIComponent(redeem_id);
   console.log('[/paygate/check-status]', redeem_id);
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    const data = await resp.json();
-    if (!data.payment_status) throw new Error('redeem_id invalide ou erreur PayGate');
-    return res.json({
-      paymentStatus: data.payment_status,
-      cardStatus:    data.card_issuer_status || 'pending',
-      redeemLink:    (data.redeem_link && data.redeem_link !== 'N/A') ? data.redeem_link : null,
-      isPaid:        data.payment_status === 'paid',
-      isReady:       data.card_issuer_status === 'completed',
-    });
+    return res.json(await fetchPayGateStatus(String(redeem_id)));
   } catch (err) {
     console.error('[/paygate/check-status] error:', err.message);
     return res.status(502).json({ error: 'Verification echouee: ' + err.message });
   }
+});
+
+// GET /agent/order-status?redeem_id=XXX
+// Same upstream call as /paygate/check-status but STRIPS redeem_link / paymentStatus,
+// returning only a coarse state. Used by the agent app — agents must never
+// receive card-recovery URLs (anti-theft).
+app.get('/agent/order-status', async (req, res) => {
+  const { redeem_id } = req.query;
+  if (!redeem_id) return res.status(400).json({ error: 'Parametre redeem_id manquant' });
+  try {
+    const s = await fetchPayGateStatus(String(redeem_id));
+    const agentRow = db.prepare('SELECT phone, holder_name, delivered_at FROM agent_orders WHERE redeem_id = ?').get(String(redeem_id));
+    return res.json({
+      redeemId:   String(redeem_id),
+      state:      s.isReady ? 'completed' : (s.isPaid ? 'paid' : 'pending'),
+      isPaid:     s.isPaid,
+      isReady:    s.isReady,
+      delivered:  !!(agentRow && agentRow.delivered_at),
+      phone:      agentRow ? agentRow.phone : null,
+      holderName: agentRow ? agentRow.holder_name : null,
+    });
+  } catch (err) {
+    console.error('[/agent/order-status] error:', err.message);
+    return res.status(502).json({ error: 'Verification echouee: ' + err.message });
+  }
+});
+
+// GET /cards/for-phone/:phone
+// Returns any completed agent_orders for this phone that haven't been marked
+// delivered yet. The client app polls this on startup and pull-to-refresh to
+// discover cards generated for it by an agent.
+app.get('/cards/for-phone/:phone', async (req, res) => {
+  const phone = normalizePhone(req.params.phone);
+  if (!phone) return res.status(400).json({ error: 'Numero invalide' });
+
+  // First pass: refresh any pending rows from PayGate so a freshly-paid card
+  // can be delivered without waiting for the next agent-side poll.
+  const pendingRows = db.prepare(
+    "SELECT redeem_id FROM agent_orders WHERE phone = ? AND status != 'completed'"
+  ).all(phone);
+  for (const r of pendingRows) {
+    try { await fetchPayGateStatus(r.redeem_id); } catch (_) {}
+  }
+
+  const rows = db.prepare(`
+    SELECT redeem_id, holder_name, amount_usd, flow, redeem_link, created_at, delivered_at
+      FROM agent_orders
+     WHERE phone = ? AND status = 'completed' AND redeem_link IS NOT NULL
+     ORDER BY created_at DESC
+  `).all(phone);
+
+  return res.json({
+    phone,
+    count: rows.length,
+    cards: rows.map(r => ({
+      redeemId:   r.redeem_id,
+      holderName: r.holder_name,
+      cardValue:  r.amount_usd,
+      flow:       r.flow,
+      redeemLink: r.redeem_link,
+      createdAt:  r.created_at,
+      delivered:  !!r.delivered_at,
+    })),
+  });
+});
+
+// POST /cards/mark-delivered { redeem_id }
+// Called by the client app once it has successfully extracted card data, so
+// that subsequent polls don't keep re-surfacing the same card.
+app.post('/cards/mark-delivered', (req, res) => {
+  const { redeem_id } = req.body || {};
+  if (!redeem_id) return res.status(400).json({ error: 'redeem_id requis' });
+  const r = db.prepare(`
+    UPDATE agent_orders SET delivered_at = datetime('now'), updated_at = datetime('now')
+     WHERE redeem_id = ?
+  `).run(String(redeem_id));
+  return res.json({ ok: true, changes: r.changes });
 });
 
 // POST /paygate/request-recharge — alias create-vcc pour compat Flutter

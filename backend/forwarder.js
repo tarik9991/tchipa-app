@@ -94,6 +94,7 @@ let rpcIndex      = 0;
 let walletKey     = null;
 let walletAddress = null;
 let errCount      = 0;
+let isPolling     = false; // mutex to prevent concurrent polls (sendUsdt can block 2-5s)
 
 // ── Raw fetch-based RPC ──────────────────────────────────────────────────────
 async function rpcCall(method, params = []) {
@@ -200,6 +201,35 @@ function alreadyProcessed(txHash, logIndex) {
   return !!r;
 }
 
+// Atomic claim: INSERT fails on PK conflict, so only one poll can claim a given tx
+function tryClaim(txHash, logIndex, fromAddr, amount) {
+  try {
+    db.prepare(`
+      INSERT INTO processed_txs (tx_hash, log_index, from_address, amount, status)
+      VALUES (?, ?, ?, ?, 'processing')
+    `).run(txHash, logIndex, fromAddr, amount);
+    return true;
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE') || e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return false;
+    throw e;
+  }
+}
+
+function updateProcessed(txHash, logIndex, fields) {
+  db.prepare(`
+    UPDATE processed_txs
+       SET redeem_id  = COALESCE(?, redeem_id),
+           forward_tx = COALESCE(?, forward_tx),
+           status     = ?
+     WHERE tx_hash = ? AND log_index = ?
+  `).run(fields.redeem_id || null, fields.forward_tx || null,
+         fields.status || 'unknown', txHash, logIndex);
+}
+
+function releaseClaim(txHash, logIndex) {
+  db.prepare(`DELETE FROM processed_txs WHERE tx_hash = ? AND log_index = ? AND status = 'processing'`).run(txHash, logIndex);
+}
+
 function markProcessed(txHash, logIndex, fields) {
   db.prepare(`
     INSERT OR REPLACE INTO processed_txs
@@ -213,9 +243,20 @@ function markProcessed(txHash, logIndex, fields) {
 // ── Process a single Transfer ────────────────────────────────────────────────
 async function processIncoming(fromAddr, received, txHash, logIndex) {
   if (alreadyProcessed(txHash, logIndex)) return;
+
   if (received < MIN_FORWARD) {
+    if (tryClaim(txHash, logIndex, fromAddr, received)) {
+      updateProcessed(txHash, logIndex, { status: 'dust' });
+    }
     console.log('[Forwarder] Recu poussiere ' + received + ' USDT - ignore');
-    markProcessed(txHash, logIndex, { from_address: fromAddr, amount: received, status: 'dust' });
+    return;
+  }
+
+  // ATOMIC CLAIM: insert with status='processing' under PK (tx_hash, log_index).
+  // If another poll already claimed this tx, INSERT fails and we skip — prevents
+  // the double-forward bug that caused user payments to be matched to the wrong order.
+  if (!tryClaim(txHash, logIndex, fromAddr, received)) {
+    console.log('[Forwarder] Tx ' + txHash.slice(0, 18) + ' deja en cours par un autre poll - skip');
     return;
   }
 
@@ -230,12 +271,30 @@ async function processIncoming(fromAddr, received, txHash, logIndex) {
 
   if (!order) {
     console.log('[Forwarder] ORPHAN: pas de commande pour ' + received + ' USDT de ' + fromAddr);
-    markProcessed(txHash, logIndex, { from_address: fromAddr, amount: received, status: 'orphan' });
+    updateProcessed(txHash, logIndex, { status: 'orphan' });
     return;
   }
 
   console.log('[Forwarder] Match ' + matchedBy + ': order=' + order.redeem_id +
               ' (paygate=' + order.paygate_amount + ' -> ' + order.paygate_address + ')');
+
+  // BALANCE CHECK: refuse to attempt the transfer if wallet can't cover it.
+  // Releases the claim so the same tx can be retried at the next poll
+  // (e.g. after the wallet has been refunded by the next incoming payment).
+  try {
+    const balance = await getUsdtBalance(walletAddress);
+    if (balance < order.paygate_amount) {
+      console.error('[Forwarder] Solde insuffisant ' + balance.toFixed(6) +
+                    ' < ' + order.paygate_amount + ' USDT (order ' + order.redeem_id +
+                    ') - claim relachee, retry au prochain cycle');
+      releaseClaim(txHash, logIndex);
+      return;
+    }
+  } catch (e) {
+    console.error('[Forwarder] Balance check echec, retry au prochain cycle:', e.message);
+    releaseClaim(txHash, logIndex);
+    return;
+  }
 
   // Reserve: delete avant tx pour eviter double-forward si retry
   deleteOrder(order.redeem_id);
@@ -244,16 +303,15 @@ async function processIncoming(fromAddr, received, txHash, logIndex) {
     const hash = await sendUsdt(order.paygate_address, order.paygate_amount);
     const profit = (received - order.paygate_amount).toFixed(2);
     console.log('[Forwarder] OK forward tx=' + hash + ' profit=' + profit);
-    markProcessed(txHash, logIndex, {
-      redeem_id: order.redeem_id, from_address: fromAddr,
-      amount: received, forward_tx: hash, status: 'forwarded',
+    updateProcessed(txHash, logIndex, {
+      redeem_id: order.redeem_id, forward_tx: hash, status: 'forwarded',
     });
   } catch (err) {
     console.error('[Forwarder] Echec transfert (commande restoree):', err.message);
     restoreOrder(order);
-    markProcessed(txHash, logIndex, {
-      redeem_id: order.redeem_id, from_address: fromAddr,
-      amount: received, status: 'forward_failed: ' + err.message.slice(0, 80),
+    updateProcessed(txHash, logIndex, {
+      redeem_id: order.redeem_id,
+      status: 'forward_failed: ' + err.message.slice(0, 80),
     });
   }
 }
@@ -261,6 +319,12 @@ async function processIncoming(fromAddr, received, txHash, logIndex) {
 // ── Polling loop (eth_getLogs) ───────────────────────────────────────────────
 async function poll() {
   if (!walletAddress) return;
+  if (isPolling) {
+    // Previous cycle still running (sendUsdt can take 2-5s waiting for tx confirm).
+    // Without this guard, two polls would see the same incoming tx and race.
+    return;
+  }
+  isPolling = true;
   try {
     const latest = await getBlockNumber();
     let lastSeen = parseInt(stateGet('last_block') || '0', 10);
@@ -303,6 +367,8 @@ async function poll() {
     errCount++;
     console.error('[Forwarder] Erreur poll (' + errCount + '):', err.message.slice(0, 120));
     if (errCount >= 3) { errCount = 0; nextRpc(); }
+  } finally {
+    isPolling = false;
   }
 }
 

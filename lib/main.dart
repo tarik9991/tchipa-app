@@ -172,6 +172,56 @@ class VccOrder {
         cardType:      j['cardType']?.toString() ?? 'mastercard',
         qrCodeBase64:  j['qrCode']?.toString(),
       );
+
+  Map<String, dynamic> toJson() => {
+        'redeemId':      redeemId,
+        'cryptoAddress': cryptoAddress,
+        'amountUsdt':    amountUsdt,
+        'cardValue':     cardValue,
+        'cardType':      cardType,
+        'qrCode':        qrCodeBase64,
+      };
+
+  // Pending order persistence — one slot per flow ('activation'|'recharge')
+  // to prevent the duplicate-redeem_id bug: opening the sheet again restores
+  // the existing order instead of creating a new PayGate redeem_id that the
+  // app would then poll while the actual payment lives under the old one.
+  static const _kPendingPrefix    = 'pending_vcc_';
+  static const _kPendingExpiryHrs = 24;
+
+  static String _key(String flow) => '$_kPendingPrefix$flow';
+
+  Future<void> savePending(String flow) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key(flow), jsonEncode({
+      ...toJson(),
+      'createdAt': DateTime.now().toIso8601String(),
+    }));
+  }
+
+  static Future<VccOrder?> loadPending(String flow) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_key(flow));
+    if (raw == null) return null;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      final created = DateTime.tryParse(j['createdAt']?.toString() ?? '');
+      if (created != null &&
+          DateTime.now().difference(created).inHours > _kPendingExpiryHrs) {
+        await clearPending(flow);
+        return null;
+      }
+      return VccOrder.fromJson(j);
+    } catch (_) {
+      await clearPending(flow);
+      return null;
+    }
+  }
+
+  static Future<void> clearPending(String flow) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key(flow));
+  }
 }
 
 // ============================================
@@ -267,6 +317,7 @@ class PayGateService {
     String cardType = 'mastercard',
     String? holderName,
     String? phone,
+    String? flow, // 'activation' | 'recharge' — only meaningful when phone is set (agent flow)
   }) async {
     final resp = await http
         .post(
@@ -277,6 +328,7 @@ class PayGateService {
             'cardType': cardType,
             'holderName': holderName,
             'phone': phone,
+            if (flow != null) 'flow': flow,
           }),
         )
         .timeout(const Duration(seconds: 35));
@@ -297,7 +349,169 @@ class PayGateService {
     throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
   }
 
+  // Agent-side: coarse state only, NO redeem_link (anti-card-theft).
+  // Returns: { state: 'pending'|'paid'|'completed', isPaid, isReady, delivered }
+  static Future<Map<String, dynamic>> checkAgentOrderStatus(String redeemId) async {
+    final resp = await http
+        .get(Uri.parse(
+            '$kVpsBase/agent/order-status?redeem_id=${Uri.encodeComponent(redeemId)}'))
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return body;
+    throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
+  }
+
+  // Client-side: discover any cards issued for this phone by an agent.
+  static Future<List<Map<String, dynamic>>> fetchCardsForPhone(String phone) async {
+    final resp = await http
+        .get(Uri.parse('$kVpsBase/cards/for-phone/${Uri.encodeComponent(phone)}'))
+        .timeout(const Duration(seconds: 30));
+    if (resp.statusCode != 200) {
+      throw Exception('fetchCardsForPhone failed (${resp.statusCode})');
+    }
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final list = (body['cards'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    return list;
+  }
+
+  static Future<void> markCardDelivered(String redeemId) async {
+    try {
+      await http
+          .post(Uri.parse('$kVpsBase/cards/mark-delivered'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'redeem_id': redeemId}))
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Non-fatal: a missed mark just means the client may re-fetch the same
+      // card on the next poll. Local dedup by redeemId catches it.
+    }
+  }
+
   static Future<double> fetchBalance(String cardId) async => 0.0;
+}
+
+// ============================================
+// AGENT PIN (configurable, persisted)
+// ============================================
+class AgentPin {
+  static const _kKey = 'agent_pin';
+  static const _kDefault = '1234';
+
+  static Future<String> get() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_kKey) ?? _kDefault;
+  }
+
+  static Future<bool> isDefault() async => (await get()) == _kDefault;
+
+  static Future<void> set(String pin) async {
+    if (pin.length != 4 || !RegExp(r'^\d{4}$').hasMatch(pin)) {
+      throw Exception('Le PIN doit faire 4 chiffres');
+    }
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kKey, pin);
+  }
+}
+
+// ============================================
+// AGENT ORDER (in-progress order tracked by agent)
+// ============================================
+enum AgentOrderState { pending, paid, completed }
+
+class AgentOrder {
+  final String redeemId;
+  final String phone;
+  final String holderName;
+  final double amountUsd;
+  final String flow; // 'activation' | 'recharge'
+  final String cryptoAddress;
+  final String amountUsdt;
+  final DateTime createdAt;
+  final AgentOrderState state;
+
+  const AgentOrder({
+    required this.redeemId,
+    required this.phone,
+    required this.holderName,
+    required this.amountUsd,
+    required this.flow,
+    required this.cryptoAddress,
+    required this.amountUsdt,
+    required this.createdAt,
+    this.state = AgentOrderState.pending,
+  });
+
+  AgentOrder copyWith({AgentOrderState? state}) => AgentOrder(
+        redeemId: redeemId,
+        phone: phone,
+        holderName: holderName,
+        amountUsd: amountUsd,
+        flow: flow,
+        cryptoAddress: cryptoAddress,
+        amountUsdt: amountUsdt,
+        createdAt: createdAt,
+        state: state ?? this.state,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'redeemId': redeemId,
+        'phone': phone,
+        'holderName': holderName,
+        'amountUsd': amountUsd,
+        'flow': flow,
+        'cryptoAddress': cryptoAddress,
+        'amountUsdt': amountUsdt,
+        'createdAt': createdAt.toIso8601String(),
+        'state': state.name,
+      };
+
+  factory AgentOrder.fromJson(Map<String, dynamic> j) => AgentOrder(
+        redeemId: j['redeemId']?.toString() ?? '',
+        phone: j['phone']?.toString() ?? '',
+        holderName: j['holderName']?.toString() ?? '',
+        amountUsd: (j['amountUsd'] as num?)?.toDouble() ?? 0.0,
+        flow: j['flow']?.toString() ?? 'activation',
+        cryptoAddress: j['cryptoAddress']?.toString() ?? '',
+        amountUsdt: j['amountUsdt']?.toString() ?? '0',
+        createdAt: DateTime.tryParse(j['createdAt']?.toString() ?? '') ??
+            DateTime.now(),
+        state: AgentOrderState.values.firstWhere(
+          (e) => e.name == (j['state']?.toString() ?? 'pending'),
+          orElse: () => AgentOrderState.pending,
+        ),
+      );
+
+  static const _kKey = 'agent_current_order';
+  static const _kExpiryHrs = 48;
+
+  Future<void> save() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kKey, jsonEncode(toJson()));
+  }
+
+  static Future<AgentOrder?> load() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_kKey);
+    if (raw == null) return null;
+    try {
+      final order = AgentOrder.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      if (DateTime.now().difference(order.createdAt).inHours > _kExpiryHrs) {
+        await clear();
+        return null;
+      }
+      return order;
+    } catch (_) {
+      await clear();
+      return null;
+    }
+  }
+
+  static Future<void> clear() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_kKey);
+  }
 }
 
 // ============================================
@@ -1107,6 +1321,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _loading = true;
   bool _showFull = false;
   bool _refreshing = false;
+  // Card surfaced by an agent for this client's phone, ready to be redeemed.
+  // Kept distinct from _card so the user explicitly opts in (we never auto-overwrite
+  // an existing card on the device).
+  Map<String, dynamic>? _pendingAgentCard;
+  bool _pollingAgent = false;
 
   late AnimationController _shimmerCtrl;
   late AnimationController _glowCtrl;
@@ -1142,6 +1361,111 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _load() async {
     final card = await VccCard.load();
     if (mounted) setState(() { _card = card; _loading = false; });
+    _pollAgentCards();
+  }
+
+  Future<void> _pollAgentCards() async {
+    if (_pollingAgent) return;
+    final phone = UserProfile.phone.trim();
+    if (phone.isEmpty) return;
+    _pollingAgent = true;
+    try {
+      final cards = await PayGateService.fetchCardsForPhone(phone);
+      // Pick the most recent card whose redeem_id is NOT the one already locally stored.
+      final localRedeem = _card?.redeemId;
+      final candidate = cards.firstWhere(
+        (c) => c['redeemId']?.toString() != localRedeem,
+        orElse: () => <String, dynamic>{},
+      );
+      if (candidate.isNotEmpty && mounted) {
+        setState(() => _pendingAgentCard = candidate);
+      }
+    } catch (_) {
+      // Silent — non-critical background poll.
+    } finally {
+      _pollingAgent = false;
+    }
+  }
+
+  Widget _buildAgentCardBanner() {
+    final c = _pendingAgentCard!;
+    final amt = (c['cardValue'] as num?)?.toStringAsFixed(0) ?? '?';
+    return GestureDetector(
+      onTap: _redeemAgentCard,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF22D3A1), Color(0xFF0EA47A)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+                color: const Color(0xFF22D3A1).withValues(alpha: 0.35),
+                blurRadius: 18, offset: const Offset(0, 6)),
+          ],
+        ),
+        child: Row(children: [
+          const Icon(Icons.card_giftcard_rounded, color: Colors.white, size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Une carte de \$$amt vous attend',
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 2),
+              const Text('Émise par un agent. Tapez pour récupérer.',
+                  style: TextStyle(color: Colors.white70, fontSize: 12)),
+            ]),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 26),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _redeemAgentCard() async {
+    final c = _pendingAgentCard;
+    if (c == null) return;
+    final redeemId   = c['redeemId']?.toString();
+    final link       = c['redeemLink']?.toString();
+    final holderName = c['holderName']?.toString() ?? UserProfile.name;
+    final cardValue  = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
+    if (redeemId == null || link == null || link.isEmpty) return;
+
+    final base = VccCard(
+      cardId: redeemId,
+      redeemId: redeemId,
+      redeemLink: link,
+      balance: cardValue,
+      isActivated: true,
+      holderName: holderName,
+    );
+    await base.save();
+    if (mounted) setState(() { _card = base; _pendingAgentCard = null; });
+
+    if (!mounted) return;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CardWebViewScreen(
+          url: link,
+          title: 'Récupération carte…',
+          onCardData: (number, cvv, expiry) async {
+            final updated = base.copyWith(
+                cardNumber: number, cvv: cvv, expiry: expiry);
+            await updated.save();
+            await PayGateService.markCardDelivered(redeemId);
+            if (mounted) {
+              Navigator.of(context).pop();
+              setState(() => _card = updated);
+            }
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _refreshBalance() async {
@@ -1393,6 +1717,10 @@ class _HomeScreenState extends State<HomeScreen>
                     children: [
                       _buildSubtitle(),
                       const SizedBox(height: 16),
+                      if (_pendingAgentCard != null) ...[
+                        _buildAgentCardBanner(),
+                        const SizedBox(height: 14),
+                      ],
                       _buildCardWidget(),
                       const SizedBox(height: 24),
                       _buildActions(),
@@ -2246,6 +2574,7 @@ class _ActivationSheet extends StatefulWidget {
 }
 
 class _ActivationSheetState extends State<_ActivationSheet> {
+  static const _kFlow = 'activation';
   _ActStep _step = _ActStep.pick;
   double _amount = 10.0;
   static const _presets = [10.0, 20.0, 50.0, 100.0];
@@ -2258,11 +2587,52 @@ class _ActivationSheetState extends State<_ActivationSheet> {
   String? _redeemLink;
   VccCard? _activatedCard;
   String? _error;
+  Timer? _autoPoll;
+
+  @override
+  void initState() {
+    super.initState();
+    _restorePending();
+  }
 
   @override
   void dispose() {
+    _autoPoll?.cancel();
     _customCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _restorePending() async {
+    final pending = await VccOrder.loadPending(_kFlow);
+    if (pending != null && mounted) {
+      setState(() {
+        _order = pending;
+        _amount = pending.cardValue;
+        _step = _ActStep.paying;
+      });
+      _startAutoPoll();
+    }
+  }
+
+  void _startAutoPoll() {
+    _autoPoll?.cancel();
+    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_step == _ActStep.paying && _order != null) {
+        _checkStatus(silent: true);
+      }
+    });
+  }
+
+  Future<void> _cancelPending() async {
+    _autoPoll?.cancel();
+    await VccOrder.clearPending(_kFlow);
+    if (mounted) {
+      setState(() {
+        _order = null;
+        _error = null;
+        _step = _ActStep.pick;
+      });
+    }
   }
 
   Future<void> _createOrder() async {
@@ -2273,7 +2643,10 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         holderName: UserProfile.name,
         phone: UserProfile.phone,
       );
+      await order.savePending(_kFlow);
+      if (!mounted) return;
       setState(() => _order = order);
+      _startAutoPoll();
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
@@ -2282,13 +2655,15 @@ class _ActivationSheetState extends State<_ActivationSheet> {
     }
   }
 
-  Future<void> _checkStatus() async {
+  Future<void> _checkStatus({bool silent = false}) async {
     final id = _order?.redeemId;
     if (id == null) return;
-    setState(() { _step = _ActStep.checking; _error = null; });
+    if (!silent) setState(() { _step = _ActStep.checking; _error = null; });
     try {
       final status = await PayGateService.checkVccStatus(id);
       if (status['isReady'] == true) {
+        _autoPoll?.cancel();
+        await VccOrder.clearPending(_kFlow);
         final link = status['redeemLink'] as String?;
         final card = VccCard(
           cardId: id,
@@ -2299,21 +2674,25 @@ class _ActivationSheetState extends State<_ActivationSheet> {
           holderName: UserProfile.name,
         );
         await card.save();
+        await PayGateService.markCardDelivered(id);
         _activatedCard = card;
         if (mounted) setState(() { _redeemLink = link; _step = _ActStep.done; });
         widget.onActivated(card);
       } else if (status['isPaid'] == true) {
+        if (silent) return; // auto-poll: keep waiting silently
         setState(() {
           _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
           _step = _ActStep.paying;
         });
       } else {
+        if (silent) return; // auto-poll: stay on payment screen without nagging
         setState(() {
           _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
           _step = _ActStep.paying;
         });
       }
     } catch (e) {
+      if (silent) return; // auto-poll: ignore transient network errors
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
         _step = _ActStep.paying;
@@ -2695,7 +3074,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
             label: 'J\'ai payé — Vérifier',
             loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: _checkStatus,
+            onTap: () => _checkStatus(),
           ),
           const SizedBox(height: 10),
           Center(
@@ -2704,9 +3083,21 @@ class _ActivationSheetState extends State<_ActivationSheet> {
                     fontFamily: 'monospace')),
           ),
           const SizedBox(height: 6),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler', style: TextStyle(color: Colors.white38)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton(
+                onPressed: _cancelPending,
+                child: const Text('Nouvelle commande',
+                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Fermer',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ),
+            ],
           ),
         ],
       ),
@@ -2807,6 +3198,7 @@ class _RechargeSheet extends StatefulWidget {
 }
 
 class _RechargeSheetState extends State<_RechargeSheet> {
+  static const _kFlow = 'recharge';
   _RechStep _step = _RechStep.pick;
   double _amount = 20.0;
   static const _presets = [10.0, 20.0, 50.0, 100.0];
@@ -2817,6 +3209,52 @@ class _RechargeSheetState extends State<_RechargeSheet> {
   String? _error;
   String? _redeemLink;
   VccCard? _rechargedCard;
+  Timer? _autoPoll;
+
+  @override
+  void initState() {
+    super.initState();
+    _restorePending();
+  }
+
+  @override
+  void dispose() {
+    _autoPoll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _restorePending() async {
+    final pending = await VccOrder.loadPending(_kFlow);
+    if (pending != null && mounted) {
+      setState(() {
+        _order = pending;
+        _amount = pending.cardValue;
+        _step = _RechStep.paying;
+      });
+      _startAutoPoll();
+    }
+  }
+
+  void _startAutoPoll() {
+    _autoPoll?.cancel();
+    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_step == _RechStep.paying && _order != null) {
+        _checkStatus(silent: true);
+      }
+    });
+  }
+
+  Future<void> _cancelPending() async {
+    _autoPoll?.cancel();
+    await VccOrder.clearPending(_kFlow);
+    if (mounted) {
+      setState(() {
+        _order = null;
+        _error = null;
+        _step = _RechStep.pick;
+      });
+    }
+  }
 
   Future<void> _createOrder() async {
     setState(() { _step = _RechStep.paying; _error = null; _order = null; });
@@ -2826,7 +3264,10 @@ class _RechargeSheetState extends State<_RechargeSheet> {
         holderName: UserProfile.name,
         phone: UserProfile.phone,
       );
+      await order.savePending(_kFlow);
+      if (!mounted) return;
       setState(() => _order = order);
+      _startAutoPoll();
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
@@ -2835,13 +3276,15 @@ class _RechargeSheetState extends State<_RechargeSheet> {
     }
   }
 
-  Future<void> _checkStatus() async {
+  Future<void> _checkStatus({bool silent = false}) async {
     final id = _order?.redeemId;
     if (id == null) return;
-    setState(() { _step = _RechStep.checking; _error = null; });
+    if (!silent) setState(() { _step = _RechStep.checking; _error = null; });
     try {
       final status = await PayGateService.checkVccStatus(id);
       if (status['isReady'] == true) {
+        _autoPoll?.cancel();
+        await VccOrder.clearPending(_kFlow);
         final link = status['redeemLink'] as String?;
         final card = VccCard(
           cardId: id,
@@ -2852,21 +3295,25 @@ class _RechargeSheetState extends State<_RechargeSheet> {
           holderName: UserProfile.name,
         );
         await card.save();
+        await PayGateService.markCardDelivered(id);
         _rechargedCard = card;
         if (mounted) setState(() { _redeemLink = link; _step = _RechStep.done; });
         widget.onSuccess(_order!.cardValue);
       } else if (status['isPaid'] == true) {
+        if (silent) return;
         setState(() {
           _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
           _step = _RechStep.paying;
         });
       } else {
+        if (silent) return;
         setState(() {
           _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
           _step = _RechStep.paying;
         });
       }
     } catch (e) {
+      if (silent) return;
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
         _step = _RechStep.paying;
@@ -3148,12 +3595,29 @@ class _RechargeSheetState extends State<_RechargeSheet> {
             label: 'J\'ai payé — Vérifier',
             loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: _checkStatus,
+            onTap: () => _checkStatus(),
           ),
           const SizedBox(height: 10),
           Center(
             child: Text('ID: ${order.redeemId}',
                 style: TextStyle(color: AppColors.textDim, fontSize: 10, fontFamily: 'monospace')),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton(
+                onPressed: _cancelPending,
+                child: const Text('Nouvelle commande',
+                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Fermer',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ),
+            ],
           ),
         ],
       ),
@@ -3832,12 +4296,11 @@ class AgentScreen extends StatefulWidget {
 
 class _AgentScreenState extends State<AgentScreen>
     with SingleTickerProviderStateMixin {
-  static const _correctPin = '1234';
-
   // PIN lock
   bool _unlocked = false;
   String _pin = '';
   bool _pinError = false;
+  String _pinExpected = '1234'; // loaded from AgentPin on initState
   late AnimationController _shakeCtrl;
   late Animation<double> _shakeAnim;
 
@@ -3853,8 +4316,9 @@ class _AgentScreenState extends State<AgentScreen>
   // State
   bool _loading = false;
   String? _error;
-  Map<String, dynamic>? _result; // activation result
-  String? _rechargeId;            // recharge order ID
+  AgentOrder? _current; // active order being processed
+  Timer? _autoPoll;
+  bool _pinIsDefault = true;
 
   @override
   void initState() {
@@ -3868,10 +4332,22 @@ class _AgentScreenState extends State<AgentScreen>
       TweenSequenceItem(tween: Tween(begin: -8.0, end: 8.0), weight: 2),
       TweenSequenceItem(tween: Tween(begin: 8.0, end: 0.0), weight: 1),
     ]).animate(_shakeCtrl);
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    _pinExpected = await AgentPin.get();
+    _pinIsDefault = await AgentPin.isDefault();
+    final order = await AgentOrder.load();
+    if (mounted) {
+      setState(() { if (order != null) _current = order; });
+      if (order != null) _startAutoPoll();
+    }
   }
 
   @override
   void dispose() {
+    _autoPoll?.cancel();
     _shakeCtrl.dispose();
     _phoneCtrl.dispose();
     _nameCtrl.dispose();
@@ -3896,11 +4372,96 @@ class _AgentScreenState extends State<AgentScreen>
       });
 
   void _checkPin() {
-    if (_pin == _correctPin) {
+    if (_pin == _pinExpected) {
       setState(() { _unlocked = true; _pinError = false; });
     } else {
       setState(() { _pin = ''; _pinError = true; });
       _shakeCtrl.forward(from: 0);
+    }
+  }
+
+  Future<void> _changePinDialog() async {
+    final newPinCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Changer le PIN agent',
+            style: TextStyle(color: AppColors.text)),
+        content: TextField(
+          controller: newPinCtrl,
+          maxLength: 4,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          style: TextStyle(color: AppColors.text, letterSpacing: 8),
+          decoration: const InputDecoration(
+            hintText: '4 chiffres',
+            counterText: '',
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Annuler')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Enregistrer')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await AgentPin.set(newPinCtrl.text.trim());
+      _pinExpected = newPinCtrl.text.trim();
+      _pinIsDefault = await AgentPin.isDefault();
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('PIN mis à jour')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: Colors.redAccent));
+      }
+    }
+  }
+
+  void _startAutoPoll() {
+    _autoPoll?.cancel();
+    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_current != null &&
+          _current!.state != AgentOrderState.completed) {
+        _checkStatus(silent: true);
+      }
+    });
+  }
+
+  Future<void> _checkStatus({bool silent = false}) async {
+    final c = _current;
+    if (c == null) return;
+    try {
+      final s = await PayGateService.checkAgentOrderStatus(c.redeemId);
+      final state = switch (s['state']) {
+        'completed' => AgentOrderState.completed,
+        'paid'      => AgentOrderState.paid,
+        _           => AgentOrderState.pending,
+      };
+      if (state != c.state) {
+        final updated = c.copyWith(state: state);
+        await updated.save();
+        if (mounted) setState(() => _current = updated);
+        if (state == AgentOrderState.completed) {
+          _autoPoll?.cancel();
+        }
+      } else if (!silent) {
+        if (mounted) setState(() => _error = null); // clear stale error
+      }
+    } catch (e) {
+      if (!silent && mounted) {
+        setState(() => _error = e.toString().replaceAll('Exception: ', ''));
+      }
     }
   }
 
@@ -3911,39 +4472,32 @@ class _AgentScreenState extends State<AgentScreen>
       setState(() => _error = 'Téléphone et nom requis');
       return;
     }
+    if (!RegExp(r'^\+?\d[\d\s\-]{5,}$').hasMatch(phone)) {
+      setState(() => _error = 'Numéro invalide (format: +213 555 123 456)');
+      return;
+    }
     setState(() { _loading = true; _error = null; });
     try {
       final order = await PayGateService.createVccOrder(
         amount: _amount,
         holderName: name,
         phone: phone,
+        flow: _isRecharge ? 'recharge' : 'activation',
       );
-      if (_isRecharge) {
-        setState(() {
-          _rechargeId = order.redeemId;
-          _loading = false;
-        });
-      } else {
-        final card = VccCard(
-          cardId: order.redeemId,
-          redeemId: order.redeemId,
-          balance: 0,
-          isActivated: false,
-          holderName: name,
-        );
-        await card.save();
-        setState(() {
-          _result = {
-            'redeemId':  order.redeemId,
-            'address':   order.cryptoAddress,
-            'amountUsdt': order.amountUsdt,
-            'holder':    name,
-            'cardValue': order.cardValue,
-            'qrCode':    order.qrCodeBase64,
-          };
-          _loading = false;
-        });
-      }
+      final agentOrder = AgentOrder(
+        redeemId:      order.redeemId,
+        phone:         phone,
+        holderName:    name,
+        amountUsd:     order.cardValue,
+        flow:          _isRecharge ? 'recharge' : 'activation',
+        cryptoAddress: order.cryptoAddress,
+        amountUsdt:    order.amountUsdt,
+        createdAt:     DateTime.now(),
+      );
+      await agentOrder.save();
+      if (!mounted) return;
+      setState(() { _current = agentOrder; _loading = false; });
+      _startAutoPoll();
     } catch (e) {
       setState(() {
         _error = e.toString().replaceAll('Exception: ', '');
@@ -3952,9 +4506,12 @@ class _AgentScreenState extends State<AgentScreen>
     }
   }
 
-  void _reset() => setState(() {
-        _result = null;
-        _rechargeId = null;
+  Future<void> _newOperation() async {
+    _autoPoll?.cancel();
+    await AgentOrder.clear();
+    if (mounted) {
+      setState(() {
+        _current = null;
         _error = null;
         _phoneCtrl.clear();
         _nameCtrl.clear();
@@ -3963,6 +4520,8 @@ class _AgentScreenState extends State<AgentScreen>
         _customMode = false;
         _amount = 7.0;
       });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3975,6 +4534,14 @@ class _AgentScreenState extends State<AgentScreen>
         title: const Text('Mode Agent',
             style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
+        actions: [
+          if (_unlocked)
+            IconButton(
+              tooltip: 'Changer le PIN',
+              icon: const Icon(Icons.password_rounded),
+              onPressed: _changePinDialog,
+            ),
+        ],
       ),
       body: _unlocked ? _buildPanel() : _buildPinLock(),
     );
@@ -4099,9 +4666,35 @@ class _AgentScreenState extends State<AgentScreen>
 
   // ── AGENT PANEL ───────────────────────────────────────────────
   Widget _buildPanel() {
-    if (_result != null) return _buildActivationResult();
-    if (_rechargeId != null) return _buildRechargeResult();
-    return _buildForm();
+    return Column(children: [
+      if (_pinIsDefault)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          color: Colors.redAccent.withValues(alpha: 0.12),
+          child: Row(children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: Colors.redAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'PIN par défaut (1234) — changez-le maintenant.',
+                style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.95), fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            TextButton(
+              onPressed: _changePinDialog,
+              style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10)),
+              child: const Text('Changer',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            ),
+          ]),
+        ),
+      Expanded(
+        child: _current != null ? _buildOrderStatus() : _buildForm(),
+      ),
+    ]);
   }
 
   Widget _buildForm() {
@@ -4332,13 +4925,34 @@ class _AgentScreenState extends State<AgentScreen>
     );
   }
 
-  Widget _buildActivationResult() {
-    final r = _result!;
-    final qr = r['qrCode'] as String?;
-    final usdt = r['amountUsdt']?.toString() ?? '—';
-    final addr = r['address']?.toString() ?? '—';
-    final cardVal = r['cardValue'];
-    final cardValStr = cardVal != null ? '\$${(cardVal as num).toStringAsFixed(0)}' : '';
+  Widget _buildOrderStatus() {
+    final o = _current!;
+    final isCompleted = o.state == AgentOrderState.completed;
+    final isPaid      = o.state == AgentOrderState.paid;
+
+    // Icon + headline reflect the actual lifecycle stage so the agent
+    // can never confuse "order created" with "payment confirmed".
+    final IconData icon;
+    final Color   iconColor;
+    final String  headline;
+    final String  subline;
+    if (isCompleted) {
+      icon = Icons.check_circle_rounded;
+      iconColor = const Color(0xFF22D3A1);
+      headline = 'Carte livrée au client';
+      subline = 'Le client ${o.holderName} (${o.phone}) verra la carte apparaître dans son app Tchipa.';
+    } else if (isPaid) {
+      icon = Icons.hourglass_bottom_rounded;
+      iconColor = const Color(0xFFFFB020);
+      headline = 'Paiement reçu — carte en émission';
+      subline = 'PayGate génère la carte (~30–60s). On vérifie automatiquement.';
+    } else {
+      icon = Icons.payments_rounded;
+      iconColor = const Color(0xFF00D4FF);
+      headline = 'En attente du paiement USDT';
+      subline = 'Envoyez exactement le montant ci-dessous au wallet VPS (Polygon). On vérifie automatiquement.';
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
       child: Column(
@@ -4348,56 +4962,83 @@ class _AgentScreenState extends State<AgentScreen>
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
+                color: iconColor.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.receipt_long_rounded,
-                  color: Color(0xFF00D4FF), size: 48),
+              child: Icon(icon, color: iconColor, size: 48),
             ),
           ),
           const SizedBox(height: 16),
-          Text('Commande créée — envoyer USDT${ cardValStr.isNotEmpty ? " ($cardValStr)" : "" }',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(r['holder']?.toString() ?? '',
+          Text(headline,
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.5),
-                  fontSize: 14)),
+                  color: AppColors.text,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text(subline,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
           const SizedBox(height: 20),
-          if (qr != null && qr.isNotEmpty) ...[
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Image.memory(
-                  base64Decode(qr),
-                  width: 160,
-                  height: 160,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
+
+          // Client info — always visible (no card secrets here, just routing info)
+          _infoCard('Client', '${o.holderName}  ·  ${o.phone}', Icons.person_outline_rounded),
+          const SizedBox(height: 12),
+          _infoCard('Type · Montant',
+              '${o.flow == 'recharge' ? 'Rechargement' : 'Activation'}  ·  \$${o.amountUsd.toStringAsFixed(0)}',
+              Icons.tune_rounded),
+          const SizedBox(height: 12),
+
+          // Payment instructions — hide once paid
+          if (!isPaid && !isCompleted) ...[
+            _infoCard('Montant USDT (Polygon)', '${o.amountUsdt} USDT', Icons.toll_rounded),
+            const SizedBox(height: 12),
+            _infoCard('Envoyer USDT ici (Polygon)', o.cryptoAddress, Icons.account_balance_wallet_rounded),
+            const SizedBox(height: 12),
           ],
-          _infoCard('Montant USDT (Polygon)', '$usdt USDT', Icons.toll_rounded),
+
+          _infoCard('Redeem ID', o.redeemId, Icons.tag_rounded),
+
+          if (_error != null) ...[
+            const SizedBox(height: 16),
+            Text(_error!, textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          ],
+
+          const SizedBox(height: 24),
+          if (!isCompleted)
+            _gradientBtn(
+              label: 'Vérifier le paiement',
+              loading: false,
+              colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
+              onTap: () => _checkStatus(),
+            ),
+          if (isCompleted)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22D3A1).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF22D3A1).withValues(alpha: 0.3)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.lock_outline_rounded,
+                    color: Color(0xFF22D3A1), size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Les détails de la carte (numéro, CVV, expiration) ne sont jamais visibles côté agent. Ils n\'apparaissent que sur l\'app du client.',
+                    style: TextStyle(color: AppColors.textSub, fontSize: 12),
+                  ),
+                ),
+              ]),
+            ),
           const SizedBox(height: 12),
-          _infoCard('Envoyer USDT ici (Polygon)', addr, Icons.account_balance_wallet_rounded),
-          const SizedBox(height: 12),
-          _infoCard('Redeem ID', r['redeemId']?.toString() ?? '—', Icons.tag_rounded),
-          const SizedBox(height: 28),
           _gradientBtn(
             label: 'Nouvelle opération',
             loading: false,
             colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _reset,
+            onTap: _newOperation,
           ),
         ],
       ),
@@ -4454,43 +5095,6 @@ class _AgentScreenState extends State<AgentScreen>
     );
   }
 
-  Widget _buildRechargeResult() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 40, 20, 40),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.bolt_rounded,
-                color: Color(0xFF00D4FF), size: 48),
-          ),
-          const SizedBox(height: 20),
-          const Text('Rechargement confirmé !',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text('Ref: $_rechargeId',
-              style: const TextStyle(
-                  color: Color(0xFF00D4FF),
-                  fontSize: 14,
-                  fontFamily: 'monospace')),
-          const Spacer(),
-          _gradientBtn(
-            label: 'Nouvelle opération',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _reset,
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // ============================================

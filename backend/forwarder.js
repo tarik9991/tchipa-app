@@ -124,9 +124,28 @@ async function getBlockNumber() {
 }
 
 function makeProvider() {
+  // pollingInterval drives BOTH the block-height keepalive AND tx.wait() —
+  // the old "99_999_999" tried to suppress the former but silently broke
+  // the latter, leaving sendUsdt() hung after its tx was already mined.
+  // 4s is a sane value for Polygon (~2s block time).
   const provider = new ethers.JsonRpcProvider(RPC_URLS[rpcIndex]);
-  provider.pollingInterval = 99_999_999;
+  provider.pollingInterval = 4_000;
   return provider;
+}
+
+// Wait for receipt with a hard timeout — never let tx.wait() hang the
+// forwarder cycle. If the provider RPC stalls, fall back to direct
+// eth_getTransactionReceipt polls against our rotating RPC pool.
+async function waitForReceiptWithTimeout(txHash, timeoutMs = 60_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const receipt = await rpcCall('eth_getTransactionReceipt', [txHash]);
+      if (receipt && receipt.blockNumber) return receipt;
+    } catch (_) { /* swallow transient RPC errors, retry */ }
+    await new Promise(r => setTimeout(r, 3_000));
+  }
+  throw new Error('Tx wait timeout (' + (timeoutMs/1000) + 's): ' + txHash);
 }
 
 async function sendUsdt(toAddress, amount) {
@@ -135,7 +154,9 @@ async function sendUsdt(toAddress, amount) {
   const contract = new ethers.Contract(USDT_POLYGON, USDT_ABI, wallet);
   const wei      = ethers.parseUnits(amount.toFixed(6), USDT_DECIMALS);
   const tx       = await contract.transfer(toAddress, wei);
-  await tx.wait(1);
+  // Use our own polling instead of tx.wait() — works across any RPC and
+  // can't hang the cycle indefinitely.
+  await waitForReceiptWithTimeout(tx.hash);
   return tx.hash;
 }
 

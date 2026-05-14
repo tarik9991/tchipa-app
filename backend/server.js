@@ -133,19 +133,56 @@ function hashEmail(emailNorm) {
   return createHash('sha256').update(emailNorm).digest('hex');
 }
 
-// Magic-link email. Uses Brevo HTTP API (free 300/day, no SMTP setup) when
-// BREVO_API_KEY is set; otherwise just logs the link to PM2 so the operator
-// can ship the link manually during initial setup.
+// Magic-link email. Transport priority:
+//   1. Gmail SMTP (GMAIL_USER + GMAIL_APP_PASSWORD) — free, reliable
+//   2. Brevo HTTP API (BREVO_API_KEY) — fallback if Gmail not configured
+//   3. PM2 logs — last resort so the operator can ship the link manually
 const APP_BASE_URL    = process.env.APP_BASE_URL || 'http://76.13.255.239:3000';
 const MAIL_FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'no-reply@tchipa.co.uk';
 const MAIL_FROM_NAME  = process.env.MAIL_FROM_NAME  || 'Tchipa';
-async function sendMagicLinkEmail(toEmail, token) {
-  const link = `${APP_BASE_URL}/auth/verify-email?token=${encodeURIComponent(token)}`;
-  const key = process.env.BREVO_API_KEY;
-  if (!key) {
-    console.log(`[mailer] BREVO_API_KEY missing — magic link for ${toEmail}: ${link}`);
-    return { ok: true, transport: 'log', link };
+
+const MAIL_HTML = (link) =>
+  `<p>Bonjour,</p>` +
+  `<p>Confirme ton email pour finaliser la création de ton PIN Tchipa :</p>` +
+  `<p><a href="${link}">Confirmer mon email</a></p>` +
+  `<p>Le lien expire dans 24h. Si tu n'es pas à l'origine de cette demande, ignore ce message.</p>` +
+  `<p>— Tchipa</p>`;
+const MAIL_SUBJECT = 'Tchipa — confirme ton email';
+
+let _gmailTransporter = null;
+function getGmailTransporter() {
+  if (_gmailTransporter) return _gmailTransporter;
+  const user = process.env.GMAIL_USER;
+  const pass = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, ''); // Google shows it with spaces; strip
+  if (!user || !pass) return null;
+  const nodemailer = require('nodemailer');
+  _gmailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass },
+  });
+  return _gmailTransporter;
+}
+
+async function sendViaGmail(toEmail, link) {
+  const tx = getGmailTransporter();
+  if (!tx) return null;
+  try {
+    await tx.sendMail({
+      from: `"${MAIL_FROM_NAME}" <${process.env.GMAIL_USER}>`,
+      to:   toEmail,
+      subject: MAIL_SUBJECT,
+      html:    MAIL_HTML(link),
+    });
+    return { ok: true, transport: 'gmail' };
+  } catch (e) {
+    console.error('[mailer] Gmail SMTP error:', e.message);
+    return { ok: false, transport: 'gmail', error: e.message };
   }
+}
+
+async function sendViaBrevo(toEmail, link) {
+  const key = process.env.BREVO_API_KEY;
+  if (!key) return null;
   try {
     const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -157,13 +194,8 @@ async function sendMagicLinkEmail(toEmail, token) {
       body: JSON.stringify({
         sender:  { email: MAIL_FROM_EMAIL, name: MAIL_FROM_NAME },
         to:      [{ email: toEmail }],
-        subject: 'Tchipa — confirme ton email',
-        htmlContent:
-          `<p>Bonjour,</p>` +
-          `<p>Confirme ton email pour finaliser la création de ton PIN Tchipa :</p>` +
-          `<p><a href="${link}">Confirmer mon email</a></p>` +
-          `<p>Le lien expire dans 24h. Si tu n'es pas à l'origine de cette demande, ignore ce message.</p>` +
-          `<p>— Tchipa</p>`,
+        subject: MAIL_SUBJECT,
+        htmlContent: MAIL_HTML(link),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -177,6 +209,17 @@ async function sendMagicLinkEmail(toEmail, token) {
     console.error('[mailer] Brevo throw', e.message);
     return { ok: false, transport: 'brevo', error: e.message };
   }
+}
+
+async function sendMagicLinkEmail(toEmail, token) {
+  const link = `${APP_BASE_URL}/auth/verify-email?token=${encodeURIComponent(token)}`;
+  const gmail = await sendViaGmail(toEmail, link);
+  if (gmail && gmail.ok) return gmail;
+  const brevo = await sendViaBrevo(toEmail, link);
+  if (brevo && brevo.ok) return brevo;
+  // Last resort: log the link so the operator can deliver it out-of-band.
+  console.log(`[mailer] no transport succeeded — magic link for ${toEmail}: ${link}`);
+  return { ok: true, transport: 'log', link };
 }
 
 // Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.

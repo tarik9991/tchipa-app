@@ -325,6 +325,7 @@ class PayGateService {
     String? holderName,
     String? phone,
     String? flow, // 'activation' | 'recharge' — only meaningful when phone is set (agent flow)
+    String? source, // 'self' (user pays own card) | 'agent' (agent issues for a client)
   }) async {
     final resp = await http
         .post(
@@ -336,6 +337,7 @@ class PayGateService {
             'holderName': holderName,
             'phone': phone,
             if (flow != null) 'flow': flow,
+            if (source != null) 'source': source,
           }),
         )
         .timeout(const Duration(seconds: 35));
@@ -2793,6 +2795,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
         amount: _amount,
         holderName: UserProfile.name,
         phone: UserProfile.phone,
+        source: 'self',
       );
       await order.savePending(_kFlow);
       if (!mounted) return;
@@ -3414,6 +3417,7 @@ class _RechargeSheetState extends State<_RechargeSheet> {
         amount: _amount,
         holderName: UserProfile.name,
         phone: UserProfile.phone,
+        source: 'self',
       );
       await order.savePending(_kFlow);
       if (!mounted) return;
@@ -4634,6 +4638,7 @@ class _AgentScreenState extends State<AgentScreen>
         holderName: name,
         phone: phone,
         flow: _isRecharge ? 'recharge' : 'activation',
+        source: 'agent',
       );
       final agentOrder = AgentOrder(
         redeemId:      order.redeemId,

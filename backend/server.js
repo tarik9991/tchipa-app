@@ -332,7 +332,7 @@ const TCHIPA_MARGIN = 0.10; // 10% majoration sur le prix PayGate
 // cardType: 'mastercard' (5-499 USD) | 'visa' (5-1000 USD) | 'paypal' (5-1000 USD)
 // flow (only with phone): 'activation' (default) | 'recharge'
 app.post('/paygate/create-vcc', async (req, res) => {
-  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress, flow } = req.body || {};
+  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress, flow, source } = req.body || {};
   const parsed = parseFloat(amount);
   if (!parsed || isNaN(parsed) || parsed < 5) {
     return res.status(400).json({ error: 'amount doit etre >= 5 USD' });
@@ -366,14 +366,19 @@ app.post('/paygate/create-vcc', async (req, res) => {
     forwarder.addOrder(data.redeem_id, clientAmount, paygateAmount, data.address_in, fromAddr);
     console.log('[/paygate/create-vcc] paygate=' + paygateAmount + ' client=' + clientAmount.toFixed(6) + ' USDT (base=' + baseClient + ', suffix=' + suffix + ')');
 
-    // Agent flow: if a phone is supplied, record the bridge row so the
-    // card can later surface on the client's device (by phone lookup).
-    // claim_code locks the redeem link behind a 4-digit secret the agent
-    // relays out-of-band (Telegram) — prevents phone-only theft via
-    // /cards/for-phone polling by anyone who knows the victim's number.
+    // Bridge row in agent_orders is only useful when an agent creates a card
+    // FOR someone else — the client app then discovers it via /cards/for-phone.
+    // For self-serve (user paying for their own card), the redeem_id is held
+    // privately by the creator's device, so no bridge row is needed; writing
+    // one would actually leak the redeem_id to anyone who knows the user's
+    // phone (they could pull it from /cards/for-phone and bypass the code
+    // challenge via /paygate/check-status).
+    //
+    // source: 'self' → skip insert. 'agent' or missing (legacy clients) → insert.
     const normPhone = normalizePhone(phone);
+    const isAgentBridge = !!normPhone && source !== 'self';
     let claimCode = null;
-    if (normPhone) {
+    if (isAgentBridge) {
       claimCode = String(Math.floor(1000 + Math.random() * 9000));
       try {
         db.prepare(`

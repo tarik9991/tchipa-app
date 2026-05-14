@@ -154,6 +154,10 @@ class VccOrder {
   final String? qrCodeBase64;
   final double cardValue;
   final String cardType;
+  // Agent-flow only: 4-digit secret returned by the backend on creation.
+  // Agent must relay it out-of-band (Telegram) to the user so the user's
+  // app can unlock the redeem link via /cards/claim-with-code.
+  final String? claimCode;
 
   const VccOrder({
     required this.redeemId,
@@ -162,6 +166,7 @@ class VccOrder {
     required this.cardValue,
     required this.cardType,
     this.qrCodeBase64,
+    this.claimCode,
   });
 
   factory VccOrder.fromJson(Map<String, dynamic> j) => VccOrder(
@@ -171,6 +176,7 @@ class VccOrder {
         cardValue:     (j['cardValue'] as num?)?.toDouble() ?? 0.0,
         cardType:      j['cardType']?.toString() ?? 'mastercard',
         qrCodeBase64:  j['qrCode']?.toString(),
+        claimCode:     j['claimCode']?.toString(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -180,6 +186,7 @@ class VccOrder {
         'cardValue':     cardValue,
         'cardType':      cardType,
         'qrCode':        qrCodeBase64,
+        'claimCode':     claimCode,
       };
 
   // Pending order persistence — one slot per flow ('activation'|'recharge')
@@ -376,6 +383,36 @@ class PayGateService {
     return list;
   }
 
+  // Client-side: unlock the redeem link for a code-gated agent card.
+  // Returns the redeemLink on success. Throws on bad code / lockout / not-ready
+  // with a human-readable French error from the backend.
+  static Future<String> claimCardWithCode({
+    required String phone,
+    required String redeemId,
+    required String code,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/cards/claim-with-code'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'phone': phone,
+            'redeem_id': redeemId,
+            'code': code,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) {
+      final link = body['redeemLink']?.toString();
+      if (link == null || link.isEmpty) {
+        throw Exception('Lien de carte indisponible');
+      }
+      return link;
+    }
+    throw Exception(body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
   static Future<void> markCardDelivered(String redeemId) async {
     try {
       await http
@@ -430,6 +467,9 @@ class AgentOrder {
   final String amountUsdt;
   final DateTime createdAt;
   final AgentOrderState state;
+  // 4-digit unlock code the agent must share with the user out-of-band.
+  // Persisted locally so the agent can re-read it after restart.
+  final String? claimCode;
 
   const AgentOrder({
     required this.redeemId,
@@ -441,6 +481,7 @@ class AgentOrder {
     required this.amountUsdt,
     required this.createdAt,
     this.state = AgentOrderState.pending,
+    this.claimCode,
   });
 
   AgentOrder copyWith({AgentOrderState? state}) => AgentOrder(
@@ -453,6 +494,7 @@ class AgentOrder {
         amountUsdt: amountUsdt,
         createdAt: createdAt,
         state: state ?? this.state,
+        claimCode: claimCode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -465,6 +507,7 @@ class AgentOrder {
         'amountUsdt': amountUsdt,
         'createdAt': createdAt.toIso8601String(),
         'state': state.name,
+        'claimCode': claimCode,
       };
 
   factory AgentOrder.fromJson(Map<String, dynamic> j) => AgentOrder(
@@ -481,6 +524,7 @@ class AgentOrder {
           (e) => e.name == (j['state']?.toString() ?? 'pending'),
           orElse: () => AgentOrderState.pending,
         ),
+        claimCode: j['claimCode']?.toString(),
       );
 
   static const _kKey = 'agent_current_order';
@@ -1429,11 +1473,23 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _redeemAgentCard() async {
     final c = _pendingAgentCard;
     if (c == null) return;
-    final redeemId   = c['redeemId']?.toString();
-    final link       = c['redeemLink']?.toString();
-    final holderName = c['holderName']?.toString() ?? UserProfile.name;
-    final cardValue  = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
-    if (redeemId == null || link == null || link.isEmpty) return;
+    final redeemId     = c['redeemId']?.toString();
+    final holderName   = c['holderName']?.toString() ?? UserProfile.name;
+    final cardValue    = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
+    final requiresCode = c['requiresCode'] == true;
+    if (redeemId == null) return;
+
+    // Code-gated path: backend hid the redeemLink. Prompt for the 4-digit
+    // secret the agent shared out-of-band, then exchange it for the link.
+    String? link = c['redeemLink']?.toString();
+    if (requiresCode || link == null || link.isEmpty) {
+      final phone = UserProfile.phone.trim();
+      if (phone.isEmpty) return;
+      final unlocked = await _promptClaimCodeAndFetch(
+          phone: phone, redeemId: redeemId, cardValue: cardValue);
+      if (unlocked == null) return; // user cancelled or kept failing
+      link = unlocked;
+    }
 
     final base = VccCard(
       cardId: redeemId,
@@ -1451,7 +1507,7 @@ class _HomeScreenState extends State<HomeScreen>
       context,
       MaterialPageRoute(
         builder: (_) => CardWebViewScreen(
-          url: link,
+          url: link!,
           title: 'Récupération carte…',
           onCardData: (number, cvv, expiry) async {
             final updated = base.copyWith(
@@ -1466,6 +1522,101 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+
+  // Prompts the user for the 4-digit unlock code the agent shared
+  // (Telegram/SMS), exchanges it via /cards/claim-with-code, and returns the
+  // redeem link. Returns null if the user cancels. Loops on wrong code until
+  // backend lockout (then closes with the lockout error).
+  Future<String?> _promptClaimCodeAndFetch({
+    required String phone,
+    required String redeemId,
+    required double cardValue,
+  }) async {
+    final ctrl = TextEditingController();
+    String? errorMsg;
+    bool busy = false;
+    String? result;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
+        Future<void> submit() async {
+          final code = ctrl.text.trim();
+          if (code.length != 4 || int.tryParse(code) == null) {
+            setDlg(() => errorMsg = 'Code à 4 chiffres requis');
+            return;
+          }
+          setDlg(() { busy = true; errorMsg = null; });
+          try {
+            final link = await PayGateService.claimCardWithCode(
+                phone: phone, redeemId: redeemId, code: code);
+            result = link;
+            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+          } catch (e) {
+            final msg = e.toString().replaceFirst('Exception: ', '');
+            setDlg(() { busy = false; errorMsg = msg; });
+            // Backend lockout — no point letting them retry.
+            if (msg.toLowerCase().contains('trop de tentatives')) {
+              await Future<void>.delayed(const Duration(seconds: 2));
+              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+            }
+          }
+        }
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Déverrouiller la carte',
+              style: TextStyle(color: AppColors.label)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              'Une carte de \$${cardValue.toStringAsFixed(0)} vous attend. '
+              'Entrez le code à 4 chiffres communiqué par votre agent.',
+              style: TextStyle(color: AppColors.sublabel, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              enabled: !busy,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              maxLength: 4,
+              style: TextStyle(
+                  color: AppColors.inputFg,
+                  fontSize: 22,
+                  letterSpacing: 8,
+                  fontWeight: FontWeight.bold),
+              decoration: const InputDecoration(
+                counterText: '',
+                hintText: '••••',
+              ),
+              onSubmitted: (_) => submit(),
+            ),
+            if (errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(errorMsg!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: busy ? null : submit,
+              child: busy
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Valider'),
+            ),
+          ],
+        );
+      }),
+    );
+    return result;
   }
 
   Future<void> _refreshBalance() async {
@@ -4493,6 +4644,7 @@ class _AgentScreenState extends State<AgentScreen>
         cryptoAddress: order.cryptoAddress,
         amountUsdt:    order.amountUsdt,
         createdAt:     DateTime.now(),
+        claimCode:     order.claimCode,
       );
       await agentOrder.save();
       if (!mounted) return;
@@ -4989,6 +5141,14 @@ class _AgentScreenState extends State<AgentScreen>
               Icons.tune_rounded),
           const SizedBox(height: 12),
 
+          // Claim code — to be relayed to the client out-of-band (Telegram).
+          // Without it the user's app cannot unlock the redeem link, so
+          // someone who only knows the phone number can't steal the card.
+          if (o.claimCode != null && o.claimCode!.isNotEmpty) ...[
+            _ClaimCodeCard(code: o.claimCode!),
+            const SizedBox(height: 12),
+          ],
+
           // Payment instructions — hide once paid
           if (!isPaid && !isCompleted) ...[
             _infoCard('Montant USDT (Polygon)', '${o.amountUsdt} USDT', Icons.toll_rounded),
@@ -5095,6 +5255,81 @@ class _AgentScreenState extends State<AgentScreen>
     );
   }
 
+}
+
+// Prominent claim-code card shown in the agent panel. The agent must read
+// this code and send it to the client via Telegram/SMS — the client's app
+// asks for it before unlocking the redeem link.
+class _ClaimCodeCard extends StatelessWidget {
+  final String code;
+  const _ClaimCodeCard({required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: code));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Code copié — envoyez-le au client'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: AppColors.card,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ));
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFFFFB020).withValues(alpha: 0.18),
+              const Color(0xFFFF7A00).withValues(alpha: 0.08),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: const Color(0xFFFFB020).withValues(alpha: 0.5)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.vpn_key_rounded,
+                  color: Color(0xFFFFB020), size: 16),
+              const SizedBox(width: 8),
+              const Text('CODE DE DÉVERROUILLAGE',
+                  style: TextStyle(
+                      color: Color(0xFFFFB020),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2)),
+              const Spacer(),
+              const Icon(Icons.copy_rounded,
+                  color: Color(0xFFFFB020), size: 16),
+            ]),
+            const SizedBox(height: 10),
+            Center(
+              child: Text(code,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'monospace',
+                      letterSpacing: 10)),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Envoyez ce code au client par Telegram. Sans lui, son app ne pourra pas récupérer la carte.',
+              style: TextStyle(color: AppColors.textSub, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ============================================

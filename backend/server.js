@@ -41,20 +41,36 @@ db.exec(`
   -- Agents never see card details: redeem_link is only ever shared
   -- with the client device whose phone matches.
   CREATE TABLE IF NOT EXISTS agent_orders (
-    redeem_id    TEXT PRIMARY KEY,
-    phone        TEXT NOT NULL,
-    holder_name  TEXT,
-    amount_usd   REAL NOT NULL,
-    flow         TEXT NOT NULL DEFAULT 'activation', -- 'activation' | 'recharge'
-    status       TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'paid' | 'completed'
-    redeem_link  TEXT,
-    delivered_at TEXT,                               -- set when client app has fetched it
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    redeem_id      TEXT PRIMARY KEY,
+    phone          TEXT NOT NULL,
+    holder_name    TEXT,
+    amount_usd     REAL NOT NULL,
+    flow           TEXT NOT NULL DEFAULT 'activation', -- 'activation' | 'recharge'
+    status         TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'paid' | 'completed'
+    redeem_link    TEXT,
+    delivered_at   TEXT,                               -- set when client app has fetched it
+    claim_code     TEXT,                               -- 4-digit code, agent relays it to user out-of-band
+    claim_attempts INTEGER NOT NULL DEFAULT 0,         -- wrong-code attempts; locks at >= 5
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_agent_phone  ON agent_orders(phone);
   CREATE INDEX IF NOT EXISTS idx_agent_status ON agent_orders(status);
 `);
+
+// In-place migration for existing DBs created before claim_code existed.
+// Inline PRAGMA check (no migration tool — see CLAUDE.md conventions).
+{
+  const cols = db.prepare("PRAGMA table_info(agent_orders)").all().map(c => c.name);
+  if (!cols.includes('claim_code')) {
+    db.exec("ALTER TABLE agent_orders ADD COLUMN claim_code TEXT");
+    console.log('[db] migrated: agent_orders.claim_code added');
+  }
+  if (!cols.includes('claim_attempts')) {
+    db.exec("ALTER TABLE agent_orders ADD COLUMN claim_attempts INTEGER NOT NULL DEFAULT 0");
+    console.log('[db] migrated: agent_orders.claim_attempts added');
+  }
+}
 
 // Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.
 // '+213 555-12 34 56' → '+213555123456'. Used by both write (agent) and read (client).
@@ -352,16 +368,22 @@ app.post('/paygate/create-vcc', async (req, res) => {
 
     // Agent flow: if a phone is supplied, record the bridge row so the
     // card can later surface on the client's device (by phone lookup).
+    // claim_code locks the redeem link behind a 4-digit secret the agent
+    // relays out-of-band (Telegram) — prevents phone-only theft via
+    // /cards/for-phone polling by anyone who knows the victim's number.
     const normPhone = normalizePhone(phone);
+    let claimCode = null;
     if (normPhone) {
+      claimCode = String(Math.floor(1000 + Math.random() * 9000));
       try {
         db.prepare(`
-          INSERT INTO agent_orders (redeem_id, phone, holder_name, amount_usd, flow, status)
-          VALUES (?, ?, ?, ?, ?, 'pending')
+          INSERT INTO agent_orders (redeem_id, phone, holder_name, amount_usd, flow, status, claim_code)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?)
         `).run(data.redeem_id, normPhone, holderName || null,
                parseFloat(String(data.card_value || parsed)),
-               flow === 'recharge' ? 'recharge' : 'activation');
-        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone);
+               flow === 'recharge' ? 'recharge' : 'activation',
+               claimCode);
+        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone + ' (code set)');
       } catch (e) {
         console.error('[/paygate/create-vcc] agent_orders insert error:', e.message);
       }
@@ -376,6 +398,7 @@ app.post('/paygate/create-vcc', async (req, res) => {
       cardCurrency:  data.card_currency || 'USD',
       cardType:      provider,
       holderName:    holderName || null,
+      claimCode,
     });
   } catch (err) {
     console.error('[/paygate/create-vcc] error:', err.message);
@@ -471,24 +494,33 @@ app.get('/cards/for-phone/:phone', async (req, res) => {
   }
 
   const rows = db.prepare(`
-    SELECT redeem_id, holder_name, amount_usd, flow, redeem_link, created_at, delivered_at
+    SELECT redeem_id, holder_name, amount_usd, flow, redeem_link,
+           created_at, delivered_at, claim_code
       FROM agent_orders
      WHERE phone = ? AND status = 'completed' AND redeem_link IS NOT NULL
      ORDER BY created_at DESC
   `).all(phone);
 
+  // For code-gated, undelivered cards: hide redeem_link. The app must call
+  // /cards/claim-with-code with the 4-digit secret to obtain it. Already-
+  // delivered cards keep the link exposed so the legitimate device can still
+  // re-open them locally (the link is single-use upstream anyway).
   return res.json({
     phone,
     count: rows.length,
-    cards: rows.map(r => ({
-      redeemId:   r.redeem_id,
-      holderName: r.holder_name,
-      cardValue:  r.amount_usd,
-      flow:       r.flow,
-      redeemLink: r.redeem_link,
-      createdAt:  r.created_at,
-      delivered:  !!r.delivered_at,
-    })),
+    cards: rows.map(r => {
+      const locked = !!r.claim_code && !r.delivered_at;
+      return {
+        redeemId:     r.redeem_id,
+        holderName:   r.holder_name,
+        cardValue:    r.amount_usd,
+        flow:         r.flow,
+        redeemLink:   locked ? null : r.redeem_link,
+        requiresCode: locked,
+        createdAt:    r.created_at,
+        delivered:    !!r.delivered_at,
+      };
+    }),
   });
 });
 
@@ -503,6 +535,55 @@ app.post('/cards/mark-delivered', (req, res) => {
      WHERE redeem_id = ?
   `).run(String(redeem_id));
   return res.json({ ok: true, changes: r.changes });
+});
+
+// POST /cards/claim-with-code { phone, redeem_id, code }
+// Unlocks the redeem_link for a code-gated agent order. Phone must match the
+// order's recorded phone (so a leaked redeem_id alone isn't enough), and the
+// 4-digit code must match what was returned to the agent on creation.
+// Locks the row after 5 wrong attempts — agent must reissue.
+const CLAIM_MAX_ATTEMPTS = 5;
+app.post('/cards/claim-with-code', (req, res) => {
+  const { phone, redeem_id, code } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  if (!normPhone || !redeem_id || !code) {
+    return res.status(400).json({ error: 'phone, redeem_id et code requis' });
+  }
+  const row = db.prepare(`
+    SELECT phone, redeem_link, claim_code, claim_attempts, delivered_at
+      FROM agent_orders
+     WHERE redeem_id = ?
+  `).get(String(redeem_id));
+  if (!row || row.phone !== normPhone) {
+    return res.status(404).json({ error: 'Commande introuvable' });
+  }
+  if (!row.redeem_link) {
+    return res.status(409).json({ error: 'Carte pas encore prete' });
+  }
+  if (!row.claim_code) {
+    // Legacy row with no code — link is already public via /cards/for-phone.
+    return res.json({ redeemLink: row.redeem_link });
+  }
+  if (row.claim_attempts >= CLAIM_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Trop de tentatives. Demandez un nouveau code a l agent.' });
+  }
+  if (String(code).trim() !== row.claim_code) {
+    db.prepare(`
+      UPDATE agent_orders
+         SET claim_attempts = claim_attempts + 1, updated_at = datetime('now')
+       WHERE redeem_id = ?
+    `).run(String(redeem_id));
+    const remaining = Math.max(0, CLAIM_MAX_ATTEMPTS - (row.claim_attempts + 1));
+    return res.status(403).json({ error: 'Code invalide', attemptsRemaining: remaining });
+  }
+  // Success: burn the code so the link is no longer gated for this row.
+  // delivered_at is left to /cards/mark-delivered (called after extraction).
+  db.prepare(`
+    UPDATE agent_orders
+       SET claim_code = NULL, updated_at = datetime('now')
+     WHERE redeem_id = ?
+  `).run(String(redeem_id));
+  return res.json({ redeemLink: row.redeem_link });
 });
 
 // POST /paygate/request-recharge — alias create-vcc pour compat Flutter

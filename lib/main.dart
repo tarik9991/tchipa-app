@@ -6122,59 +6122,106 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
   bool _extracted = false;
   bool _showFallback = false; // true only if extraction failed after timeout
 
-  // Injected after page load to pull card details from the DOM + regex fallback
+  // Robust card-data extraction. Swype's reveal page is a React SPA — the
+  // card data appears in the DOM only after async hydration finishes, which
+  // can be 2-8s after onPageFinished depending on network. So we retry on
+  // a MutationObserver-flavoured schedule rather than fire-and-forget.
+  //
+  // Strategy stack, each attempt:
+  //   1. <input>/<textarea> values — Swype renders the card in masked
+  //      inputs the user can "reveal"/"copy"; .value carries the data even
+  //      when textContent is empty.
+  //   2. Leaf elements with short numeric text — divs/spans holding the PAN
+  //      after the user clicks "show".
+  //   3. data-* attributes & aria-labels — copy-to-clipboard buttons often
+  //      stash the value here.
+  //   4. Whole-body regex sweep — last resort if the above selectors miss.
   static const _kExtractJs = r'''
 (function(){
-  setTimeout(function(){
-    try {
+  if (window.__tchipaExtractStarted) return; window.__tchipaExtractStarted = true;
+  var attempts = 0;
+  var MAX_ATTEMPTS = 12;        // ~18s total at 1500ms apart
+  var INTERVAL_MS = 1500;
+  function looksLikePan(s){ var d=String(s||'').replace(/[\s-]/g,''); return /^\d{15,19}$/.test(d) ? d : null; }
+  function looksLikeCvv(s){ var d=String(s||'').replace(/\D/g,''); return /^\d{3,4}$/.test(d) ? d : null; }
+  function looksLikeExp(s){ var t=String(s||'').trim(); return /\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/.test(t) ? t.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/)[0] : null; }
+  function collect(){
+    var hits = { n:null, c:null, e:null };
+    // --- inputs / textareas (value) ---
+    var inputs = document.querySelectorAll('input,textarea');
+    for (var i = 0; i < inputs.length; i++) {
+      var v = inputs[i].value || inputs[i].getAttribute('value') || '';
+      if (!v) continue;
+      if (!hits.n) { var n = looksLikePan(v); if (n) hits.n = n; }
+      if (!hits.c) { var c = looksLikeCvv(v); if (c) hits.c = c; }
+      if (!hits.e) { var e = looksLikeExp(v); if (e) hits.e = e; }
+    }
+    // --- data-clipboard-text / data-value / aria-label on any element ---
+    if (!hits.n || !hits.c || !hits.e) {
+      var withAttrs = document.querySelectorAll('[data-clipboard-text],[data-value],[data-copy],[aria-label]');
+      for (var j = 0; j < withAttrs.length; j++) {
+        var el = withAttrs[j];
+        var v2 = el.getAttribute('data-clipboard-text') || el.getAttribute('data-value') ||
+                 el.getAttribute('data-copy') || el.getAttribute('aria-label') || '';
+        if (!v2) continue;
+        if (!hits.n) { var n2 = looksLikePan(v2); if (n2) hits.n = n2; }
+        if (!hits.c) { var c2 = looksLikeCvv(v2); if (c2) hits.c = c2; }
+        if (!hits.e) { var e2 = looksLikeExp(v2); if (e2) hits.e = e2; }
+      }
+    }
+    // --- leaf elements (short text only) ---
+    if (!hits.n || !hits.c || !hits.e) {
+      var all = document.querySelectorAll('*');
+      for (var k = 0; k < all.length && (!hits.n || !hits.c || !hits.e); k++) {
+        var elx = all[k];
+        if (elx.children && elx.children.length > 0) continue;
+        var t = (elx.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!t || t.length > 30) continue;
+        if (!hits.n) { var nn = looksLikePan(t); if (nn) hits.n = nn; }
+        if (!hits.c) { var cc = looksLikeCvv(t); if (cc) hits.c = cc; }
+        if (!hits.e) { var ee = looksLikeExp(t); if (ee) hits.e = ee; }
+      }
+    }
+    // --- whole-body regex (handles concatenated text nodes) ---
+    if (!hits.n || !hits.c || !hits.e) {
       var b = document.body ? document.body.innerText : '';
-      var r = {};
-      function tryEl(sels) {
-        for (var i = 0; i < sels.length; i++) {
-          try {
-            var el = document.querySelector(sels[i]);
-            if (el) {
-              var t = (el.value||el.textContent||el.innerText||'').trim().replace(/\s+/g,' ');
-              if (t.length > 0) return t;
-            }
-          } catch(e) {}
-        }
-        return null;
+      if (!hits.n) { var m1 = b.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/); if (m1) hits.n = m1[1].replace(/[\s-]/g,''); }
+      if (!hits.c) { var m2 = b.match(/CVV[^\d]{0,10}(\d{3,4})/i)||b.match(/CVC[^\d]{0,10}(\d{3,4})/i)||b.match(/Security[^\d]{0,15}(\d{3,4})/i); if (m2) hits.c = m2[1]; }
+      if (!hits.e) { var m3 = b.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/); if (m3) hits.e = m3[0]; }
+    }
+    return hits;
+  }
+  function tick(){
+    attempts++;
+    try {
+      var r = collect();
+      if (r.n) { // PAN is the gate — without it the whole row is useless
+        TchipaCard.postMessage(JSON.stringify({cardNumber:r.n, cvv:r.c, expiry:r.e}));
+        return;
       }
-      r.n = tryEl(["[class*='card-number']","[class*='cardNumber']","[class*='card_number']",
-                   "[id*='card-number']","[id*='cardNumber']","[data-card-number]",
-                   "[class*='pan']","[id*='pan']"]);
-      r.c = tryEl(["[class*='cvv']","[class*='cvc']","[id*='cvv']","[id*='cvc']","[data-cvv]"]);
-      r.e = tryEl(["[class*='expiry']","[class*='expir']","[class*='exp-date']",
-                   "[class*='expDate']","[id*='expiry']","[data-expiry]","[class*='valid']"]);
-      if (!r.n || !/\d{4}/.test(r.n)) {
-        var m = b.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
-        r.n = m ? m[1].replace(/[\s-]/g,'') : r.n;
-      } else { r.n = r.n.replace(/[\s-]/g,''); }
-      if (!r.c || !/^\d{3,4}$/.test(r.c.trim())) {
-        var m2 = b.match(/CVV[^\d]{0,10}(\d{3,4})/i)||b.match(/CVC[^\d]{0,10}(\d{3,4})/i)
-                ||b.match(/Security[^\d]{0,15}(\d{3,4})/i);
-        if (m2) r.c = m2[1];
-      }
-      if (!r.e || !/\d[\/]\d/.test(r.e)) {
-        var m3 = b.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/);
-        if (m3) r.e = m3[0];
-      }
-      TchipaCard.postMessage(JSON.stringify({cardNumber:r.n,cvv:r.c,expiry:r.e}));
-    } catch(err){TchipaCard.postMessage(JSON.stringify({error:err.toString()}));}
-  },1500);
+    } catch(err){ /* swallow per-tick; keep retrying */ }
+    if (attempts < MAX_ATTEMPTS) {
+      setTimeout(tick, INTERVAL_MS);
+    } else {
+      // Final diagnostic so we know what the page actually contained.
+      try {
+        var snippet = (document.body ? document.body.innerText : '').slice(0, 400);
+        TchipaCard.postMessage(JSON.stringify({error:'extraction_timeout', snippet:snippet}));
+      } catch(_){ TchipaCard.postMessage(JSON.stringify({error:'extraction_timeout'})); }
+    }
+  }
+  setTimeout(tick, 800); // small head start so the SPA can render the first frame
 })();
 ''';
 
   @override
   void initState() {
     super.initState();
-    // Always reveal the underlying WebView after 6s. The previous version
-    // armed this only inside onPageFinished + only when onCardData != null,
-    // which left the splash stuck forever if (a) the screen was opened just
-    // to view the card with no extraction callback, or (b) the Swype SPA
-    // never fired onPageFinished cleanly.
-    Future.delayed(const Duration(seconds: 6), () {
+    // Always reveal the underlying WebView after 8s so the user can read +
+    // copy the numbers manually if our JS scrape fails. Total extraction
+    // budget is ~18s (12 retries × 1.5s); after that we surface a snackbar
+    // telling them to read the card directly from the page.
+    Future.delayed(const Duration(seconds: 8), () {
       if (!_extracted && mounted) setState(() => _showFallback = true);
     });
     _controller = WebViewController()
@@ -6184,7 +6231,18 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
         if (_extracted || widget.onCardData == null) return;
         try {
           final data = jsonDecode(msg.message) as Map<String, dynamic>;
-          if (data['error'] != null) return;
+          if (data['error'] != null) {
+            debugPrint('[CardWebView] extract error: ${data['error']} snippet=${data['snippet']?.toString().substring(0, 200) ?? ''}');
+            if (mounted) {
+              setState(() => _showFallback = true);
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('Lecture auto échouée — note les numéros depuis cet écran.'),
+                backgroundColor: Colors.orange.shade800,
+                duration: const Duration(seconds: 6),
+              ));
+            }
+            return;
+          }
           final number = data['cardNumber'] as String?;
           final cvv = data['cvv'] as String?;
           final expiry = data['expiry'] as String?;

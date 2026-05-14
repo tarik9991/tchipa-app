@@ -306,6 +306,11 @@ class UserProfile {
   static String name = '';
   static String phone = '';
   static String email = '';
+  // Local mirror of /auth/pin-status. Once true, the device knows the user
+  // completed PIN setup + email verification for this phone, so we stop
+  // prompting at startup. The backend remains the source of truth — if a
+  // claim fails with PIN_NOT_SET we re-trigger the setup flow.
+  static bool pinSet = false;
 
   static bool get isEmpty =>
       name.trim().isEmpty || phone.trim().isEmpty;
@@ -315,6 +320,7 @@ class UserProfile {
     name  = prefs.getString('profile_name')  ?? '';
     phone = prefs.getString('profile_phone') ?? '';
     email = prefs.getString('profile_email') ?? '';
+    pinSet = prefs.getBool('profile_pin_set') ?? false;
   }
 
   static Future<void> save() async {
@@ -322,6 +328,289 @@ class UserProfile {
     await prefs.setString('profile_name',  name);
     await prefs.setString('profile_phone', phone);
     await prefs.setString('profile_email', email);
+    await prefs.setBool('profile_pin_set', pinSet);
+  }
+}
+
+// ============================================
+// PIN SETUP HELPER — orchestrates setup + email verification UX
+// ============================================
+class PinSetup {
+  // Full first-time flow: confirm we don't already have a verified PIN,
+  // collect a 4-digit PIN, send the magic link, then block on a polling
+  // "check your email" dialog until the user confirms or cancels.
+  // Returns true if pinSet is now true.
+  static Future<bool> run(BuildContext context) async {
+    final phone = UserProfile.phone.trim();
+    final email = UserProfile.email.trim();
+    if (phone.isEmpty || email.isEmpty) return false;
+
+    // Reconcile with backend: maybe this device reinstalled and the PIN
+    // is already set on this phone server-side.
+    try {
+      final status = await PayGateService.authPinStatus(phone);
+      if (status.exists && status.verified) {
+        UserProfile.pinSet = true;
+        await UserProfile.save();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('PIN déjà configuré pour ce numéro.'),
+          ));
+        }
+        return true;
+      }
+    } catch (_) { /* network — let user retry via the dialog */ }
+
+    if (!context.mounted) return false;
+    final pin = await _askForNewPin(context);
+    if (pin == null) return false;
+
+    if (!context.mounted) return false;
+    try {
+      await PayGateService.authSetupPin(phone: phone, email: email, pin: pin);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+      return false;
+    }
+
+    if (!context.mounted) return false;
+    final verified = await _awaitEmailVerification(context, phone: phone, email: email);
+    if (verified) {
+      UserProfile.pinSet = true;
+      await UserProfile.save();
+    }
+    return verified;
+  }
+
+  // Change-PIN flow — assumes pinSet=true. Asks for old PIN + new PIN twice.
+  static Future<void> changePinDialog(BuildContext context) async {
+    final phone = UserProfile.phone.trim();
+    if (phone.isEmpty) return;
+    final oldPinCtrl = TextEditingController();
+    final newPinCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    String? errorMsg;
+    bool busy = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
+        Future<void> submit() async {
+          final oldPin = oldPinCtrl.text.trim();
+          final newPin = newPinCtrl.text.trim();
+          final confirm = confirmCtrl.text.trim();
+          if (!RegExp(r'^\d{4,6}$').hasMatch(oldPin)) {
+            setDlg(() => errorMsg = 'Ancien PIN invalide');
+            return;
+          }
+          if (!RegExp(r'^\d{4,6}$').hasMatch(newPin)) {
+            setDlg(() => errorMsg = 'Nouveau PIN: 4 à 6 chiffres');
+            return;
+          }
+          if (newPin != confirm) {
+            setDlg(() => errorMsg = 'Confirmation différente');
+            return;
+          }
+          setDlg(() { busy = true; errorMsg = null; });
+          try {
+            await PayGateService.authChangePin(phone: phone, oldPin: oldPin, newPin: newPin);
+            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+          } catch (e) {
+            setDlg(() { busy = false; errorMsg = e.toString().replaceFirst('Exception: ', ''); });
+          }
+        }
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Changer mon PIN'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            _pinField(oldPinCtrl, hint: 'Ancien PIN', enabled: !busy),
+            const SizedBox(height: 12),
+            _pinField(newPinCtrl, hint: 'Nouveau PIN', enabled: !busy),
+            const SizedBox(height: 12),
+            _pinField(confirmCtrl, hint: 'Confirmer', enabled: !busy),
+            if (errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(errorMsg!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: busy ? null : submit,
+              child: busy
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Enregistrer'),
+            ),
+          ],
+        );
+      }),
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('PIN mis à jour'),
+      ));
+    }
+  }
+
+  // ----- internals -----
+
+  static Future<String?> _askForNewPin(BuildContext context) async {
+    final pinCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    String? errorMsg;
+    String? result;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
+        Future<void> submit() async {
+          final pin = pinCtrl.text.trim();
+          final confirm = confirmCtrl.text.trim();
+          if (!RegExp(r'^\d{4,6}$').hasMatch(pin)) {
+            setDlg(() => errorMsg = 'PIN: 4 à 6 chiffres');
+            return;
+          }
+          if (pin != confirm) {
+            setDlg(() => errorMsg = 'Confirmation différente');
+            return;
+          }
+          result = pin;
+          if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+        }
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Crée ton PIN Tchipa'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              'Ce PIN est ton secret. Seul toi peux récupérer une carte envoyée à ton numéro. '
+              'Ne le partage avec personne, pas même un agent.',
+              style: TextStyle(color: AppColors.textSub, fontSize: 12.5),
+            ),
+            const SizedBox(height: 16),
+            _pinField(pinCtrl, hint: 'PIN à 4 chiffres', enabled: true),
+            const SizedBox(height: 12),
+            _pinField(confirmCtrl, hint: 'Confirmer', enabled: true),
+            if (errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(errorMsg!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(onPressed: submit, child: const Text('Continuer')),
+          ],
+        );
+      }),
+    );
+    return result;
+  }
+
+  // Shows a "check your email" panel and polls /auth/pin-status until
+  // verified or cancelled. Auto-poll every 4s for up to ~10 minutes.
+  static Future<bool> _awaitEmailVerification(
+      BuildContext context, {required String phone, required String email}) async {
+    bool verified = false;
+    Timer? pollTimer;
+    String? errorMsg;
+    bool busy = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
+        Future<void> checkNow() async {
+          setDlg(() { busy = true; errorMsg = null; });
+          try {
+            final s = await PayGateService.authPinStatus(phone);
+            if (s.exists && s.verified) {
+              verified = true;
+              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+              return;
+            }
+            setDlg(() { busy = false; errorMsg = 'Email pas encore vérifié.'; });
+          } catch (e) {
+            setDlg(() { busy = false; errorMsg = e.toString().replaceFirst('Exception: ', ''); });
+          }
+        }
+        pollTimer ??= Timer.periodic(const Duration(seconds: 4), (_) async {
+          try {
+            final s = await PayGateService.authPinStatus(phone);
+            if (s.exists && s.verified) {
+              verified = true;
+              pollTimer?.cancel();
+              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+            }
+          } catch (_) {}
+        });
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Vérifie ton email'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.mark_email_unread_rounded,
+                color: const Color(0xFF00D4FF), size: 48),
+            const SizedBox(height: 12),
+            Text(
+              'On t\'a envoyé un lien à\n$email\n\nClique-le, puis reviens ici.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.textSub, fontSize: 13),
+            ),
+            if (errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(errorMsg!, textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () {
+                      pollTimer?.cancel();
+                      Navigator.of(dialogCtx).pop();
+                    },
+              child: const Text('Plus tard'),
+            ),
+            ElevatedButton(
+              onPressed: busy ? null : checkNow,
+              child: busy
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('J\'ai cliqué'),
+            ),
+          ],
+        );
+      }),
+    );
+    pollTimer?.cancel();
+    return verified;
+  }
+
+  static Widget _pinField(TextEditingController c, {required String hint, required bool enabled}) {
+    return TextField(
+      controller: c,
+      enabled: enabled,
+      autofocus: true,
+      keyboardType: TextInputType.number,
+      obscureText: true,
+      maxLength: 6,
+      textAlign: TextAlign.center,
+      style: TextStyle(color: AppColors.inputFg, fontSize: 20, letterSpacing: 6),
+      decoration: InputDecoration(counterText: '', hintText: hint),
+    );
   }
 }
 
@@ -336,6 +625,7 @@ class PayGateService {
     String? phone,
     String? flow, // 'activation' | 'recharge' — only meaningful when phone is set (agent flow)
     String? source, // 'self' (user pays own card) | 'agent' (agent issues for a client)
+    String? clientEmail, // agent flow: must match the client's verified email
   }) async {
     final resp = await http
         .post(
@@ -348,6 +638,7 @@ class PayGateService {
             'phone': phone,
             if (flow != null) 'flow': flow,
             if (source != null) 'source': source,
+            if (clientEmail != null) 'clientEmail': clientEmail,
           }),
         )
         .timeout(const Duration(seconds: 35));
@@ -355,7 +646,9 @@ class PayGateService {
     if (resp.statusCode == 200 || resp.statusCode == 201) {
       return VccOrder.fromJson(body);
     }
-    throw Exception(body['error'] ?? 'Erreur PayGate (${resp.statusCode})');
+    // Backend uses `message` for human-readable details (CLIENT_NO_PIN etc.)
+    final err = body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur PayGate (${resp.statusCode})';
+    throw Exception(err);
   }
 
   static Future<Map<String, dynamic>> checkVccStatus(String redeemId) async {
@@ -444,6 +737,92 @@ class PayGateService {
   }
 
   static Future<double> fetchBalance(String cardId) async => 0.0;
+
+  // ----- /auth/* — PIN setup + email magic-link -----
+
+  // Triggers a magic-link email. The backend stores the PIN hash immediately
+  // but marks the row unverified until the link is clicked. Throws on
+  // PIN_ALREADY_SET so the UI can route to change-pin instead.
+  static Future<void> authSetupPin({
+    required String phone,
+    required String email,
+    required String pin,
+    String? deviceId,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/auth/setup-pin'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'phone': phone,
+            'email': email,
+            'pin':   pin,
+            if (deviceId != null) 'device_id': deviceId,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return;
+    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur setup PIN (${resp.statusCode})');
+  }
+
+  static Future<({bool exists, bool verified, String? email})> authPinStatus(String phone) async {
+    final resp = await http
+        .get(Uri.parse('$kVpsBase/auth/pin-status?phone=${Uri.encodeComponent(phone)}'))
+        .timeout(const Duration(seconds: 15));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode != 200) {
+      throw Exception(body['error']?.toString() ?? 'Erreur statut PIN');
+    }
+    return (
+      exists:   body['exists'] == true,
+      verified: body['verified'] == true,
+      email:    body['email']?.toString(),
+    );
+  }
+
+  static Future<void> authChangePin({
+    required String phone,
+    required String oldPin,
+    required String newPin,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/auth/change-pin'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'phone': phone, 'old_pin': oldPin, 'new_pin': newPin}),
+        )
+        .timeout(const Duration(seconds: 15));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return;
+    throw Exception(body['error']?.toString() ?? 'Erreur changement PIN (${resp.statusCode})');
+  }
+
+  // Client-side: unlock a PIN-gated card. PIN is the client's own secret,
+  // never seen by the agent.
+  static Future<({String redeemLink, String redeemId})> claimCardWithPin({
+    required String phone,
+    required String cardToken,
+    required String pin,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/cards/claim-with-pin'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'phone': phone, 'card_token': cardToken, 'pin': pin}),
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) {
+      final link = body['redeemLink']?.toString();
+      final rid  = body['redeemId']?.toString();
+      if (link == null || link.isEmpty || rid == null || rid.isEmpty) {
+        throw Exception('Lien de carte indisponible');
+      }
+      return (redeemLink: link, redeemId: rid);
+    }
+    throw Exception(body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
 }
 
 // ============================================
@@ -1501,18 +1880,25 @@ class _HomeScreenState extends State<HomeScreen>
     final cardToken    = c['cardToken']?.toString();
     final holderName   = c['holderName']?.toString() ?? UserProfile.name;
     final cardValue    = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
+    final requiresPin  = c['requiresPin'] == true;
     final requiresCode = c['requiresCode'] == true;
 
-    // Locked path: backend hid both redeemLink and redeemId. Prompt for the
-    // 4-digit secret the agent shared out-of-band, then exchange it for both.
+    // Locked path: backend hid both redeemLink and redeemId. Two unlock paths:
+    //  - PIN flow (new): /cards/claim-with-pin with the user's own PIN.
+    //  - Code flow (legacy): /cards/claim-with-code with a 4-digit code the
+    //    agent shared out-of-band.
     String? link     = c['redeemLink']?.toString();
     String? redeemId = c['redeemId']?.toString();
 
-    if (requiresCode || link == null || link.isEmpty || redeemId == null || redeemId.isEmpty) {
+    if (requiresPin || requiresCode ||
+        link == null || link.isEmpty || redeemId == null || redeemId.isEmpty) {
       final phone = UserProfile.phone.trim();
       if (phone.isEmpty || cardToken == null || cardToken.isEmpty) return;
-      final unlocked = await _promptClaimCodeAndFetch(
-          phone: phone, cardToken: cardToken, cardValue: cardValue);
+      final unlocked = requiresPin
+          ? await _promptPinAndFetch(
+              phone: phone, cardToken: cardToken, cardValue: cardValue)
+          : await _promptClaimCodeAndFetch(
+              phone: phone, cardToken: cardToken, cardValue: cardValue);
       if (unlocked == null) return; // user cancelled or kept failing
       link = unlocked.redeemLink;
       redeemId = unlocked.redeemId;
@@ -1551,6 +1937,100 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
     );
+  }
+
+  // Prompts the user for their own Tchipa PIN (set at install via PinSetup),
+  // exchanges it via /cards/claim-with-pin. PIN is never shared with the
+  // agent, so even a malicious agent who has phone+card_token can't claim.
+  Future<({String redeemLink, String redeemId})?> _promptPinAndFetch({
+    required String phone,
+    required String cardToken,
+    required double cardValue,
+  }) async {
+    final ctrl = TextEditingController();
+    String? errorMsg;
+    bool busy = false;
+    ({String redeemLink, String redeemId})? result;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
+        Future<void> submit() async {
+          final pin = ctrl.text.trim();
+          if (!RegExp(r'^\d{4,6}$').hasMatch(pin)) {
+            setDlg(() => errorMsg = 'PIN: 4 à 6 chiffres');
+            return;
+          }
+          setDlg(() { busy = true; errorMsg = null; });
+          try {
+            final unlocked = await PayGateService.claimCardWithPin(
+                phone: phone, cardToken: cardToken, pin: pin);
+            result = unlocked;
+            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+          } catch (e) {
+            final msg = e.toString().replaceFirst('Exception: ', '');
+            setDlg(() { busy = false; errorMsg = msg; });
+            if (msg.toLowerCase().contains('trop de tentatives')) {
+              await Future<void>.delayed(const Duration(seconds: 2));
+              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
+            }
+          }
+        }
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Récupérer ta carte',
+              style: TextStyle(color: AppColors.label)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              'Une carte de \$${cardValue.toStringAsFixed(0)} t\'attend. '
+              'Entre ton PIN Tchipa pour la déverrouiller.',
+              style: TextStyle(color: AppColors.sublabel, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              enabled: !busy,
+              keyboardType: TextInputType.number,
+              obscureText: true,
+              textAlign: TextAlign.center,
+              maxLength: 6,
+              style: TextStyle(
+                  color: AppColors.inputFg,
+                  fontSize: 22,
+                  letterSpacing: 8,
+                  fontWeight: FontWeight.bold),
+              decoration: const InputDecoration(
+                counterText: '',
+                hintText: '••••',
+              ),
+              onSubmitted: (_) => submit(),
+            ),
+            if (errorMsg != null) ...[
+              const SizedBox(height: 8),
+              Text(errorMsg!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+            ],
+          ]),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.of(dialogCtx).pop(),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: busy ? null : submit,
+              child: busy
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Valider'),
+            ),
+          ],
+        );
+      }),
+    );
+    return result;
   }
 
   // Prompts the user for the 4-digit unlock code the agent shared
@@ -4153,6 +4633,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           borderRadius: BorderRadius.circular(12)),
       duration: const Duration(seconds: 2),
     ));
+    // First save with phone+email but no PIN yet → walk the user through
+    // setup immediately. Agent transactions require a verified PIN, so
+    // surfacing this proactively avoids "ton PIN n'est pas configuré"
+    // surprises later.
+    if (!UserProfile.pinSet &&
+        UserProfile.phone.trim().isNotEmpty &&
+        UserProfile.email.trim().isNotEmpty) {
+      await PinSetup.run(context);
+      if (mounted) setState(() {});
+    }
   }
 
   @override
@@ -4221,7 +4711,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     v?.trim().isEmpty == true ? 'Requis' : null,
               ),
               const SizedBox(height: 16),
-              const _FieldLabel('Email (optionnel)'),
+              const _FieldLabel('Email *'),
               TextFormField(
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
@@ -4230,6 +4720,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   hintText: 'vous@email.com',
                   hintStyle: TextStyle(color: AppColors.hint),
                 ),
+                validator: (v) {
+                  final s = v?.trim() ?? '';
+                  if (s.isEmpty) return 'Requis';
+                  if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(s)) return 'Email invalide';
+                  return null;
+                },
               ),
               const SizedBox(height: 32),
               _gradientBtn(
@@ -4297,6 +4793,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   thumbColor: WidgetStateProperty.all(const Color(0xFF00D4FF)),
                   trackColor: WidgetStateProperty.all(const Color(0xFF00D4FF).withValues(alpha: 0.3)),
                 ),
+              ),
+              const SizedBox(height: 10),
+              // — PIN de réception carte (gate /cards/claim-with-pin)
+              _SettingsTile(
+                icon: Icons.lock_outline_rounded,
+                title: UserProfile.pinSet
+                    ? 'Changer mon PIN Tchipa'
+                    : 'Configurer mon PIN Tchipa',
+                subtitle: UserProfile.pinSet
+                    ? 'PIN vérifié — seul toi peux récupérer les cartes envoyées à ton numéro.'
+                    : 'Obligatoire pour recevoir une carte d\'un agent. Email + PIN à 4 chiffres.',
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: Color(0xFF00D4FF)),
+                onTap: () async {
+                  if (UserProfile.phone.trim().isEmpty ||
+                      UserProfile.email.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Renseigne et enregistre ton téléphone + email d\'abord.'),
+                    ));
+                    return;
+                  }
+                  if (UserProfile.pinSet) {
+                    await PinSetup.changePinDialog(context);
+                  } else {
+                    await PinSetup.run(context);
+                  }
+                  if (mounted) setState(() {});
+                },
               ),
               const SizedBox(height: 20),
               GestureDetector(
@@ -4394,12 +4918,13 @@ class _SettingsTile extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget trailing;
+  final VoidCallback? onTap;
   const _SettingsTile({required this.icon, required this.title,
-      this.subtitle, required this.trailing});
+      this.subtitle, required this.trailing, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final tile = Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -4419,6 +4944,12 @@ class _SettingsTile extends StatelessWidget {
         ),
         trailing,
       ]),
+    );
+    if (onTap == null) return tile;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: tile,
     );
   }
 }
@@ -4489,6 +5020,7 @@ class _AgentScreenState extends State<AgentScreen>
   // Form
   final _phoneCtrl   = TextEditingController();
   final _nameCtrl    = TextEditingController();
+  final _emailCtrl   = TextEditingController();
   final _customCtrl  = TextEditingController();
   bool _isRecharge   = false;
   double _amount     = 7.0;
@@ -4533,6 +5065,7 @@ class _AgentScreenState extends State<AgentScreen>
     _shakeCtrl.dispose();
     _phoneCtrl.dispose();
     _nameCtrl.dispose();
+    _emailCtrl.dispose();
     _customCtrl.dispose();
     super.dispose();
   }
@@ -4650,12 +5183,17 @@ class _AgentScreenState extends State<AgentScreen>
   Future<void> _confirm() async {
     final phone = _phoneCtrl.text.trim();
     final name  = _nameCtrl.text.trim();
-    if (phone.isEmpty || name.isEmpty) {
-      setState(() => _error = 'Téléphone et nom requis');
+    final email = _emailCtrl.text.trim();
+    if (phone.isEmpty || name.isEmpty || email.isEmpty) {
+      setState(() => _error = 'Téléphone, nom et email du client requis');
       return;
     }
     if (!RegExp(r'^\+?\d[\d\s\-]{5,}$').hasMatch(phone)) {
       setState(() => _error = 'Numéro invalide (format: +213 555 123 456)');
+      return;
+    }
+    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      setState(() => _error = 'Email client invalide');
       return;
     }
     setState(() { _loading = true; _error = null; });
@@ -4666,6 +5204,7 @@ class _AgentScreenState extends State<AgentScreen>
         phone: phone,
         flow: _isRecharge ? 'recharge' : 'activation',
         source: 'agent',
+        clientEmail: email,
       );
       final token = order.agentOrderToken;
       if (token == null || token.isEmpty) {
@@ -4703,6 +5242,7 @@ class _AgentScreenState extends State<AgentScreen>
         _error = null;
         _phoneCtrl.clear();
         _nameCtrl.clear();
+        _emailCtrl.clear();
         _customCtrl.clear();
         _isRecharge = false;
         _customMode = false;
@@ -4938,6 +5478,31 @@ class _AgentScreenState extends State<AgentScreen>
             decoration: InputDecoration(
               hintText: 'Prénom Nom',
               hintStyle: TextStyle(color: AppColors.hint),
+              filled: true,
+              fillColor: AppColors.card,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide:
+                      const BorderSide(color: Color(0xFF00D4FF))),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _FieldLabel('Email du client *'),
+          TextField(
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            autocorrect: false,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'client@email.com',
+              hintStyle: TextStyle(color: AppColors.hint),
+              helperText: 'Doit être l\'email que le client a vérifié dans son app Tchipa.',
+              helperStyle: TextStyle(color: AppColors.textDim, fontSize: 11),
               filled: true,
               fillColor: AppColors.card,
               border: OutlineInputBorder(

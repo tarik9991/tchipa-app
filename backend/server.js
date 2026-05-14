@@ -57,6 +57,27 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_agent_phone  ON agent_orders(phone);
   CREATE INDEX IF NOT EXISTS idx_agent_status ON agent_orders(status);
+
+  -- Client-owned PIN, tied to a verified email. Set ONCE at install time,
+  -- before any agent transaction. The PIN is the secret that gates
+  -- /cards/claim-with-pin; the email is the trust anchor that an agent
+  -- must repeat at order time so a phone-only squat is ineffective.
+  CREATE TABLE IF NOT EXISTS user_pins (
+    phone           TEXT PRIMARY KEY,        -- normalizePhone()
+    pin_hash        TEXT NOT NULL,           -- scrypt(pin, salt)
+    pin_salt        TEXT NOT NULL,           -- hex
+    email           TEXT,                    -- plain, lowercased; needed to send magic link
+    email_hash      TEXT,                    -- sha256(lowercased) — what /paygate/create-vcc matches against
+    device_id       TEXT,                    -- first device that completed setup; informational
+    verified        INTEGER NOT NULL DEFAULT 0,  -- 1 once the magic link was clicked
+    verify_token    TEXT,                    -- one-shot, cleared on verify or expiry
+    verify_expires  TEXT,                    -- ISO; rows past expiry can re-setup
+    pin_attempts    INTEGER NOT NULL DEFAULT 0,  -- global wrong-pin counter; UI can show lockout
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_pin_email ON user_pins(email_hash);
+  CREATE INDEX IF NOT EXISTS idx_user_pin_token ON user_pins(verify_token);
 `);
 
 // In-place migration for existing DBs created before these columns existed.
@@ -77,13 +98,86 @@ db.exec(`
     db.exec("ALTER TABLE agent_orders ADD COLUMN agent_order_token TEXT");
     console.log('[db] migrated: agent_orders.agent_order_token added');
   }
+  if (!cols.includes('protected_by_pin')) {
+    db.exec("ALTER TABLE agent_orders ADD COLUMN protected_by_pin INTEGER NOT NULL DEFAULT 0");
+    console.log('[db] migrated: agent_orders.protected_by_pin added');
+  }
 }
 db.exec("CREATE INDEX IF NOT EXISTS idx_agent_token ON agent_orders(agent_order_token)");
 
 // Cryptographically random UUID v4 — used as the agent's opaque order handle
 // so the agent's app never sees the underlying redeem_id (which would let
 // them call /paygate/check-status directly and bypass the claim-code gate).
-const { randomUUID } = require('crypto');
+const { randomUUID, scryptSync, randomBytes, createHash, timingSafeEqual } = require('crypto');
+
+// PIN hashing: scrypt with per-row salt. Stored as hex; verifyPin uses
+// timing-safe compare so wrong-PIN response time doesn't leak structure.
+const PIN_HASH_BYTES = 32;
+function hashPin(pin, saltHex) {
+  return scryptSync(String(pin), Buffer.from(saltHex, 'hex'), PIN_HASH_BYTES).toString('hex');
+}
+function verifyPin(pin, saltHex, expectedHex) {
+  const got = Buffer.from(hashPin(pin, saltHex), 'hex');
+  const exp = Buffer.from(expectedHex, 'hex');
+  if (got.length !== exp.length) return false;
+  return timingSafeEqual(got, exp);
+}
+function normalizeEmail(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  // RFC-lite check — good enough for "is this plausibly an address"
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return null;
+  return s;
+}
+function hashEmail(emailNorm) {
+  return createHash('sha256').update(emailNorm).digest('hex');
+}
+
+// Magic-link email. Uses Brevo HTTP API (free 300/day, no SMTP setup) when
+// BREVO_API_KEY is set; otherwise just logs the link to PM2 so the operator
+// can ship the link manually during initial setup.
+const APP_BASE_URL    = process.env.APP_BASE_URL || 'http://76.13.255.239:3000';
+const MAIL_FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'no-reply@tchipa.co.uk';
+const MAIL_FROM_NAME  = process.env.MAIL_FROM_NAME  || 'Tchipa';
+async function sendMagicLinkEmail(toEmail, token) {
+  const link = `${APP_BASE_URL}/auth/verify-email?token=${encodeURIComponent(token)}`;
+  const key = process.env.BREVO_API_KEY;
+  if (!key) {
+    console.log(`[mailer] BREVO_API_KEY missing — magic link for ${toEmail}: ${link}`);
+    return { ok: true, transport: 'log', link };
+  }
+  try {
+    const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'api-key': key,
+      },
+      body: JSON.stringify({
+        sender:  { email: MAIL_FROM_EMAIL, name: MAIL_FROM_NAME },
+        to:      [{ email: toEmail }],
+        subject: 'Tchipa — confirme ton email',
+        htmlContent:
+          `<p>Bonjour,</p>` +
+          `<p>Confirme ton email pour finaliser la création de ton PIN Tchipa :</p>` +
+          `<p><a href="${link}">Confirmer mon email</a></p>` +
+          `<p>Le lien expire dans 24h. Si tu n'es pas à l'origine de cette demande, ignore ce message.</p>` +
+          `<p>— Tchipa</p>`,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      console.error('[mailer] Brevo error', resp.status, txt.slice(0, 200));
+      return { ok: false, transport: 'brevo', error: 'mail_send_failed' };
+    }
+    return { ok: true, transport: 'brevo' };
+  } catch (e) {
+    console.error('[mailer] Brevo throw', e.message);
+    return { ok: false, transport: 'brevo', error: e.message };
+  }
+}
 
 // Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.
 // '+213 555-12 34 56' → '+213555123456'. Used by both write (agent) and read (client).
@@ -99,7 +193,133 @@ function normalizePhone(raw) {
 console.log('[db] Orders DB ready at', DB_PATH);
 
 
+// ============================================================
+// /auth/* — client PIN setup + email magic-link verification
+// ============================================================
+// Threat model fixed here: an agent who knows the redeem_id (or the 4-digit
+// claim_code, since the agent reads it on their screen) can steal the card
+// before the client. The new flow moves the secret to the client: a PIN set
+// at install time, bound to a verified email, and the agent must repeat the
+// client's email at order time. Email is the trust anchor — squatting a
+// phone with a stranger's email then breaks at /paygate/create-vcc's
+// email-match check.
 
+const PIN_RE = /^\d{4,6}$/; // 4–6 digits is enough for a memorable secret
+const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+// POST /auth/setup-pin { phone, email, pin, device_id? }
+// First-time setup OR re-setup of an unverified/expired row. If a verified
+// row already exists for this phone, we refuse — the user must use
+// /auth/change-pin (which requires the old PIN) or contact support to reset.
+app.post('/auth/setup-pin', async (req, res) => {
+  const { phone, email, pin, device_id } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  const normEmail = normalizeEmail(email);
+  if (!normPhone) return res.status(400).json({ error: 'Téléphone invalide' });
+  if (!normEmail) return res.status(400).json({ error: 'Email invalide' });
+  if (!pin || !PIN_RE.test(String(pin))) {
+    return res.status(400).json({ error: 'PIN invalide (4 à 6 chiffres)' });
+  }
+
+  const existing = db.prepare('SELECT verified, verify_expires FROM user_pins WHERE phone = ?').get(normPhone);
+  const stillPendingValid = existing && !existing.verified
+    && existing.verify_expires && new Date(existing.verify_expires).getTime() > Date.now();
+  if (existing && existing.verified) {
+    return res.status(409).json({ error: 'PIN_ALREADY_SET', message: 'PIN déjà configuré pour ce numéro.' });
+  }
+
+  const salt    = randomBytes(16).toString('hex');
+  const pinHash = hashPin(String(pin), salt);
+  const emailHash = hashEmail(normEmail);
+  const token = randomUUID();
+  const expires = new Date(Date.now() + VERIFY_TOKEN_TTL_MS).toISOString();
+
+  if (existing) {
+    db.prepare(`
+      UPDATE user_pins
+         SET pin_hash=?, pin_salt=?, email=?, email_hash=?, device_id=?,
+             verified=0, verify_token=?, verify_expires=?,
+             pin_attempts=0, updated_at=datetime('now')
+       WHERE phone=?
+    `).run(pinHash, salt, normEmail, emailHash, device_id || null, token, expires, normPhone);
+  } else {
+    db.prepare(`
+      INSERT INTO user_pins
+        (phone, pin_hash, pin_salt, email, email_hash, device_id,
+         verified, verify_token, verify_expires)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+    `).run(normPhone, pinHash, salt, normEmail, emailHash, device_id || null, token, expires);
+  }
+
+  const mail = await sendMagicLinkEmail(normEmail, token);
+  console.log(`[/auth/setup-pin] phone=${normPhone} email=${normEmail} mail=${mail.transport} ok=${mail.ok}${stillPendingValid ? ' (re-setup before expiry)' : ''}`);
+  // On success we never echo the token in the response — only the email
+  // inbox controller can prove they hold the address.
+  return res.json({ ok: true, pendingVerification: true, mailTransport: mail.transport });
+});
+
+// GET /auth/verify-email?token=...
+// Magic link landing. Marks the row verified and shows a simple HTML page.
+app.get('/auth/verify-email', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send('Token manquant');
+  const row = db.prepare(
+    'SELECT phone, verify_expires FROM user_pins WHERE verify_token = ?'
+  ).get(String(token));
+  if (!row) {
+    return res.status(404).send('<h1>Lien invalide</h1><p>Ce lien a déjà été utilisé ou n\'existe pas.</p>');
+  }
+  if (row.verify_expires && new Date(row.verify_expires).getTime() < Date.now()) {
+    return res.status(410).send('<h1>Lien expiré</h1><p>Recommence le setup PIN depuis l\'app Tchipa.</p>');
+  }
+  db.prepare(`
+    UPDATE user_pins
+       SET verified=1, verify_token=NULL, verify_expires=NULL, updated_at=datetime('now')
+     WHERE phone=?
+  `).run(row.phone);
+  console.log(`[/auth/verify-email] verified phone=${row.phone}`);
+  return res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Tchipa — Email vérifié</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:-apple-system,Segoe UI,sans-serif;background:#0a0e1a;color:#fff;text-align:center;padding:60px 24px}
+    .ok{color:#22D3A1;font-size:64px}h1{margin:16px 0 8px}p{color:#9ca3af}</style></head>
+    <body><div class="ok">✓</div><h1>Email vérifié</h1><p>Retourne dans l'app Tchipa pour continuer.</p></body></html>`);
+});
+
+// GET /auth/pin-status?phone=+213...
+// Used by the client app to poll whether the email has been verified yet.
+app.get('/auth/pin-status', (req, res) => {
+  const normPhone = normalizePhone(req.query.phone);
+  if (!normPhone) return res.status(400).json({ error: 'Téléphone invalide' });
+  const row = db.prepare(
+    'SELECT verified, email FROM user_pins WHERE phone = ?'
+  ).get(normPhone);
+  if (!row) return res.json({ exists: false, verified: false });
+  return res.json({ exists: true, verified: !!row.verified, email: row.email });
+});
+
+// POST /auth/change-pin { phone, old_pin, new_pin }
+app.post('/auth/change-pin', (req, res) => {
+  const { phone, old_pin, new_pin } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  if (!normPhone) return res.status(400).json({ error: 'Téléphone invalide' });
+  if (!new_pin || !PIN_RE.test(String(new_pin))) {
+    return res.status(400).json({ error: 'Nouveau PIN invalide (4 à 6 chiffres)' });
+  }
+  const row = db.prepare(
+    'SELECT pin_hash, pin_salt, verified FROM user_pins WHERE phone = ?'
+  ).get(normPhone);
+  if (!row || !row.verified) return res.status(404).json({ error: 'PIN_NOT_SET' });
+  if (!verifyPin(String(old_pin || ''), row.pin_salt, row.pin_hash)) {
+    return res.status(403).json({ error: 'Ancien PIN incorrect' });
+  }
+  const salt = randomBytes(16).toString('hex');
+  const pinHash = hashPin(String(new_pin), salt);
+  db.prepare(`
+    UPDATE user_pins SET pin_hash=?, pin_salt=?, pin_attempts=0, updated_at=datetime('now')
+     WHERE phone=?
+  `).run(pinHash, salt, normPhone);
+  return res.json({ ok: true });
+});
 
 
 // ---------------------------------------------------------------------------
@@ -345,10 +565,34 @@ const TCHIPA_MARGIN = 0.10; // 10% majoration sur le prix PayGate
 // cardType: 'mastercard' (5-499 USD) | 'visa' (5-1000 USD) | 'paypal' (5-1000 USD)
 // flow (only with phone): 'activation' (default) | 'recharge'
 app.post('/paygate/create-vcc', async (req, res) => {
-  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress, flow, source } = req.body || {};
+  const { amount, cardType = 'mastercard', holderName, phone, paypalEmail, fromAddress, flow, source, clientEmail } = req.body || {};
   const parsed = parseFloat(amount);
   if (!parsed || isNaN(parsed) || parsed < 5) {
     return res.status(400).json({ error: 'amount doit etre >= 5 USD' });
+  }
+
+  // Agent flow: gate creation on the client having a verified PIN+email
+  // that matches what the agent typed. We fail BEFORE hitting PayGate so
+  // a bad email doesn't burn an order / a USDT round-trip.
+  const normPhonePre = normalizePhone(phone);
+  let pinRow = null;
+  if (normPhonePre && source === 'agent') {
+    const inputEmail = normalizeEmail(clientEmail);
+    if (!inputEmail) {
+      return res.status(400).json({ error: 'CLIENT_EMAIL_REQUIRED', message: 'Email du client requis (le client doit l\'avoir configuré dans son app).' });
+    }
+    pinRow = db.prepare(
+      'SELECT email_hash, verified FROM user_pins WHERE phone = ?'
+    ).get(normPhonePre);
+    if (!pinRow) {
+      return res.status(400).json({ error: 'CLIENT_NO_PIN', message: 'Le client doit installer Tchipa et configurer son PIN avant que tu crées la commande.' });
+    }
+    if (!pinRow.verified) {
+      return res.status(400).json({ error: 'CLIENT_EMAIL_NOT_VERIFIED', message: 'Le client n\'a pas encore confirmé son email. Demande-lui de cliquer le lien reçu.' });
+    }
+    if (pinRow.email_hash !== hashEmail(inputEmail)) {
+      return res.status(400).json({ error: 'PHONE_EMAIL_MISMATCH', message: 'Ce numéro est lié à un autre email. Vérifie l\'email auprès du client.' });
+    }
   }
   // Validation optionnelle de fromAddress (adresse Ethereum)
   let fromAddr = null;
@@ -388,23 +632,33 @@ app.post('/paygate/create-vcc', async (req, res) => {
     // challenge via /paygate/check-status).
     //
     // source: 'self' → skip insert. 'agent' or missing (legacy clients) → insert.
+    // source='agent' with a verified PIN row (pinRow != null) → protected_by_pin path,
+    // no claim_code generated (the client's own PIN is the secret).
+    // source missing (legacy app build) → fall back to claim_code flow so we
+    // don't brick older clients that don't know about PINs yet.
     const normPhone = normalizePhone(phone);
     const isAgentBridge = !!normPhone && source !== 'self';
     let claimCode = null;
     let agentOrderToken = null;
+    let protectedByPin = 0;
     if (isAgentBridge) {
-      claimCode       = String(Math.floor(1000 + Math.random() * 9000));
       agentOrderToken = randomUUID();
+      if (source === 'agent' && pinRow) {
+        protectedByPin = 1; // PIN gate, no per-order code
+      } else {
+        claimCode = String(Math.floor(1000 + Math.random() * 9000));
+      }
       try {
         db.prepare(`
           INSERT INTO agent_orders
-            (redeem_id, phone, holder_name, amount_usd, flow, status, claim_code, agent_order_token)
-          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+            (redeem_id, phone, holder_name, amount_usd, flow, status, claim_code, agent_order_token, protected_by_pin)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
         `).run(data.redeem_id, normPhone, holderName || null,
                parseFloat(String(data.card_value || parsed)),
                flow === 'recharge' ? 'recharge' : 'activation',
-               claimCode, agentOrderToken);
-        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone + ' (code+token set)');
+               claimCode, agentOrderToken, protectedByPin);
+        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone +
+          (protectedByPin ? ' (pin-gated)' : ' (code-gated, legacy)'));
       } catch (e) {
         console.error('[/paygate/create-vcc] agent_orders insert error:', e.message);
       }
@@ -557,32 +811,34 @@ app.get('/cards/for-phone/:phone', async (req, res) => {
 
   const rows = db.prepare(`
     SELECT redeem_id, holder_name, amount_usd, flow, redeem_link,
-           created_at, delivered_at, claim_code, agent_order_token
+           created_at, delivered_at, claim_code, agent_order_token, protected_by_pin
       FROM agent_orders
      WHERE phone = ? AND status = 'completed' AND redeem_link IS NOT NULL
      ORDER BY created_at DESC
   `).all(phone);
 
-  // Locked cards (agent flow, code not yet validated) expose ONLY an opaque
-  // cardToken — not redeem_id, not redeem_link. The app must call
-  // /cards/claim-with-code with the 4-digit secret to obtain both. This way,
-  // someone who only knows the victim's phone can see "a card awaits" but
-  // gets no material that could be used against /paygate/check-status.
-  // Delivered or non-code-gated rows (legacy) keep redeemId exposed so the
-  // legitimate device can still mark-delivered / re-display.
+  // Locked cards (agent flow, secret not yet validated) expose ONLY an
+  // opaque cardToken — not redeem_id, not redeem_link. Two lock modes:
+  //   - PIN-gated (protected_by_pin=1) → unlock via /cards/claim-with-pin
+  //   - Code-gated (legacy, claim_code set) → unlock via /cards/claim-with-code
+  // Delivered rows keep redeemId exposed so the legitimate device can
+  // mark-delivered / re-display.
   return res.json({
     phone,
     count: rows.length,
     cards: rows.map(r => {
-      const locked = !!r.claim_code && !r.delivered_at;
+      const pinLocked  = !!r.protected_by_pin && !r.delivered_at;
+      const codeLocked = !pinLocked && !!r.claim_code && !r.delivered_at;
+      const locked     = pinLocked || codeLocked;
       return {
         redeemId:     locked ? null : r.redeem_id,
-        cardToken:    r.agent_order_token, // null for legacy rows without a token
+        cardToken:    r.agent_order_token,
         holderName:   r.holder_name,
         cardValue:    r.amount_usd,
         flow:         r.flow,
         redeemLink:   locked ? null : r.redeem_link,
-        requiresCode: locked,
+        requiresPin:  pinLocked,
+        requiresCode: codeLocked,
         createdAt:    r.created_at,
         delivered:    !!r.delivered_at,
       };
@@ -659,6 +915,60 @@ app.post('/cards/claim-with-code', (req, res) => {
   db.prepare(`
     UPDATE agent_orders
        SET claim_code = NULL, updated_at = datetime('now')
+     WHERE redeem_id = ?
+  `).run(row.redeem_id);
+  return res.json({ redeemLink: row.redeem_link, redeemId: row.redeem_id });
+});
+
+// POST /cards/claim-with-pin { phone, card_token, pin }
+// Unlocks a PIN-protected agent order. The PIN is the client's own secret
+// (set at install via /auth/setup-pin), so even a malicious agent — who has
+// the phone and the card_token — cannot claim. Lockout shared with the
+// code path via agent_orders.claim_attempts.
+app.post('/cards/claim-with-pin', (req, res) => {
+  const { phone, card_token, pin } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  if (!normPhone || !card_token || !pin) {
+    return res.status(400).json({ error: 'phone, card_token et pin requis' });
+  }
+  const row = db.prepare(`
+    SELECT redeem_id, phone, redeem_link, claim_attempts, delivered_at,
+           protected_by_pin
+      FROM agent_orders
+     WHERE agent_order_token = ?
+  `).get(String(card_token));
+  if (!row || row.phone !== normPhone) {
+    return res.status(404).json({ error: 'Commande introuvable' });
+  }
+  if (!row.protected_by_pin) {
+    return res.status(409).json({ error: 'Cette carte n\'utilise pas le PIN' });
+  }
+  if (!row.redeem_link) {
+    return res.status(409).json({ error: 'Carte pas encore prete' });
+  }
+  if (row.claim_attempts >= CLAIM_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Trop de tentatives. Contacte le support.' });
+  }
+  const userRow = db.prepare(
+    'SELECT pin_hash, pin_salt, verified FROM user_pins WHERE phone = ?'
+  ).get(normPhone);
+  if (!userRow || !userRow.verified) {
+    return res.status(409).json({ error: 'PIN non configuré pour ce numéro' });
+  }
+  if (!verifyPin(String(pin), userRow.pin_salt, userRow.pin_hash)) {
+    db.prepare(`
+      UPDATE agent_orders
+         SET claim_attempts = claim_attempts + 1, updated_at = datetime('now')
+       WHERE redeem_id = ?
+    `).run(row.redeem_id);
+    const remaining = Math.max(0, CLAIM_MAX_ATTEMPTS - (row.claim_attempts + 1));
+    return res.status(403).json({ error: 'PIN invalide', attemptsRemaining: remaining });
+  }
+  // Clear the protection flag so subsequent reads of /cards/for-phone return
+  // the link directly (the legitimate device can re-display after restart).
+  db.prepare(`
+    UPDATE agent_orders
+       SET protected_by_pin = 0, claim_attempts = 0, updated_at = datetime('now')
      WHERE redeem_id = ?
   `).run(row.redeem_id);
   return res.json({ redeemLink: row.redeem_link, redeemId: row.redeem_id });

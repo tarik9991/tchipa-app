@@ -148,14 +148,21 @@ class VccCard {
 // VCC ORDER (pending crypto payment)
 // ============================================
 class VccOrder {
+  // For self-serve: the redeem_id returned by PayGate, used to poll
+  // /paygate/check-status. For agent flow: empty — the agent app must use
+  // agentOrderToken instead (backend deliberately hides the redeem_id from
+  // agents).
   final String redeemId;
   final String cryptoAddress;
   final String amountUsdt;
   final String? qrCodeBase64;
   final double cardValue;
   final String cardType;
+  // Agent-flow only: opaque UUID the agent uses to poll order status without
+  // ever learning the underlying redeem_id.
+  final String? agentOrderToken;
   // Agent-flow only: 4-digit secret returned by the backend on creation.
-  // Agent must relay it out-of-band (Telegram) to the user so the user's
+  // Agent must relay it out-of-band (Telegram, SMS, voice) so the user's
   // app can unlock the redeem link via /cards/claim-with-code.
   final String? claimCode;
 
@@ -166,27 +173,30 @@ class VccOrder {
     required this.cardValue,
     required this.cardType,
     this.qrCodeBase64,
+    this.agentOrderToken,
     this.claimCode,
   });
 
   factory VccOrder.fromJson(Map<String, dynamic> j) => VccOrder(
-        redeemId:      j['redeemId']?.toString() ?? '',
-        cryptoAddress: j['cryptoAddress']?.toString() ?? '',
-        amountUsdt:    j['amountUsdt']?.toString() ?? '0',
-        cardValue:     (j['cardValue'] as num?)?.toDouble() ?? 0.0,
-        cardType:      j['cardType']?.toString() ?? 'mastercard',
-        qrCodeBase64:  j['qrCode']?.toString(),
-        claimCode:     j['claimCode']?.toString(),
+        redeemId:        j['redeemId']?.toString() ?? '',
+        cryptoAddress:   j['cryptoAddress']?.toString() ?? '',
+        amountUsdt:      j['amountUsdt']?.toString() ?? '0',
+        cardValue:       (j['cardValue'] as num?)?.toDouble() ?? 0.0,
+        cardType:        j['cardType']?.toString() ?? 'mastercard',
+        qrCodeBase64:    j['qrCode']?.toString(),
+        agentOrderToken: j['agentOrderToken']?.toString(),
+        claimCode:       j['claimCode']?.toString(),
       );
 
   Map<String, dynamic> toJson() => {
-        'redeemId':      redeemId,
-        'cryptoAddress': cryptoAddress,
-        'amountUsdt':    amountUsdt,
-        'cardValue':     cardValue,
-        'cardType':      cardType,
-        'qrCode':        qrCodeBase64,
-        'claimCode':     claimCode,
+        'redeemId':        redeemId,
+        'cryptoAddress':   cryptoAddress,
+        'amountUsdt':      amountUsdt,
+        'cardValue':       cardValue,
+        'cardType':        cardType,
+        'qrCode':          qrCodeBase64,
+        'agentOrderToken': agentOrderToken,
+        'claimCode':       claimCode,
       };
 
   // Pending order persistence — one slot per flow ('activation'|'recharge')
@@ -358,12 +368,15 @@ class PayGateService {
     throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
   }
 
-  // Agent-side: coarse state only, NO redeem_link (anti-card-theft).
+  // Agent-side: coarse state only, NO redeem_link (anti-card-theft). Uses
+  // an opaque token rather than redeem_id — the agent never learns the
+  // underlying redeem_id, so they can't bypass the gate by hitting
+  // /paygate/check-status directly.
   // Returns: { state: 'pending'|'paid'|'completed', isPaid, isReady, delivered }
-  static Future<Map<String, dynamic>> checkAgentOrderStatus(String redeemId) async {
+  static Future<Map<String, dynamic>> checkAgentOrderStatus(String token) async {
     final resp = await http
         .get(Uri.parse(
-            '$kVpsBase/agent/order-status?redeem_id=${Uri.encodeComponent(redeemId)}'))
+            '$kVpsBase/agent/order-status?token=${Uri.encodeComponent(token)}'))
         .timeout(const Duration(seconds: 20));
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     if (resp.statusCode == 200) return body;
@@ -386,11 +399,12 @@ class PayGateService {
   }
 
   // Client-side: unlock the redeem link for a code-gated agent card.
-  // Returns the redeemLink on success. Throws on bad code / lockout / not-ready
-  // with a human-readable French error from the backend.
-  static Future<String> claimCardWithCode({
+  // Returns (redeemLink, redeemId) on success — the redeemId is needed so the
+  // client can later mark the card as delivered. Throws on bad code / lockout
+  // / not-ready with a human-readable French error from the backend.
+  static Future<({String redeemLink, String redeemId})> claimCardWithCode({
     required String phone,
-    required String redeemId,
+    required String cardToken,
     required String code,
   }) async {
     final resp = await http
@@ -399,7 +413,7 @@ class PayGateService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'phone': phone,
-            'redeem_id': redeemId,
+            'card_token': cardToken,
             'code': code,
           }),
         )
@@ -407,10 +421,11 @@ class PayGateService {
     final body = jsonDecode(resp.body) as Map<String, dynamic>;
     if (resp.statusCode == 200) {
       final link = body['redeemLink']?.toString();
-      if (link == null || link.isEmpty) {
+      final rid  = body['redeemId']?.toString();
+      if (link == null || link.isEmpty || rid == null || rid.isEmpty) {
         throw Exception('Lien de carte indisponible');
       }
-      return link;
+      return (redeemLink: link, redeemId: rid);
     }
     throw Exception(body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
   }
@@ -460,7 +475,10 @@ class AgentPin {
 enum AgentOrderState { pending, paid, completed }
 
 class AgentOrder {
-  final String redeemId;
+  // Opaque token the backend issues. Replaces redeem_id in the agent surface
+  // so the agent cannot bypass /cards/claim-with-code by manually hitting
+  // /paygate/check-status with the redeem_id (which they no longer ever see).
+  final String agentOrderToken;
   final String phone;
   final String holderName;
   final double amountUsd;
@@ -474,7 +492,7 @@ class AgentOrder {
   final String? claimCode;
 
   const AgentOrder({
-    required this.redeemId,
+    required this.agentOrderToken,
     required this.phone,
     required this.holderName,
     required this.amountUsd,
@@ -487,7 +505,7 @@ class AgentOrder {
   });
 
   AgentOrder copyWith({AgentOrderState? state}) => AgentOrder(
-        redeemId: redeemId,
+        agentOrderToken: agentOrderToken,
         phone: phone,
         holderName: holderName,
         amountUsd: amountUsd,
@@ -500,7 +518,7 @@ class AgentOrder {
       );
 
   Map<String, dynamic> toJson() => {
-        'redeemId': redeemId,
+        'agentOrderToken': agentOrderToken,
         'phone': phone,
         'holderName': holderName,
         'amountUsd': amountUsd,
@@ -513,7 +531,7 @@ class AgentOrder {
       };
 
   factory AgentOrder.fromJson(Map<String, dynamic> j) => AgentOrder(
-        redeemId: j['redeemId']?.toString() ?? '',
+        agentOrderToken: j['agentOrderToken']?.toString() ?? '',
         phone: j['phone']?.toString() ?? '',
         holderName: j['holderName']?.toString() ?? '',
         amountUsd: (j['amountUsd'] as num?)?.toDouble() ?? 0.0,
@@ -1417,10 +1435,15 @@ class _HomeScreenState extends State<HomeScreen>
     _pollingAgent = true;
     try {
       final cards = await PayGateService.fetchCardsForPhone(phone);
-      // Pick the most recent card whose redeem_id is NOT the one already locally stored.
+      // Locked cards come back with redeemId=null + cardToken set; unlocked
+      // rows have redeemId set. Filter out the one we've already locally
+      // claimed (matched by redeemId) and surface the next candidate.
       final localRedeem = _card?.redeemId;
       final candidate = cards.firstWhere(
-        (c) => c['redeemId']?.toString() != localRedeem,
+        (c) {
+          final cRedeem = c['redeemId']?.toString();
+          return !(cRedeem != null && localRedeem != null && cRedeem == localRedeem);
+        },
         orElse: () => <String, dynamic>{},
       );
       if (candidate.isNotEmpty && mounted) {
@@ -1475,22 +1498,24 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _redeemAgentCard() async {
     final c = _pendingAgentCard;
     if (c == null) return;
-    final redeemId     = c['redeemId']?.toString();
+    final cardToken    = c['cardToken']?.toString();
     final holderName   = c['holderName']?.toString() ?? UserProfile.name;
     final cardValue    = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
     final requiresCode = c['requiresCode'] == true;
-    if (redeemId == null) return;
 
-    // Code-gated path: backend hid the redeemLink. Prompt for the 4-digit
-    // secret the agent shared out-of-band, then exchange it for the link.
-    String? link = c['redeemLink']?.toString();
-    if (requiresCode || link == null || link.isEmpty) {
+    // Locked path: backend hid both redeemLink and redeemId. Prompt for the
+    // 4-digit secret the agent shared out-of-band, then exchange it for both.
+    String? link     = c['redeemLink']?.toString();
+    String? redeemId = c['redeemId']?.toString();
+
+    if (requiresCode || link == null || link.isEmpty || redeemId == null || redeemId.isEmpty) {
       final phone = UserProfile.phone.trim();
-      if (phone.isEmpty) return;
+      if (phone.isEmpty || cardToken == null || cardToken.isEmpty) return;
       final unlocked = await _promptClaimCodeAndFetch(
-          phone: phone, redeemId: redeemId, cardValue: cardValue);
+          phone: phone, cardToken: cardToken, cardValue: cardValue);
       if (unlocked == null) return; // user cancelled or kept failing
-      link = unlocked;
+      link = unlocked.redeemLink;
+      redeemId = unlocked.redeemId;
     }
 
     final base = VccCard(
@@ -1505,17 +1530,19 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() { _card = base; _pendingAgentCard = null; });
 
     if (!mounted) return;
+    final unlockedLink = link;
+    final unlockedRedeem = redeemId;
     Navigator.push<void>(
       context,
       MaterialPageRoute(
         builder: (_) => CardWebViewScreen(
-          url: link!,
+          url: unlockedLink,
           title: 'Récupération carte…',
           onCardData: (number, cvv, expiry) async {
             final updated = base.copyWith(
                 cardNumber: number, cvv: cvv, expiry: expiry);
             await updated.save();
-            await PayGateService.markCardDelivered(redeemId);
+            await PayGateService.markCardDelivered(unlockedRedeem);
             if (mounted) {
               Navigator.of(context).pop();
               setState(() => _card = updated);
@@ -1530,15 +1557,15 @@ class _HomeScreenState extends State<HomeScreen>
   // (Telegram/SMS), exchanges it via /cards/claim-with-code, and returns the
   // redeem link. Returns null if the user cancels. Loops on wrong code until
   // backend lockout (then closes with the lockout error).
-  Future<String?> _promptClaimCodeAndFetch({
+  Future<({String redeemLink, String redeemId})?> _promptClaimCodeAndFetch({
     required String phone,
-    required String redeemId,
+    required String cardToken,
     required double cardValue,
   }) async {
     final ctrl = TextEditingController();
     String? errorMsg;
     bool busy = false;
-    String? result;
+    ({String redeemLink, String redeemId})? result;
 
     await showDialog<void>(
       context: context,
@@ -1552,9 +1579,9 @@ class _HomeScreenState extends State<HomeScreen>
           }
           setDlg(() { busy = true; errorMsg = null; });
           try {
-            final link = await PayGateService.claimCardWithCode(
-                phone: phone, redeemId: redeemId, code: code);
-            result = link;
+            final unlocked = await PayGateService.claimCardWithCode(
+                phone: phone, cardToken: cardToken, code: code);
+            result = unlocked;
             if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
           } catch (e) {
             final msg = e.toString().replaceFirst('Exception: ', '');
@@ -4597,7 +4624,7 @@ class _AgentScreenState extends State<AgentScreen>
     final c = _current;
     if (c == null) return;
     try {
-      final s = await PayGateService.checkAgentOrderStatus(c.redeemId);
+      final s = await PayGateService.checkAgentOrderStatus(c.agentOrderToken);
       final state = switch (s['state']) {
         'completed' => AgentOrderState.completed,
         'paid'      => AgentOrderState.paid,
@@ -4640,16 +4667,20 @@ class _AgentScreenState extends State<AgentScreen>
         flow: _isRecharge ? 'recharge' : 'activation',
         source: 'agent',
       );
+      final token = order.agentOrderToken;
+      if (token == null || token.isEmpty) {
+        throw Exception('Reponse backend invalide (token manquant)');
+      }
       final agentOrder = AgentOrder(
-        redeemId:      order.redeemId,
-        phone:         phone,
-        holderName:    name,
-        amountUsd:     order.cardValue,
-        flow:          _isRecharge ? 'recharge' : 'activation',
-        cryptoAddress: order.cryptoAddress,
-        amountUsdt:    order.amountUsdt,
-        createdAt:     DateTime.now(),
-        claimCode:     order.claimCode,
+        agentOrderToken: token,
+        phone:           phone,
+        holderName:      name,
+        amountUsd:       order.cardValue,
+        flow:            _isRecharge ? 'recharge' : 'activation',
+        cryptoAddress:   order.cryptoAddress,
+        amountUsdt:      order.amountUsdt,
+        createdAt:       DateTime.now(),
+        claimCode:       order.claimCode,
       );
       await agentOrder.save();
       if (!mounted) return;
@@ -5162,7 +5193,15 @@ class _AgentScreenState extends State<AgentScreen>
             const SizedBox(height: 12),
           ],
 
-          _infoCard('Redeem ID', o.redeemId, Icons.tag_rounded),
+          // Référence courte (8 premiers chars du token) — utile pour le SAV
+          // sans jamais exposer le redeem_id sous-jacent au PayGate.
+          _infoCard(
+            'Référence',
+            o.agentOrderToken.isEmpty
+                ? '—'
+                : o.agentOrderToken.substring(0, 8).toUpperCase(),
+            Icons.tag_rounded,
+          ),
 
           if (_error != null) ...[
             const SizedBox(height: 16),

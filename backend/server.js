@@ -41,25 +41,28 @@ db.exec(`
   -- Agents never see card details: redeem_link is only ever shared
   -- with the client device whose phone matches.
   CREATE TABLE IF NOT EXISTS agent_orders (
-    redeem_id      TEXT PRIMARY KEY,
-    phone          TEXT NOT NULL,
-    holder_name    TEXT,
-    amount_usd     REAL NOT NULL,
-    flow           TEXT NOT NULL DEFAULT 'activation', -- 'activation' | 'recharge'
-    status         TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'paid' | 'completed'
-    redeem_link    TEXT,
-    delivered_at   TEXT,                               -- set when client app has fetched it
-    claim_code     TEXT,                               -- 4-digit code, agent relays it to user out-of-band
-    claim_attempts INTEGER NOT NULL DEFAULT 0,         -- wrong-code attempts; locks at >= 5
-    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    redeem_id          TEXT PRIMARY KEY,
+    phone              TEXT NOT NULL,
+    holder_name        TEXT,
+    amount_usd         REAL NOT NULL,
+    flow               TEXT NOT NULL DEFAULT 'activation', -- 'activation' | 'recharge'
+    status             TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'paid' | 'completed'
+    redeem_link        TEXT,
+    delivered_at       TEXT,                               -- set when client app has fetched it
+    claim_code         TEXT,                               -- 4-digit code, agent relays it to user out-of-band
+    claim_attempts     INTEGER NOT NULL DEFAULT 0,         -- wrong-code attempts; locks at >= 5
+    agent_order_token  TEXT UNIQUE,                        -- opaque UUID exposed to agent in place of redeem_id
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_agent_phone  ON agent_orders(phone);
   CREATE INDEX IF NOT EXISTS idx_agent_status ON agent_orders(status);
 `);
 
-// In-place migration for existing DBs created before claim_code existed.
+// In-place migration for existing DBs created before these columns existed.
 // Inline PRAGMA check (no migration tool — see CLAUDE.md conventions).
+// Runs BEFORE the agent_order_token index creation, so a pre-existing table
+// without the column doesn't blow up at index-create time.
 {
   const cols = db.prepare("PRAGMA table_info(agent_orders)").all().map(c => c.name);
   if (!cols.includes('claim_code')) {
@@ -70,7 +73,17 @@ db.exec(`
     db.exec("ALTER TABLE agent_orders ADD COLUMN claim_attempts INTEGER NOT NULL DEFAULT 0");
     console.log('[db] migrated: agent_orders.claim_attempts added');
   }
+  if (!cols.includes('agent_order_token')) {
+    db.exec("ALTER TABLE agent_orders ADD COLUMN agent_order_token TEXT");
+    console.log('[db] migrated: agent_orders.agent_order_token added');
+  }
 }
+db.exec("CREATE INDEX IF NOT EXISTS idx_agent_token ON agent_orders(agent_order_token)");
+
+// Cryptographically random UUID v4 — used as the agent's opaque order handle
+// so the agent's app never sees the underlying redeem_id (which would let
+// them call /paygate/check-status directly and bypass the claim-code gate).
+const { randomUUID } = require('crypto');
 
 // Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.
 // '+213 555-12 34 56' → '+213555123456'. Used by both write (agent) and read (client).
@@ -378,31 +391,39 @@ app.post('/paygate/create-vcc', async (req, res) => {
     const normPhone = normalizePhone(phone);
     const isAgentBridge = !!normPhone && source !== 'self';
     let claimCode = null;
+    let agentOrderToken = null;
     if (isAgentBridge) {
-      claimCode = String(Math.floor(1000 + Math.random() * 9000));
+      claimCode       = String(Math.floor(1000 + Math.random() * 9000));
+      agentOrderToken = randomUUID();
       try {
         db.prepare(`
-          INSERT INTO agent_orders (redeem_id, phone, holder_name, amount_usd, flow, status, claim_code)
-          VALUES (?, ?, ?, ?, ?, 'pending', ?)
+          INSERT INTO agent_orders
+            (redeem_id, phone, holder_name, amount_usd, flow, status, claim_code, agent_order_token)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
         `).run(data.redeem_id, normPhone, holderName || null,
                parseFloat(String(data.card_value || parsed)),
                flow === 'recharge' ? 'recharge' : 'activation',
-               claimCode);
-        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone + ' (code set)');
+               claimCode, agentOrderToken);
+        console.log('[/paygate/create-vcc] agent_order recorded for phone=' + normPhone + ' (code+token set)');
       } catch (e) {
         console.error('[/paygate/create-vcc] agent_orders insert error:', e.message);
       }
     }
 
+    // For agent flow we deliberately omit redeem_id from the response — the
+    // agent only needs agentOrderToken to track status, and not knowing the
+    // redeem_id prevents them from calling /paygate/check-status directly
+    // (which would bypass the claim-code gate).
     return res.json({
-      redeemId:      data.redeem_id,
-      cryptoAddress: forwarder.getAddress(),
-      amountUsdt:    clientAmount.toFixed(6),
-      qrCode:        null,
-      cardValue:     parseFloat(String(data.card_value || parsed)),
-      cardCurrency:  data.card_currency || 'USD',
-      cardType:      provider,
-      holderName:    holderName || null,
+      redeemId:         isAgentBridge ? null : data.redeem_id,
+      agentOrderToken,  // null for self-serve
+      cryptoAddress:    forwarder.getAddress(),
+      amountUsdt:       clientAmount.toFixed(6),
+      qrCode:           null,
+      cardValue:        parseFloat(String(data.card_value || parsed)),
+      cardCurrency:     data.card_currency || 'USD',
+      cardType:         provider,
+      holderName:       holderName || null,
       claimCode,
     });
   } catch (err) {
@@ -443,11 +464,21 @@ async function fetchPayGateStatus(redeemId) {
   };
 }
 
-// GET /paygate/check-status?redeem_id=XXX  (client-side polling — full response with link)
+// GET /paygate/check-status?redeem_id=XXX  (self-serve client polling — full response with link)
+// Refuses to operate on redeem_ids that belong to an agent-flow order, so that
+// even a leaked redeem_id can't be turned into a redeem_link without going
+// through /cards/claim-with-code (which enforces the 4-digit gate).
 app.get('/paygate/check-status', async (req, res) => {
   const { redeem_id } = req.query;
   if (!redeem_id) return res.status(400).json({ error: 'Parametre redeem_id manquant' });
   console.log('[/paygate/check-status]', redeem_id);
+  const guarded = db.prepare(`
+    SELECT 1 FROM agent_orders
+     WHERE redeem_id = ? AND agent_order_token IS NOT NULL
+  `).get(String(redeem_id));
+  if (guarded) {
+    return res.status(403).json({ error: 'Cette carte doit etre recuperee via l app client (code requis).' });
+  }
   try {
     return res.json(await fetchPayGateStatus(String(redeem_id)));
   } catch (err) {
@@ -456,24 +487,50 @@ app.get('/paygate/check-status', async (req, res) => {
   }
 });
 
-// GET /agent/order-status?redeem_id=XXX
-// Same upstream call as /paygate/check-status but STRIPS redeem_link / paymentStatus,
-// returning only a coarse state. Used by the agent app — agents must never
-// receive card-recovery URLs (anti-theft).
+// GET /agent/order-status?token=UUID  (preferred — agent's opaque handle)
+// GET /agent/order-status?redeem_id=XXX  (legacy, only for rows without a token)
+// Strips redeem_link / paymentStatus regardless. Agents must never receive
+// card-recovery URLs, and the redeem_id itself is treated as a secret for
+// rows that have a token (otherwise the agent could just curl
+// /paygate/check-status to bypass the gate).
 app.get('/agent/order-status', async (req, res) => {
-  const { redeem_id } = req.query;
-  if (!redeem_id) return res.status(400).json({ error: 'Parametre redeem_id manquant' });
+  const { redeem_id, token } = req.query;
+  if (!redeem_id && !token) {
+    return res.status(400).json({ error: 'Parametre token (ou redeem_id legacy) requis' });
+  }
+  // Token path: look up the real redeem_id from the token.
+  let resolvedRedeemId = null;
+  let agentRow = null;
+  if (token) {
+    agentRow = db.prepare(`
+      SELECT redeem_id, phone, holder_name, delivered_at
+        FROM agent_orders WHERE agent_order_token = ?
+    `).get(String(token));
+    if (!agentRow) return res.status(404).json({ error: 'Commande introuvable' });
+    resolvedRedeemId = agentRow.redeem_id;
+  } else {
+    // Legacy redeem_id path — only allowed if no token is set on that row
+    // (otherwise we'd be re-exposing the secret we just hid from the agent).
+    agentRow = db.prepare(`
+      SELECT redeem_id, phone, holder_name, delivered_at, agent_order_token
+        FROM agent_orders WHERE redeem_id = ?
+    `).get(String(redeem_id));
+    if (agentRow && agentRow.agent_order_token) {
+      return res.status(403).json({ error: 'Utiliser le token' });
+    }
+    resolvedRedeemId = String(redeem_id);
+  }
   try {
-    const s = await fetchPayGateStatus(String(redeem_id));
-    const agentRow = db.prepare('SELECT phone, holder_name, delivered_at FROM agent_orders WHERE redeem_id = ?').get(String(redeem_id));
+    const s = await fetchPayGateStatus(resolvedRedeemId);
     return res.json({
-      redeemId:   String(redeem_id),
-      state:      s.isReady ? 'completed' : (s.isPaid ? 'paid' : 'pending'),
-      isPaid:     s.isPaid,
-      isReady:    s.isReady,
-      delivered:  !!(agentRow && agentRow.delivered_at),
-      phone:      agentRow ? agentRow.phone : null,
-      holderName: agentRow ? agentRow.holder_name : null,
+      // Echo only what the agent already knows. Do not return redeem_id.
+      agentOrderToken: token ? String(token) : null,
+      state:           s.isReady ? 'completed' : (s.isPaid ? 'paid' : 'pending'),
+      isPaid:          s.isPaid,
+      isReady:         s.isReady,
+      delivered:       !!(agentRow && agentRow.delivered_at),
+      phone:           agentRow ? agentRow.phone : null,
+      holderName:      agentRow ? agentRow.holder_name : null,
     });
   } catch (err) {
     console.error('[/agent/order-status] error:', err.message);
@@ -500,23 +557,27 @@ app.get('/cards/for-phone/:phone', async (req, res) => {
 
   const rows = db.prepare(`
     SELECT redeem_id, holder_name, amount_usd, flow, redeem_link,
-           created_at, delivered_at, claim_code
+           created_at, delivered_at, claim_code, agent_order_token
       FROM agent_orders
      WHERE phone = ? AND status = 'completed' AND redeem_link IS NOT NULL
      ORDER BY created_at DESC
   `).all(phone);
 
-  // For code-gated, undelivered cards: hide redeem_link. The app must call
-  // /cards/claim-with-code with the 4-digit secret to obtain it. Already-
-  // delivered cards keep the link exposed so the legitimate device can still
-  // re-open them locally (the link is single-use upstream anyway).
+  // Locked cards (agent flow, code not yet validated) expose ONLY an opaque
+  // cardToken — not redeem_id, not redeem_link. The app must call
+  // /cards/claim-with-code with the 4-digit secret to obtain both. This way,
+  // someone who only knows the victim's phone can see "a card awaits" but
+  // gets no material that could be used against /paygate/check-status.
+  // Delivered or non-code-gated rows (legacy) keep redeemId exposed so the
+  // legitimate device can still mark-delivered / re-display.
   return res.json({
     phone,
     count: rows.length,
     cards: rows.map(r => {
       const locked = !!r.claim_code && !r.delivered_at;
       return {
-        redeemId:     r.redeem_id,
+        redeemId:     locked ? null : r.redeem_id,
+        cardToken:    r.agent_order_token, // null for legacy rows without a token
         holderName:   r.holder_name,
         cardValue:    r.amount_usd,
         flow:         r.flow,
@@ -542,32 +603,44 @@ app.post('/cards/mark-delivered', (req, res) => {
   return res.json({ ok: true, changes: r.changes });
 });
 
-// POST /cards/claim-with-code { phone, redeem_id, code }
+// POST /cards/claim-with-code { phone, card_token, code }
+//   (legacy fallback: { phone, redeem_id, code } — only for rows without a token)
 // Unlocks the redeem_link for a code-gated agent order. Phone must match the
-// order's recorded phone (so a leaked redeem_id alone isn't enough), and the
-// 4-digit code must match what was returned to the agent on creation.
-// Locks the row after 5 wrong attempts — agent must reissue.
+// order's recorded phone, AND the 4-digit code must match what was issued to
+// the agent. Returns redeemLink + redeemId on success so the legitimate
+// client device can later call /cards/mark-delivered.
 const CLAIM_MAX_ATTEMPTS = 5;
 app.post('/cards/claim-with-code', (req, res) => {
-  const { phone, redeem_id, code } = req.body || {};
+  const { phone, card_token, redeem_id, code } = req.body || {};
   const normPhone = normalizePhone(phone);
-  if (!normPhone || !redeem_id || !code) {
-    return res.status(400).json({ error: 'phone, redeem_id et code requis' });
+  if (!normPhone || (!card_token && !redeem_id) || !code) {
+    return res.status(400).json({ error: 'phone, card_token (ou redeem_id legacy) et code requis' });
   }
-  const row = db.prepare(`
-    SELECT phone, redeem_link, claim_code, claim_attempts, delivered_at
-      FROM agent_orders
-     WHERE redeem_id = ?
-  `).get(String(redeem_id));
+  const row = card_token
+    ? db.prepare(`
+        SELECT redeem_id, phone, redeem_link, claim_code, claim_attempts, delivered_at, agent_order_token
+          FROM agent_orders
+         WHERE agent_order_token = ?
+      `).get(String(card_token))
+    : db.prepare(`
+        SELECT redeem_id, phone, redeem_link, claim_code, claim_attempts, delivered_at, agent_order_token
+          FROM agent_orders
+         WHERE redeem_id = ?
+      `).get(String(redeem_id));
   if (!row || row.phone !== normPhone) {
     return res.status(404).json({ error: 'Commande introuvable' });
+  }
+  // If the row has a token, only token-based lookup is honored — otherwise
+  // a leaked redeem_id could bypass the indirection we just introduced.
+  if (!card_token && row.agent_order_token) {
+    return res.status(403).json({ error: 'Utiliser card_token' });
   }
   if (!row.redeem_link) {
     return res.status(409).json({ error: 'Carte pas encore prete' });
   }
   if (!row.claim_code) {
     // Legacy row with no code — link is already public via /cards/for-phone.
-    return res.json({ redeemLink: row.redeem_link });
+    return res.json({ redeemLink: row.redeem_link, redeemId: row.redeem_id });
   }
   if (row.claim_attempts >= CLAIM_MAX_ATTEMPTS) {
     return res.status(429).json({ error: 'Trop de tentatives. Demandez un nouveau code a l agent.' });
@@ -577,7 +650,7 @@ app.post('/cards/claim-with-code', (req, res) => {
       UPDATE agent_orders
          SET claim_attempts = claim_attempts + 1, updated_at = datetime('now')
        WHERE redeem_id = ?
-    `).run(String(redeem_id));
+    `).run(row.redeem_id);
     const remaining = Math.max(0, CLAIM_MAX_ATTEMPTS - (row.claim_attempts + 1));
     return res.status(403).json({ error: 'Code invalide', attemptsRemaining: remaining });
   }
@@ -587,8 +660,8 @@ app.post('/cards/claim-with-code', (req, res) => {
     UPDATE agent_orders
        SET claim_code = NULL, updated_at = datetime('now')
      WHERE redeem_id = ?
-  `).run(String(redeem_id));
-  return res.json({ redeemLink: row.redeem_link });
+  `).run(row.redeem_id);
+  return res.json({ redeemLink: row.redeem_link, redeemId: row.redeem_id });
 });
 
 // POST /paygate/request-recharge — alias create-vcc pour compat Flutter

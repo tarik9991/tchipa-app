@@ -5325,6 +5325,14 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
   @override
   void initState() {
     super.initState();
+    // Always reveal the underlying WebView after 6s. The previous version
+    // armed this only inside onPageFinished + only when onCardData != null,
+    // which left the splash stuck forever if (a) the screen was opened just
+    // to view the card with no extraction callback, or (b) the Swype SPA
+    // never fired onPageFinished cleanly.
+    Future.delayed(const Duration(seconds: 6), () {
+      if (!_extracted && mounted) setState(() => _showFallback = true);
+    });
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(AppColors.bg)
@@ -5348,10 +5356,6 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
           setState(() => _loading = false);
           if (widget.onCardData != null) {
             _controller.runJavaScript(_kExtractJs);
-            // If extraction hasn't succeeded after 6s, reveal the page as fallback
-            Future.delayed(const Duration(seconds: 6), () {
-              if (!_extracted && mounted) setState(() => _showFallback = true);
-            });
           }
         },
       ))

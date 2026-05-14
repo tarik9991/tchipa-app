@@ -1101,6 +1101,19 @@ app.get('/admin/recent-txs', (req, res) => {
   res.json({ count: txs.length, txs });
 });
 
+// POST /debug/webview-snippet { snippet, url }
+// Logs the first ~400 chars of Swype's rendered DOM when in-app card-data
+// extraction times out, so we can iterate on selectors without needing
+// adb logcat from end users. Best-effort: never fails the caller.
+app.post('/debug/webview-snippet', (req, res) => {
+  try {
+    const snippet = String(req.body?.snippet || '').slice(0, 600);
+    const url     = String(req.body?.url || '').slice(0, 200);
+    console.log(`[webview-extract-failed] url=${url}\n  snippet=${snippet.replace(/\n/g, ' ').slice(0, 500)}`);
+  } catch (_) {}
+  return res.json({ ok: true });
+});
+
 // GET /wallet-address — adresse fixe du wallet VPS (pour les agents)
 app.get('/wallet-address', async (req, res) => {
   const balance = await forwarder.getBalance();

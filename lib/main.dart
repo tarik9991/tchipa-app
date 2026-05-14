@@ -2129,18 +2129,17 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _refreshBalance() async {
-    final card = _card;
-    if (card?.isActivated != true || card?.cardId == null) return;
-    setState(() => _refreshing = true);
-    try {
-      final bal = await PayGateService.fetchBalance(card!.cardId!);
-      final updated = card.copyWith(balance: bal);
-      await updated.save();
-      if (mounted) setState(() { _card = updated; _refreshing = false; });
-    } catch (e) {
-      if (mounted) setState(() => _refreshing = false);
-      _showErr(e.toString().replaceAll('Exception: ', ''));
-    }
+    // PayGate has no balance API for VCCs — their own response says
+    // "Consultez votre lien de carte PayGate pour le solde". The previous
+    // implementation called fetchBalance (hardcoded to 0.0) and wrote 0
+    // back to local storage, wiping the funded amount. We now just point
+    // the user to Swype.
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Solde temps réel non disponible. Ouvre le lien Swype pour voir le solde actuel.'),
+      backgroundColor: AppColors.surface,
+      duration: const Duration(seconds: 4),
+    ));
   }
 
   void _showErr(String msg) {
@@ -6232,13 +6231,23 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
         try {
           final data = jsonDecode(msg.message) as Map<String, dynamic>;
           if (data['error'] != null) {
-            debugPrint('[CardWebView] extract error: ${data['error']} snippet=${data['snippet']?.toString().substring(0, 200) ?? ''}');
+            debugPrint('[CardWebView] extract error: ${data['error']} snippet=${data['snippet']?.toString() ?? ''}');
+            // Fire-and-forget POST the snippet to a debug endpoint so we can
+            // iterate on selectors without needing adb logcat from the user.
+            final snippet = data['snippet']?.toString();
+            if (snippet != null && snippet.isNotEmpty) {
+              http.post(
+                Uri.parse('$kVpsBase/debug/webview-snippet'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({'snippet': snippet, 'url': widget.url}),
+              ).timeout(const Duration(seconds: 5)).catchError((_) => http.Response('', 0));
+            }
             if (mounted) {
               setState(() => _showFallback = true);
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: const Text('Lecture auto échouée — note les numéros depuis cet écran.'),
+                content: const Text('Lecture auto échouée. Tape ✏️ en haut à droite pour saisir manuellement.'),
                 backgroundColor: Colors.orange.shade800,
-                duration: const Duration(seconds: 6),
+                duration: const Duration(seconds: 8),
               ));
             }
             return;
@@ -6264,6 +6273,89 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
       ..loadRequest(Uri.parse(widget.url));
   }
 
+  Future<void> _manualEntryDialog() async {
+    final numCtrl = TextEditingController();
+    final cvvCtrl = TextEditingController();
+    final expCtrl = TextEditingController();
+    String? errorMsg;
+    bool submitted = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dlgCtx) => StatefulBuilder(builder: (dlgCtx, setDlg) {
+        void submit() {
+          final n = numCtrl.text.replaceAll(RegExp(r'[\s-]'), '');
+          final c = cvvCtrl.text.trim();
+          final e = expCtrl.text.trim();
+          if (!RegExp(r'^\d{15,19}$').hasMatch(n)) {
+            setDlg(() => errorMsg = 'Numéro invalide (15-19 chiffres)');
+            return;
+          }
+          if (!RegExp(r'^\d{3,4}$').hasMatch(c)) {
+            setDlg(() => errorMsg = 'CVV invalide (3-4 chiffres)');
+            return;
+          }
+          if (!RegExp(r'^(0[1-9]|1[0-2])[\/\-]\d{2,4}$').hasMatch(e)) {
+            setDlg(() => errorMsg = 'Expiration: MM/AA (ex 04/28)');
+            return;
+          }
+          submitted = true;
+          Navigator.of(dlgCtx).pop();
+          if (!_extracted && widget.onCardData != null) {
+            _extracted = true;
+            widget.onCardData!(n, c, e);
+          }
+        }
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Saisie manuelle', style: TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text(
+                'Recopie les valeurs depuis l\'écran Swype derrière ce dialog.',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: numCtrl,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white, fontFamily: 'monospace', letterSpacing: 2),
+                decoration: const InputDecoration(labelText: 'Numéro carte (16 chiffres)'),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: expCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'MM/AA'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: cvvCtrl,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(labelText: 'CVV'),
+                  ),
+                ),
+              ]),
+              if (errorMsg != null) ...[
+                const SizedBox(height: 8),
+                Text(errorMsg!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+              ],
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dlgCtx).pop(), child: const Text('Annuler')),
+            ElevatedButton(onPressed: submit, child: const Text('Enregistrer')),
+          ],
+        );
+      }),
+    );
+    if (submitted && mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -6278,6 +6370,12 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
         title: Text(widget.title,
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
+          if (widget.onCardData != null)
+            IconButton(
+              tooltip: 'Saisir manuellement',
+              icon: const Icon(Icons.edit_note_rounded, color: Colors.white),
+              onPressed: _manualEntryDialog,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white54),
             onPressed: () => _controller.reload(),

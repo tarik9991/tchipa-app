@@ -2483,6 +2483,11 @@ class _HomeScreenState extends State<HomeScreen>
           card: _card,
           showFull: _showFull,
           shimmerPhase: _shimmerCtrl.value,
+          onCardCaptured: () async {
+            final latest = await VccCard.load();
+            if (!mounted) return;
+            if (latest != null) setState(() => _card = latest);
+          },
         ),
       ),
     );
@@ -2594,11 +2599,16 @@ class _VccCardVisual extends StatelessWidget {
   final VccCard? card;
   final bool showFull;
   final double shimmerPhase;
+  // Called after the user captures card data from the embedded WebView
+  // (auto-extracted or via manual entry). The parent uses this to reload
+  // the persisted card and trigger setState.
+  final Future<void> Function()? onCardCaptured;
 
   const _VccCardVisual({
     required this.card,
     required this.showFull,
     required this.shimmerPhase,
+    this.onCardCaptured,
   });
 
   @override
@@ -2789,8 +2799,26 @@ class _VccCardVisual extends StatelessWidget {
       final link = card!.redeemLink;
       return GestureDetector(
         onTap: link != null
-            ? () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => CardWebViewScreen(url: link)))
+            ? () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => CardWebViewScreen(
+                    url: link,
+                    title: 'Récupération carte…',
+                    onCardData: (number, cvv, expiry) async {
+                      final updated = card!.copyWith(
+                          cardNumber: number, cvv: cvv, expiry: expiry);
+                      await updated.save();
+                      final rid = card!.redeemId ?? card!.cardId;
+                      if (rid != null && rid.isNotEmpty) {
+                        try { await PayGateService.markCardDelivered(rid); }
+                        catch (_) {}
+                      }
+                      if (context.mounted) Navigator.of(context).pop();
+                    },
+                  ),
+                ));
+                if (onCardCaptured != null) await onCardCaptured!();
+              }
             : null,
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -4427,6 +4455,31 @@ class _CardDetailsSheet extends StatelessWidget {
                 mono: false,
                 context: context,
               ),
+              if (card.redeemLink != null && card.redeemLink!.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => CardWebViewScreen(
+                          url: card.redeemLink!,
+                          title: 'Swype — gérer la carte',
+                        ),
+                      ));
+                    },
+                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                    label: const Text('Ouvrir Swype (solde · renommer)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surface,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(Icons.shield_outlined, size: 13, color: AppColors.textDim),

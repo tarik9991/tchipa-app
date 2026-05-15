@@ -947,7 +947,21 @@ a { color: inherit; text-decoration:none; }
   const dots = Array.from(progress.children);
 
   let current = 0;
-  const DURATION = 7000; // 7s per scene
+  const DEFAULT_DUR = 10000; // 10s per scene
+  // Per-scene overrides (in ms) keyed by data-i. Longer for content-heavy scenes.
+  const PER_SCENE = {
+    1: 6000,   // intro — fast
+    2: 11000,  // chat — 3 bubbles to read
+    3: 9000,   // Barid IMob
+    4: 7000,   // PIN entry — short
+    5: 10000,  // form
+    6: 11000,  // USDT addr — long Arabic to read
+    7: 10000,  // wallet send
+    8: 9000,   // banner appears
+    9: 11000,  // Swype + ✏️ — read warning
+    10: 13000, // manual entry — HERO scene, take time
+    11: 11000, // card active — savor the win
+  };
   let timer = null;
   let playing = true;
 
@@ -968,10 +982,15 @@ a { color: inherit; text-decoration:none; }
   }
   function next() { show(current + 1); }
   function prev() { show(current - 1); }
+  function currentDuration() {
+    const sc = scenes[current];
+    const i = parseInt(sc?.dataset.i, 10);
+    return PER_SCENE[i] || DEFAULT_DUR;
+  }
   function tick() {
     clearTimeout(timer);
     if (!playing) return;
-    timer = setTimeout(() => { next(); tick(); }, DURATION);
+    timer = setTimeout(() => { next(); tick(); }, currentDuration());
   }
   function togglePlay() {
     playing = !playing;

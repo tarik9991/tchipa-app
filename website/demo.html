@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tchipa — Démo · كيفاش تخدم</title>
+<meta name="description" content="Démo interactive Tchipa : du paiement Barid IMob à la carte Visa virtuelle active." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg:        #0D1117;
+  --surface:   #161B22;
+  --card:      #21262D;
+  --border:    rgba(255,255,255,0.08);
+  --cyan:      #00D4FF;
+  --purple:    #8B5CF6;
+  --green:     #22D3A1;
+  --pink:      #EC4899;
+  --gold:      #F59E0B;
+  --text:      #F0F6FC;
+  --sub:       rgba(240,246,252,0.55);
+  --font-en:   'Inter', system-ui, sans-serif;
+  --font-ar:   'Tajawal', 'Inter', sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  background: radial-gradient(ellipse at top, #1a2438 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: var(--font-en);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration:none; }
+
+/* ── Top bar ───────────────────────────────────────── */
+.topbar {
+  position: fixed; top:0; left:0; right:0; z-index:50;
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 14px 22px;
+  background: rgba(13,17,23,0.7);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+.logo {
+  font-size: 1.15rem; font-weight: 900; letter-spacing: -.03em;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.progress {
+  display:flex; gap:6px; align-items:center;
+}
+.progress .dot {
+  width:8px; height:8px; border-radius:50%;
+  background: var(--card);
+  transition: all .3s;
+}
+.progress .dot.active { background: var(--cyan); width: 22px; border-radius:4px; }
+.progress .dot.done   { background: var(--purple); }
+.scene-counter {
+  color: var(--sub); font-size:.78rem; font-weight:600;
+  letter-spacing:.05em;
+}
+
+/* ── Stage ─────────────────────────────────────────── */
+.stage {
+  position: absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  padding-top: 70px; padding-bottom: 220px;
+  gap: 60px;
+  perspective: 1400px;
+}
+
+/* ── Phone mockup ──────────────────────────────────── */
+.phone {
+  width: 290px; height: 595px;
+  background: #050608;
+  border: 11px solid #0a0c10;
+  border-radius: 46px;
+  position: relative;
+  box-shadow:
+    0 0 0 2px rgba(255,255,255,0.04),
+    0 40px 100px rgba(0,0,0,0.6),
+    0 0 60px rgba(0,212,255,0.06);
+  transition: opacity .55s, transform .55s, filter .55s;
+}
+.phone.dim { opacity: 0.18; transform: scale(0.88); filter: blur(2px) saturate(0.4); }
+.phone.hidden { opacity:0; transform: scale(0.7); pointer-events:none; }
+.phone .notch {
+  position:absolute; top:-1px; left:50%; transform:translateX(-50%);
+  width: 95px; height: 22px;
+  background:#0a0c10;
+  border-radius: 0 0 14px 14px;
+  z-index:5;
+}
+.phone .screen {
+  position:absolute; inset:5px;
+  border-radius: 34px;
+  overflow: hidden;
+  background: var(--bg);
+  display:flex; flex-direction:column;
+}
+.phone .label {
+  position: absolute; bottom: -36px; left:50%; transform:translateX(-50%);
+  font-size: .72rem; font-weight: 700; letter-spacing:.1em; text-transform: uppercase;
+  color: var(--sub);
+  white-space: nowrap;
+}
+.phone .label.agent { color: var(--gold); }
+.phone .label.client { color: var(--green); }
+
+/* status bar */
+.statbar {
+  height: 32px; padding: 12px 22px 0 22px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size: .68rem; font-weight: 700; color: var(--text);
+}
+.statbar .right { display:flex; gap:5px; align-items:center; font-size:.6rem; }
+
+/* generic chrome */
+.app-header {
+  padding: 18px 16px 12px 16px;
+  display:flex; align-items:center; gap:10px;
+}
+.app-header .back { color: var(--sub); font-size: 1.3rem; }
+.app-header h2 { font-size: .95rem; font-weight: 800; flex:1; text-align:center; }
+.app-body { flex:1; overflow:hidden; padding: 8px 14px; }
+
+/* ── Scene container ───────────────────────────────── */
+.scene {
+  position: absolute; inset: 0;
+  display:flex; align-items:center; justify-content:center;
+  gap: 60px;
+  padding-top: 70px; padding-bottom: 220px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .55s;
+}
+.scene.active { opacity: 1; pointer-events: auto; }
+
+/* ── Captions panel ────────────────────────────────── */
+.captions {
+  position: fixed; bottom:0; left:0; right:0; z-index:40;
+  background: linear-gradient(180deg, transparent, rgba(13,17,23,0.95) 25%);
+  padding: 30px 40px 26px 40px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  text-align: center;
+}
+.caption-fr {
+  font-size: 1.15rem; font-weight: 600; color: var(--text);
+  max-width: 820px; line-height: 1.45;
+}
+.caption-ar {
+  font-family: var(--font-ar);
+  font-size: 1.55rem; font-weight: 700; color: var(--cyan);
+  direction: rtl;
+  max-width: 820px; line-height: 1.7;
+  letter-spacing: -.01em;
+}
+.caption-fr::before {
+  content: "🇫🇷"; margin-right: 8px; font-size:.9em;
+}
+.caption-ar::before {
+  content: "🇩🇿"; margin-left: 8px; font-size:.8em;
+}
+
+/* ── Controls ──────────────────────────────────────── */
+.controls {
+  position: fixed; bottom: 14px; left:50%; transform: translateX(-50%);
+  z-index: 60;
+  display:flex; align-items:center; gap: 8px;
+  background: rgba(22,27,34,0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 6px;
+}
+.ctrl-btn {
+  width: 38px; height: 38px;
+  border: none; background: transparent;
+  border-radius: 50%;
+  color: var(--text); font-size: 1rem;
+  cursor: pointer; transition: background .2s;
+  display:flex; align-items:center; justify-content:center;
+}
+.ctrl-btn:hover { background: var(--card); }
+.ctrl-btn.play { background: linear-gradient(135deg, var(--cyan), var(--purple)); }
+.ctrl-btn.play:hover { filter: brightness(1.15); }
+
+/* ── Scene-specific UI ─────────────────────────────── */
+
+/* Telegram chat */
+.tg-bg {
+  flex: 1; padding: 14px 12px; overflow: hidden;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(139,92,246,0.18), transparent 60%),
+    radial-gradient(circle at 70% 80%, rgba(0,212,255,0.12), transparent 60%),
+    #0e1621;
+  display:flex; flex-direction:column; gap: 10px; justify-content:flex-end;
+}
+.tg-header {
+  background: #17212b; padding: 12px 14px;
+  display:flex; align-items:center; gap:10px;
+  margin: -8px -14px 0 -14px;
+}
+.tg-header .av {
+  width:32px; height:32px; border-radius:50%;
+  background: linear-gradient(135deg, var(--gold), var(--pink));
+  display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:.8rem;
+}
+.tg-header .name { font-size:.85rem; font-weight:700; }
+.tg-header .stat { font-size:.65rem; color: var(--sub); }
+.bubble {
+  max-width: 80%; padding: 8px 12px;
+  border-radius: 14px; font-size: .78rem; line-height:1.4;
+  word-break: break-word;
+  animation: pop .4s ease;
+}
+@keyframes pop {
+  from { opacity:0; transform: translateY(8px) scale(.95); }
+  to { opacity:1; transform: none; }
+}
+.bubble.in  { background:#182533; align-self:flex-start; border-bottom-left-radius: 4px; }
+.bubble.out { background:#2b5278; align-self:flex-end; border-bottom-right-radius: 4px; }
+.bubble .ts { font-size:.55rem; color: rgba(255,255,255,0.5); margin-top:3px; text-align:right; }
+
+/* Barid IMob screen */
+.barid-screen { flex:1; background: #1d3a8a; display:flex; flex-direction:column; }
+.barid-header { padding: 18px 16px 12px; text-align:center; }
+.barid-header .logo {
+  font-size: 1.2rem; font-weight: 900; color: #fff;
+  background: none; -webkit-text-fill-color: #fff;
+}
+.barid-header .sub { color: rgba(255,255,255,0.7); font-size:.7rem; margin-top: 2px; }
+.barid-card {
+  background: rgba(255,255,255,0.95); color: #1d3a8a;
+  margin: 16px 14px; padding: 16px;
+  border-radius: 14px;
+  display:flex; flex-direction:column; gap: 8px;
+}
+.barid-row { display:flex; justify-content:space-between; font-size:.75rem; }
+.barid-row .l { color: #6b7280; font-weight:600; }
+.barid-row .v { font-weight:800; font-family: monospace; }
+.barid-amount { font-size: 1.6rem; font-weight:900; color: var(--purple); text-align:center; padding: 8px 0; }
+.barid-btn {
+  margin: 0 14px; padding: 12px;
+  background: linear-gradient(135deg, var(--green), #0ea47a);
+  color: #fff; font-weight:800; font-size:.85rem;
+  text-align:center; border-radius: 14px;
+  animation: pulse 1.5s ease infinite;
+}
+@keyframes pulse {
+  0%,100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(34,211,161,0.5); }
+  50% { transform: scale(1.02); box-shadow: 0 0 0 12px rgba(34,211,161,0); }
+}
+
+/* Tchipa Agent screen */
+.tchipa-bg {
+  flex:1;
+  background: radial-gradient(ellipse at top, #1a2438 0%, var(--bg) 65%);
+  padding: 12px 16px;
+  display:flex; flex-direction:column; gap: 10px;
+}
+.tchipa-input {
+  background: var(--surface); border-radius: 14px;
+  padding: 12px 14px; font-size:.8rem;
+  border: 1px solid var(--border);
+}
+.tchipa-input .lbl { color: var(--sub); font-size:.6rem; font-weight:700; letter-spacing:.1em; text-transform: uppercase; }
+.tchipa-input .val { color: var(--text); font-weight:600; margin-top: 3px; font-family: monospace; }
+.tchipa-input.highlight { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(0,212,255,0.2); }
+.tchipa-btn {
+  margin-top: auto; padding: 14px;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  color: #fff; font-weight: 800; font-size:.9rem;
+  text-align: center; border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0,212,255,0.3);
+}
+
+/* PIN dialog */
+.pin-dialog {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.7);
+  display:flex; align-items:center; justify-content:center;
+  z-index: 20;
+  animation: fadeIn .4s;
+}
+@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+.pin-box {
+  background: var(--surface);
+  border-radius: 18px; padding: 20px 22px;
+  width: 80%;
+  border: 1px solid var(--border);
+}
+.pin-box h3 { font-size:.95rem; font-weight:800; margin-bottom: 12px; text-align:center; }
+.pin-dots { display:flex; gap: 10px; justify-content:center; margin: 12px 0; }
+.pin-dot {
+  width: 12px; height: 12px; border-radius:50%;
+  background: var(--card); border: 1.5px solid var(--border);
+}
+.pin-dot.filled { background: var(--cyan); border-color: var(--cyan); animation: dotPop .3s; }
+@keyframes dotPop { from { transform: scale(0.6); } to { transform: scale(1); } }
+.pin-keypad {
+  display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;
+  margin-top: 8px;
+}
+.pin-key {
+  background: var(--card); border-radius: 10px;
+  padding: 8px 0; text-align:center;
+  font-weight: 700; font-size: .9rem;
+}
+
+/* USDT address card */
+.usdt-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 14px;
+  margin-top: 8px;
+}
+.usdt-card .label {
+  font-size:.6rem; font-weight:700; color: var(--sub);
+  letter-spacing:.1em; text-transform:uppercase;
+}
+.usdt-card .addr {
+  font-family: monospace; font-size:.7rem; font-weight:600;
+  word-break: break-all; margin-top: 6px; color: var(--cyan);
+  background: rgba(0,212,255,0.07); padding: 8px; border-radius: 8px;
+}
+.qr-mock {
+  width: 130px; height: 130px;
+  background: repeating-linear-gradient(45deg, #fff 0 4px, #000 4px 8px),
+              repeating-linear-gradient(-45deg, #fff 0 6px, #000 6px 10px);
+  background-blend-mode: difference;
+  margin: 14px auto; border-radius: 10px;
+  border: 6px solid #fff;
+  position: relative;
+}
+.qr-mock::after {
+  content: "USDT"; position: absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size: .65rem; font-weight: 900; color: #000;
+  background: rgba(255,255,255,0.9); width: 40px; height: 16px;
+  margin: auto; border-radius: 4px;
+}
+.usdt-amount {
+  text-align:center; font-size: 1.4rem; font-weight: 900;
+  color: var(--green); margin-top: 6px;
+  font-family: monospace;
+}
+
+/* Wallet generic */
+.wallet-screen {
+  flex:1; padding: 14px;
+  background: linear-gradient(180deg, #1a1a2e, var(--bg));
+  display:flex; flex-direction:column; gap:10px;
+}
+.wallet-header { display:flex; justify-content:space-between; align-items:center; }
+.wallet-header .name { font-weight: 800; font-size:.9rem; }
+.wallet-header .bal { color: var(--sub); font-size:.7rem; }
+.wallet-token {
+  background: var(--surface); border-radius: 14px; padding: 12px;
+  display:flex; gap: 10px; align-items:center;
+}
+.wallet-token .icon {
+  width: 32px; height: 32px; border-radius:50%;
+  background: linear-gradient(135deg, #26a17b, #1a8862);
+  display:flex; align-items:center; justify-content:center;
+  font-weight:900; font-size:.7rem; color: #fff;
+}
+.wallet-token .name { font-weight: 700; font-size:.85rem; }
+.wallet-token .net { font-size:.6rem; color: var(--sub); }
+.wallet-token .amt { margin-left:auto; font-weight: 800; font-family: monospace; font-size:.85rem; }
+.wallet-send {
+  margin-top: auto; padding: 12px;
+  background: linear-gradient(135deg, var(--gold), #f97316);
+  color: #fff; font-weight: 800; font-size:.85rem;
+  text-align:center; border-radius: 12px;
+}
+
+/* Home + banner */
+.home-screen {
+  flex:1; padding: 14px;
+  background: radial-gradient(ellipse at top, #1a2438 0%, var(--bg) 65%);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.home-greet {
+  font-size:.7rem; color: var(--sub); margin-bottom: -4px;
+}
+.home-greet .name { color: var(--text); font-weight: 800; }
+.banner {
+  background: linear-gradient(135deg, var(--green), #0ea47a);
+  border-radius: 14px; padding: 12px 14px;
+  display:flex; align-items:center; gap: 10px;
+  box-shadow: 0 8px 24px rgba(34,211,161,0.3);
+  animation: bannerIn .8s ease;
+}
+@keyframes bannerIn {
+  from { transform: translateY(-30px); opacity:0; }
+  to { transform: none; opacity:1; }
+}
+.banner .ico { font-size: 1.4rem; }
+.banner .title { font-weight:800; font-size:.85rem; }
+.banner .sub { font-size:.65rem; color: rgba(255,255,255,0.85); margin-top: 2px; }
+.banner .arrow { margin-left:auto; font-size: 1.1rem; }
+
+.cardvis {
+  background: linear-gradient(135deg, #1f2937, #374151);
+  border-radius: 16px; padding: 18px 14px;
+  height: 175px;
+  display:flex; flex-direction:column; justify-content:space-between;
+  position: relative; overflow:hidden;
+}
+.cardvis::before {
+  content:''; position:absolute; top:-50%; right:-30%;
+  width: 180px; height: 180px; border-radius:50%;
+  background: radial-gradient(circle, rgba(0,212,255,0.25), transparent 70%);
+}
+.cardvis .brand {
+  font-size:.7rem; font-weight: 800; letter-spacing:.15em;
+  text-transform: uppercase;
+}
+.cardvis .num {
+  font-family: monospace; font-size: .85rem;
+  letter-spacing: .15em; font-weight: 600;
+}
+.cardvis .num.blurred {
+  color: transparent;
+  text-shadow: 0 0 8px rgba(255,255,255,0.5);
+}
+.cardvis .row { display:flex; justify-content:space-between; align-items:flex-end; }
+.cardvis .lbl { font-size:.5rem; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing:.1em; }
+.cardvis .val { font-size:.7rem; font-family: monospace; font-weight: 700; }
+.cardvis .mc {
+  display:flex; gap:-4px;
+}
+.cardvis .mc .c1, .cardvis .mc .c2 {
+  width: 18px; height: 18px; border-radius:50%;
+}
+.cardvis .mc .c1 { background: #eb001b; }
+.cardvis .mc .c2 { background: #f79e1b; margin-left: -8px; mix-blend-mode: screen; }
+.cardvis .balance { font-size: 1.4rem; font-weight: 900; }
+
+.act-btn {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 12px;
+  display:flex; align-items:center; gap: 10px;
+}
+.act-btn .ico {
+  width: 36px; height: 36px; border-radius: 10px;
+  display:flex; align-items:center; justify-content:center;
+  background: linear-gradient(135deg, var(--purple), var(--pink));
+  font-size: 1rem;
+}
+.act-btn .label { font-weight:700; font-size:.85rem; }
+.act-btn .sub { font-size:.6rem; color: var(--sub); }
+
+/* Swype webview */
+.swype-screen {
+  flex:1; background: #fff; color: #111;
+  padding: 14px; display:flex; flex-direction: column; gap: 8px;
+}
+.swype-header {
+  background: var(--bg); color: #fff;
+  margin: -14px -14px 8px;
+  padding: 10px 14px;
+  display:flex; align-items:center; justify-content: space-between;
+}
+.swype-header .ttl { font-size:.85rem; font-weight: 700; }
+.swype-header .pencil {
+  width: 30px; height:30px; border-radius: 50%;
+  background: rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center;
+  color: #fff;
+  animation: ping 1.8s ease infinite;
+}
+@keyframes ping {
+  0%,100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.6); }
+  50% { box-shadow: 0 0 0 10px rgba(0,212,255,0); }
+}
+.swype-card {
+  background: linear-gradient(135deg, #1d3a8a, #4338ca);
+  border-radius: 12px; padding: 16px;
+  color: #fff;
+}
+.swype-card .lbl2 { font-size:.6rem; opacity:.7; }
+.swype-card .num2 { font-family: monospace; font-size: 1rem; letter-spacing: .12em; font-weight: 700; margin: 6px 0; }
+.swype-card .row2 { display:flex; gap: 16px; font-size:.7rem; }
+.swype-cta {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--card); color: #ddd;
+  border-radius: 8px; font-size:.75rem;
+  text-align: center;
+}
+
+/* Manual dialog */
+.manual-dialog {
+  position: absolute; inset: 0; z-index: 30;
+  background: rgba(0,0,0,0.75);
+  display:flex; align-items:center; justify-content:center;
+  padding: 16px;
+  animation: fadeIn .4s;
+}
+.manual-box {
+  background: var(--surface);
+  border-radius: 18px; padding: 18px;
+  width: 100%;
+}
+.manual-box h3 { font-size:.95rem; font-weight: 800; margin-bottom: 10px; }
+.manual-box .hint { font-size: .65rem; color: var(--sub); margin-bottom: 10px; }
+.manual-box .field {
+  background: var(--card); border-radius: 10px;
+  padding: 9px 11px; margin-bottom: 8px;
+  font-size: .8rem; font-family: monospace;
+  border: 1px solid var(--border);
+}
+.manual-box .field.typing {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(0,212,255,0.2);
+}
+.manual-row { display:flex; gap: 8px; }
+.manual-row .field { flex:1; }
+.manual-actions { display:flex; gap:8px; margin-top: 6px; }
+.manual-actions .btn {
+  flex:1; padding: 10px; border-radius: 10px;
+  text-align:center; font-size:.78rem; font-weight: 700;
+}
+.manual-actions .btn.save { background: linear-gradient(135deg, var(--cyan), var(--purple)); }
+.manual-actions .btn.cancel { background: var(--card); color: var(--sub); }
+
+/* responsive */
+@media (max-width: 760px) {
+  .stage, .scene { gap: 16px; padding-bottom: 230px; }
+  .phone { width: 230px; height: 470px; border-radius: 36px; border-width: 9px; }
+  .phone .notch { width: 76px; height:18px; }
+  .phone .screen { border-radius: 28px; }
+  .caption-fr { font-size:.95rem; }
+  .caption-ar { font-size: 1.25rem; }
+  .progress .dot { width:6px; height:6px; }
+  .progress .dot.active { width: 18px; }
+}
+@media (max-height: 720px) {
+  .phone { width: 250px; height: 510px; }
+  .captions { padding: 18px 30px 18px; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a class="logo" href="/">Tchipa</a>
+  <div class="progress" id="progress"></div>
+  <div class="scene-counter"><span id="cnum">1</span>/<span id="ctotal">11</span></div>
+</div>
+
+<!-- Scene 1: Intro -->
+<div class="scene" data-fr="Bienvenue. Voici comment Tchipa génère une carte Visa à partir de dinars, en moins de 5 minutes." data-ar="مرحبا بيكم. هكذا تشيبا تجنري كارت فيزا من الدينار، في أقل من 5 دقايق." data-i="1">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:41</span><div class="right">●●● 🔋</div></div>
+      <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 0 22px; text-align:center; gap:18px;">
+        <div style="font-size: 3rem; font-weight: 900; background: linear-gradient(135deg, var(--cyan), var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">Tchipa</div>
+        <div style="font-size:.8rem; color: var(--sub);">Carte Visa virtuelle b'USDT · بطاقة فيزا افتراضية</div>
+        <div style="margin-top: 30px; padding: 10px 18px; background: var(--surface); border-radius: 100px; font-size:.7rem; font-weight: 700; color: var(--cyan); border: 1px solid var(--cyan);">Démo en 9 étapes →</div>
+      </div>
+    </div>
+    <div class="label">Tchipa</div>
+  </div>
+</div>
+
+<!-- Scene 2: Client contacts agent -->
+<div class="scene" data-fr="Le client contacte un agent humain — sur Telegram, WhatsApp ou en personne — pour acheter des USDT." data-ar="الزبون يكونتاكتي أجون بشري — في تيليغرام، واتساب، ولا فاس بفاس — باش يشري USDT." data-i="2">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:42</span><div class="right">●●● 🔋</div></div>
+      <div class="tg-bg">
+        <div class="tg-header">
+          <div class="av">H</div>
+          <div>
+            <div class="name">Hamid · Agent Tchipa</div>
+            <div class="stat">en ligne</div>
+          </div>
+        </div>
+        <div class="bubble out">Slm khoya, n'7ab carte b 10$ <div class="ts">9:41</div></div>
+        <div class="bubble in">Aywa kayen. 10$ = 1850 DA (taux dyoum). N'b3atli RIB? <div class="ts">9:41</div></div>
+        <div class="bubble out">Khalas, b3atli RIB Barid IMob <div class="ts">9:42</div></div>
+      </div>
+    </div>
+    <div class="label client">Téléphone client</div>
+  </div>
+</div>
+
+<!-- Scene 3: Barid IMob payment -->
+<div class="scene" data-fr="Le client paie l'agent en dinars via Barid IMob, puis envoie la preuve de virement." data-ar="الزبون يخلص الأجون بالدينار عن طريق بريد إيموب، ومن بعد يب3ت لبروف ديال الفيرمو." data-i="3">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="barid-screen">
+        <div class="barid-header">
+          <div class="logo">Barid IMob</div>
+          <div class="sub">Virement instantané</div>
+        </div>
+        <div class="barid-card">
+          <div class="barid-row"><span class="l">Bénéficiaire</span><span class="v">Hamid B.</span></div>
+          <div class="barid-row"><span class="l">CCP</span><span class="v">0021457*99</span></div>
+          <div class="barid-row"><span class="l">Motif</span><span class="v">USDT 10$</span></div>
+          <div class="barid-amount">1 850,00 DA</div>
+        </div>
+        <div class="barid-btn">✓ Confirmer le virement</div>
+        <div style="margin: 14px auto 16px; font-size:.65rem; color: rgba(255,255,255,0.7); text-align:center;">Frais : 0 DA</div>
+      </div>
+    </div>
+    <div class="label client">Téléphone client</div>
+  </div>
+</div>
+
+<!-- Scene 4: Agent opens Tchipa Agent mode -->
+<div class="scene" data-fr="L'agent ouvre Tchipa, va dans Profil et entre son PIN agent pour accéder au mode Agent." data-ar="الأجون يحل تشيبا، يروح ل'بروفيل' ويدخل البان ديالو باش يفتح وضع الأجون." data-i="4">
+  <div class="phone agent">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:45</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <div class="back">←</div>
+        <h2>Mode Agent</h2>
+        <div style="width:24px"></div>
+      </div>
+      <div class="app-body" style="display:flex; align-items:center; justify-content:center;">
+        <div class="pin-box" style="width: 100%; position:relative;">
+          <h3>Code agent</h3>
+          <div style="text-align:center; font-size:.65rem; color: var(--sub); margin-bottom: 12px;">4 chiffres</div>
+          <div class="pin-dots">
+            <div class="pin-dot filled"></div>
+            <div class="pin-dot filled"></div>
+            <div class="pin-dot filled"></div>
+            <div class="pin-dot filled"></div>
+          </div>
+          <div class="pin-keypad">
+            <div class="pin-key">1</div><div class="pin-key">2</div><div class="pin-key">3</div>
+            <div class="pin-key">4</div><div class="pin-key">5</div><div class="pin-key">6</div>
+            <div class="pin-key">7</div><div class="pin-key">8</div><div class="pin-key">9</div>
+            <div></div><div class="pin-key">0</div><div class="pin-key">←</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="label agent">Téléphone agent</div>
+  </div>
+</div>
+
+<!-- Scene 5: Agent fills order form -->
+<div class="scene" data-fr="Dans l'écran Agent, il saisit le téléphone du client (avec indicatif), son nom et le montant en dollars." data-ar="في 'إيكران الأجون'، يدخل تيليفون الزبون (مع كود البلاد)، إسمو، والمبلغ بالدولار." data-i="5">
+  <div class="phone agent">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:45</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <div class="back">←</div>
+        <h2>Nouvelle commande</h2>
+        <div style="width:24px"></div>
+      </div>
+      <div class="app-body" style="overflow:auto;">
+        <div class="tchipa-bg">
+          <div class="tchipa-input">
+            <div class="lbl">Téléphone client</div>
+            <div class="val">+44 7503 058974</div>
+          </div>
+          <div class="tchipa-input">
+            <div class="lbl">Nom du titulaire</div>
+            <div class="val" style="font-family: var(--font-en);">Karim B.</div>
+          </div>
+          <div class="tchipa-input highlight">
+            <div class="lbl">Montant USD</div>
+            <div class="val" style="font-size: 1.4rem; color: var(--cyan);">$10</div>
+          </div>
+          <div class="tchipa-btn">⚡ Générer la carte</div>
+        </div>
+      </div>
+    </div>
+    <div class="label agent">Téléphone agent</div>
+  </div>
+</div>
+
+<!-- Scene 6: USDT address shown to agent -->
+<div class="scene" data-fr="Tchipa génère une adresse USDT-Polygon unique et le montant exact (avec marge de frais) à envoyer." data-ar="تشيبا تجنري أدريس USDT بوليغون فريد، والمبلغ المضبوط (مع زيادة الفي) لي خاصو يب3ت." data-i="6">
+  <div class="phone agent">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:46</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <div class="back">←</div>
+        <h2>Payer en USDT</h2>
+        <div style="width:24px"></div>
+      </div>
+      <div class="app-body" style="overflow:auto;">
+        <div style="text-align:center; font-size:.7rem; color: var(--sub); margin-top: 8px;">Envoie le montant exact sur Polygon</div>
+        <div class="qr-mock"></div>
+        <div class="usdt-amount">11.740035 USDT</div>
+        <div style="text-align:center; font-size:.6rem; color: var(--gold); margin-top: 4px;">⚠ Montant exact requis (suffixe unique)</div>
+        <div class="usdt-card">
+          <div class="label">Adresse Polygon</div>
+          <div class="addr">0x30c0C47A6FC3D3673f04d90665148D3a5ab6806D</div>
+        </div>
+      </div>
+    </div>
+    <div class="label agent">Téléphone agent</div>
+  </div>
+</div>
+
+<!-- Scene 7: Agent sends USDT from wallet -->
+<div class="scene" data-fr="L'agent envoie les USDT depuis son wallet (MetaMask, Trust Wallet, retrait CEX…). Le backend détecte et transmet automatiquement à PayGate." data-ar="الأجون يب3ت USDT من 'الوولاي' ديالو (ميتاماسك، تراست واليت، ولا من بورصة). السيرفر يشوف ويب3ت أوتوماتيك ل'بايغايت'." data-i="7">
+  <div class="phone agent">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:47</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <div class="back">←</div>
+        <h2 style="font-family: monospace;">Envoyer USDT</h2>
+        <div style="width:24px"></div>
+      </div>
+      <div class="app-body">
+        <div class="wallet-screen">
+          <div class="wallet-header">
+            <div>
+              <div class="name">Mon wallet</div>
+              <div class="bal">Solde · 124.50 USDT</div>
+            </div>
+            <div style="width: 32px; height:32px; border-radius:50%; background: linear-gradient(135deg, var(--cyan), var(--purple));"></div>
+          </div>
+          <div class="wallet-token">
+            <div class="icon">$</div>
+            <div>
+              <div class="name">USDT</div>
+              <div class="net">Polygon · USD₮</div>
+            </div>
+            <div class="amt">11.740035</div>
+          </div>
+          <div style="font-size:.65rem; color: var(--sub); padding: 8px 4px;">
+            Vers : <span style="font-family: monospace; color: var(--cyan);">0x30c0…806D</span><br/>
+            Frais réseau : ~$0.01
+          </div>
+          <div class="wallet-send">✓ Confirmer et envoyer</div>
+        </div>
+      </div>
+    </div>
+    <div class="label agent">Wallet agent</div>
+  </div>
+</div>
+
+<!-- Scene 8: Client home banner -->
+<div class="scene" data-fr="Le client (déjà inscrit, PIN configuré) ouvre Tchipa : une bannière verte apparaît — sa carte est prête." data-ar="الزبون (مسجل قبل، البان موجود) يحل تشيبا : بانيير خضرا تطلع — الكارت ديالو واجدة." data-i="8">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:49</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <h2 style="text-align:left; font-size: 1.4rem; font-weight: 900;">Tchipa</h2>
+        <div style="margin-left:auto; display:flex; gap: 8px;">
+          <div style="width: 30px; height: 30px; border-radius:50%; background: var(--surface);"></div>
+        </div>
+      </div>
+      <div class="app-body">
+        <div class="home-screen">
+          <div class="home-greet">Bonjour, <span class="name">Karim</span></div>
+          <div class="banner">
+            <div class="ico">🎁</div>
+            <div>
+              <div class="title">Une carte de $10 vous attend</div>
+              <div class="sub">Émise par un agent. Tapez pour récupérer.</div>
+            </div>
+            <div class="arrow">›</div>
+          </div>
+          <div class="cardvis" style="opacity:.4;">
+            <div style="display:flex; justify-content:space-between;">
+              <div class="brand">Virtual Card</div>
+              <div class="mc"><div class="c1"></div><div class="c2"></div></div>
+            </div>
+            <div class="num blurred">•••• •••• •••• ••••</div>
+            <div class="row">
+              <div><div class="lbl">Titulaire</div><div class="val">—</div></div>
+              <div><div class="lbl">Exp</div><div class="val">—</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="label client">Téléphone client</div>
+  </div>
+</div>
+
+<!-- Scene 9: WebView Swype with extraction failed → ✏️ pencil highlighted -->
+<div class="scene" data-fr="Le client tape la bannière, entre son PIN. Swype s'ouvre. Si la lecture automatique des chiffres échoue, l'icône ✏️ en haut permet la saisie manuelle." data-ar="الزبون يكليكي على البانيير، يدخل البان. سوايب تحل. إيلا الكراج الأوتوماتيك ديال النوميرو ما خدمش، إيكون ✏️ فوق يخدم للسيزي مانويل." data-i="9">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:50</span><div class="right">●●● 🔋</div></div>
+      <div class="swype-header">
+        <div style="font-size:.78rem; font-weight:700;">← Récupération carte…</div>
+        <div class="pencil" style="background: var(--cyan); color:#000;">✏️</div>
+      </div>
+      <div class="swype-screen">
+        <div style="font-size:.7rem; color: #444; text-align:center; margin-bottom: 8px;">dashboard.swype.cards</div>
+        <div class="swype-card">
+          <div class="lbl2">CARD NUMBER</div>
+          <div class="num2">5471 2598 7236 4128</div>
+          <div class="row2">
+            <div><div class="lbl2">EXP</div><div style="font-family: monospace; font-weight: 700;">04/29</div></div>
+            <div><div class="lbl2">CVV</div><div style="font-family: monospace; font-weight: 700;">427</div></div>
+          </div>
+        </div>
+        <div class="swype-cta">View card details · Rename · Lock</div>
+        <div style="margin-top: auto; background: #c2410c; color:#fff; padding:10px 12px; border-radius: 10px; font-size:.7rem; line-height:1.4; animation: bannerIn .6s;">
+          ⚠ Lecture auto échouée. Tape <b>✏️</b> en haut à droite pour saisir manuellement.
+        </div>
+      </div>
+    </div>
+    <div class="label client">WebView Swype</div>
+  </div>
+</div>
+
+<!-- Scene 10: Manual entry dialog — HERO scene -->
+<div class="scene" data-fr="Saisie manuelle : le client recopie depuis Swype le numéro 16 chiffres, l'expiration MM/AA et le CVV. Tap Enregistrer." data-ar="السيزي مانويل : الزبون يعاود يكتب من سوايب نومرو 16 رقم، الإكسبيراسيون MM/AA والـ CVV. كليك على 'إنريجيستري'." data-i="10">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:51</span><div class="right">●●● 🔋</div></div>
+      <div class="swype-header">
+        <div style="font-size:.75rem;">← Saisie manuelle</div>
+        <div style="width:30px"></div>
+      </div>
+      <div class="app-body" style="padding: 16px;">
+        <div class="manual-box" style="background: var(--surface); border-radius: 18px; padding: 18px;">
+          <h3 style="font-size: 1rem; font-weight: 800; margin-bottom: 8px;">Saisie manuelle</h3>
+          <div style="font-size: .7rem; color: var(--sub); margin-bottom: 14px; line-height:1.4;">
+            Recopie les valeurs depuis l'écran Swype.
+          </div>
+          <div style="font-size:.6rem; font-weight:700; color: var(--sub); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px;">Numéro carte</div>
+          <div class="field typing" style="background: var(--card); border-radius: 10px; padding: 11px 13px; font-size: .85rem; font-family: monospace; border: 1px solid var(--cyan); box-shadow: 0 0 0 2px rgba(0,212,255,0.2); letter-spacing: .12em; margin-bottom: 14px;">
+            5471 2598 7236 4128<span style="border-right: 2px solid var(--cyan); margin-left: 3px; animation: blink 0.8s steps(2) infinite;">&nbsp;</span>
+          </div>
+          <div style="display:flex; gap: 10px; margin-bottom: 16px;">
+            <div style="flex:1;">
+              <div style="font-size:.6rem; font-weight:700; color: var(--sub); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px;">MM/AA</div>
+              <div style="background: var(--card); border-radius: 10px; padding: 11px 13px; font-size: .85rem; font-family: monospace; border: 1px solid var(--border);">04/29</div>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:.6rem; font-weight:700; color: var(--sub); letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px;">CVV</div>
+              <div style="background: var(--card); border-radius: 10px; padding: 11px 13px; font-size: .85rem; font-family: monospace; border: 1px solid var(--border);">427</div>
+            </div>
+          </div>
+          <div style="display:flex; gap: 10px;">
+            <div style="flex:1; padding: 12px; background: var(--card); color: var(--sub); border-radius: 12px; text-align:center; font-weight:700; font-size:.8rem;">Annuler</div>
+            <div style="flex:1.4; padding: 12px; background: linear-gradient(135deg, var(--cyan), var(--purple)); color: #fff; border-radius: 12px; text-align:center; font-weight:800; font-size:.8rem; box-shadow: 0 4px 16px rgba(0,212,255,0.3); animation: pulse 1.6s ease infinite;">✓ Enregistrer</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="label client">Saisie carte</div>
+  </div>
+</div>
+
+<!-- Scene 11: Card active on home — final celebration -->
+<div class="scene" data-fr="Carte active ! Le client a son numéro complet, sa date d'expiration et son CVV. Il peut payer en ligne, et rouvrir Swype quand il veut pour le solde réel." data-ar="الكارت نشطة ! الزبون عندو النومرو كامل، التاريخ ديال الإكسبيراسيون والـ CVV. يقدر يخلص أونلاين، ويفتح سوايب فاش يحب باش يشوف السولد الحقيقي." data-i="11">
+  <div class="phone client">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="statbar"><span>9:52</span><div class="right">●●● 🔋</div></div>
+      <div class="app-header">
+        <h2 style="text-align:left; font-size: 1.4rem; font-weight: 900;">Tchipa</h2>
+      </div>
+      <div class="app-body">
+        <div class="home-screen">
+          <div class="home-greet">Bonjour, <span class="name">Karim</span></div>
+          <div class="cardvis" style="animation: bannerIn .8s ease;">
+            <div style="display:flex; justify-content:space-between;">
+              <div class="brand">Virtual Card</div>
+              <div class="mc"><div class="c1"></div><div class="c2"></div></div>
+            </div>
+            <div class="num" style="font-family: monospace; font-size:.9rem; letter-spacing: .15em; font-weight: 700;">5471 2598 7236 4128</div>
+            <div class="row">
+              <div><div class="lbl">Titulaire</div><div class="val">KARIM B.</div></div>
+              <div><div class="lbl">Exp</div><div class="val">04/29</div></div>
+              <div><div class="lbl">CVV</div><div class="val">427</div></div>
+            </div>
+          </div>
+          <div style="text-align:center; font-size: 1.6rem; font-weight: 900; color: var(--green); margin-top: 4px;">$10.00</div>
+          <div class="act-btn">
+            <div class="ico">👁</div>
+            <div>
+              <div class="label" style="font-size:.8rem; font-weight:700;">Voir les détails</div>
+              <div class="sub">Numéro · CVV · Expiration</div>
+            </div>
+          </div>
+          <div class="act-btn" style="background: linear-gradient(135deg, rgba(0,212,255,0.15), rgba(139,92,246,0.15)); border: 1px solid var(--cyan);">
+            <div class="ico" style="background: linear-gradient(135deg, var(--cyan), var(--purple));">↗</div>
+            <div>
+              <div class="label" style="font-size:.8rem; font-weight:700; color: var(--cyan);">Ouvrir Swype</div>
+              <div class="sub">Solde · renommer · lock</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="label client">Carte active ✓</div>
+  </div>
+</div>
+
+<!-- Captions -->
+<div class="captions">
+  <div class="caption-fr" id="capFr">—</div>
+  <div class="caption-ar" id="capAr" dir="rtl">—</div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <button class="ctrl-btn" id="prev" title="Précédent">‹</button>
+  <button class="ctrl-btn play" id="play" title="Lecture/Pause">▶</button>
+  <button class="ctrl-btn" id="next" title="Suivant">›</button>
+  <button class="ctrl-btn" id="restart" title="Recommencer">↻</button>
+</div>
+
+<style>
+@keyframes blink { 50% { border-color: transparent; } }
+</style>
+
+<script>
+(function(){
+  const scenes = Array.from(document.querySelectorAll('.scene'));
+  const total = scenes.length;
+  const progress = document.getElementById('progress');
+  const cnum = document.getElementById('cnum');
+  const capFr = document.getElementById('capFr');
+  const capAr = document.getElementById('capAr');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const playBtn = document.getElementById('play');
+  const restartBtn = document.getElementById('restart');
+
+  // Build progress dots
+  for (let i = 0; i < total; i++) {
+    const d = document.createElement('div');
+    d.className = 'dot';
+    progress.appendChild(d);
+  }
+  const dots = Array.from(progress.children);
+
+  let current = 0;
+  const DURATION = 7000; // 7s per scene
+  let timer = null;
+  let playing = true;
+
+  function show(i) {
+    current = ((i % total) + total) % total;
+    scenes.forEach((s, idx) => {
+      s.classList.toggle('active', idx === current);
+    });
+    dots.forEach((d, idx) => {
+      d.classList.remove('active','done');
+      if (idx < current) d.classList.add('done');
+      else if (idx === current) d.classList.add('active');
+    });
+    cnum.textContent = current + 1;
+    const sc = scenes[current];
+    capFr.textContent = sc.dataset.fr || '';
+    capAr.textContent = sc.dataset.ar || '';
+  }
+  function next() { show(current + 1); }
+  function prev() { show(current - 1); }
+  function tick() {
+    clearTimeout(timer);
+    if (!playing) return;
+    timer = setTimeout(() => { next(); tick(); }, DURATION);
+  }
+  function togglePlay() {
+    playing = !playing;
+    playBtn.textContent = playing ? '⏸' : '▶';
+    tick();
+  }
+
+  prevBtn.onclick = () => { show(current - 1); tick(); };
+  nextBtn.onclick = () => { show(current + 1); tick(); };
+  playBtn.onclick = togglePlay;
+  restartBtn.onclick = () => { show(0); tick(); };
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { next(); tick(); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { prev(); tick(); }
+  });
+
+  show(0);
+  playBtn.textContent = '⏸';
+  tick();
+})();
+</script>
+
+</body>
+</html>

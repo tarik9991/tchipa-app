@@ -16,7 +16,7 @@ Other directories: `scraper/` (legacy AliExpress/Temu Puppeteer scripts, unused 
 
 The product is a USDT-on-Polygon → PayGate.to VCC pipeline. Two roles interact with the same backend:
 
-1. **Agent** (Telegram-side, off-repo): creates an order for a client phone number.
+1. **Agent** — a **human** USDT reseller in Algeria, not a bot, not a Telegram service. The client pays the agent in **dinars via Barid IMob** (Algerian postal-bank mobile transfer) at the daily exchange rate; the agent then sends the equivalent USDT on Polygon to the address Tchipa generates for the client's VCC order. Coordination (price quote, BaridIMob proof, card delivery confirmation) happens in **direct contact or on Telegram** — that channel is informal and outside this codebase. **The agent uses the Tchipa app itself**, entering Agent mode via Profile → PIN (default `1234`) → `AgentScreen` in `lib/main.dart`. There is no Telegram bot in this project; do not confuse with the unrelated `hermes-agent` project on the same VPS.
 2. **Client app** (Flutter): polls the backend by phone number to discover and redeem cards issued for it.
 
 End-to-end flow:

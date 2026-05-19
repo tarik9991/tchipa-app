@@ -1458,6 +1458,9 @@ class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin {
   late AnimationController _flagCtrl;
   late Animation<double> _flagAnim;
+  late AnimationController _logoSpinCtrl;
+  late AnimationController _logoPulseCtrl;
+  late Animation<double> _logoPulse;
   late AnimationController _imgCtrl;
   late Animation<double> _imgFade;
   late AnimationController _overlayCtrl;
@@ -1472,6 +1475,14 @@ class _SplashScreenState extends State<SplashScreen>
       ..repeat();
     _flagAnim =
         Tween<double>(begin: 0, end: 2 * pi).animate(_flagCtrl);
+    _logoSpinCtrl = AnimationController(
+        vsync: this, duration: const Duration(seconds: 9))
+      ..repeat();
+    _logoPulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 2400))
+      ..repeat(reverse: true);
+    _logoPulse = Tween<double>(begin: 0.94, end: 1.06).animate(
+        CurvedAnimation(parent: _logoPulseCtrl, curve: Curves.easeInOut));
 
     _imgCtrl = AnimationController(
         vsync: this,
@@ -1507,6 +1518,8 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void dispose() {
     _flagCtrl.dispose();
+    _logoSpinCtrl.dispose();
+    _logoPulseCtrl.dispose();
     _imgCtrl.dispose();
     _overlayCtrl.dispose();
     super.dispose();
@@ -1531,29 +1544,41 @@ class _SplashScreenState extends State<SplashScreen>
                     painter: _ElectricLogoPainter(_flagAnim.value),
                   ),
                 ),
-                Container(
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Color(0x5900D4FF),
-                        blurRadius: 40,
-                        spreadRadius: 8,
+                // Rotating + breathing Tchipa "T" mark, centered inside the
+                // electric-arc painter. The arcs spin in their own frame; the
+                // logo spins on itself at a slower cadence with a gentle pulse.
+                AnimatedBuilder(
+                  animation: Listenable.merge([_logoSpinCtrl, _logoPulseCtrl]),
+                  builder: (_, __) {
+                    return Transform.scale(
+                      scale: _logoPulse.value,
+                      child: Transform.rotate(
+                        angle: _logoSpinCtrl.value * 2 * pi,
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Color(0x5900D4FF),
+                                blurRadius: 40,
+                                spreadRadius: 8,
+                              ),
+                              BoxShadow(
+                                color: Color(0x338B5CF6),
+                                blurRadius: 60,
+                                spreadRadius: 4,
+                              ),
+                            ],
+                          ),
+                          child: Image.asset(
+                            'assets/tchipa_logo.png',
+                            width: 150, height: 150,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
                       ),
-                      BoxShadow(
-                        color: Color(0x338B5CF6),
-                        blurRadius: 60,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                  child: ClipOval(
-                    child: Image.asset(
-                      'assets/nearpay_logo.png',
-                      width: 150, height: 150,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ]),
             ),
@@ -1774,6 +1799,9 @@ class _HomeScreenState extends State<HomeScreen>
   late AnimationController _glowCtrl;
   late Animation<double> _glowAnim;
   late AnimationController _bgCtrl;
+  // Subtle continuous spin for the Tchipa "T" mark in the app bar — slow
+  // enough to feel alive without distracting from the UI.
+  late AnimationController _logoSpinCtrl;
 
   @override
   void initState() {
@@ -1790,6 +1818,9 @@ class _HomeScreenState extends State<HomeScreen>
     _bgCtrl = AnimationController(
         vsync: this, duration: const Duration(seconds: 8))
       ..repeat(reverse: true);
+    _logoSpinCtrl = AnimationController(
+        vsync: this, duration: const Duration(seconds: 16))
+      ..repeat();
     _load();
   }
 
@@ -1798,6 +1829,7 @@ class _HomeScreenState extends State<HomeScreen>
     _shimmerCtrl.dispose();
     _glowCtrl.dispose();
     _bgCtrl.dispose();
+    _logoSpinCtrl.dispose();
     super.dispose();
   }
 
@@ -2319,20 +2351,21 @@ class _HomeScreenState extends State<HomeScreen>
           elevation: 0,
           titleSpacing: 16,
           title: Row(children: [
-            Container(
-              width: 36, height: 36,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Color(0x7300D4FF),
-                    blurRadius: 12,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
-              child: ClipOval(
-                child: Image.asset('assets/nearpay_logo.png', fit: BoxFit.cover),
+            RotationTransition(
+              turns: _logoSpinCtrl,
+              child: Container(
+                width: 36, height: 36,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x7300D4FF),
+                      blurRadius: 12,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Image.asset('assets/tchipa_logo.png', fit: BoxFit.contain),
               ),
             ),
             const SizedBox(width: 12),

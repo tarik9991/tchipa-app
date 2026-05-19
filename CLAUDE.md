@@ -57,7 +57,7 @@ flutter test                                    # only test/widget_test.dart exi
 flutter run                                     # against an attached device/emulator
 flutter build apk --release \
   --dart-define=OPENROUTER_API_KEY=$OPENROUTER_API_KEY
-flutter pub run flutter_launcher_icons          # regenerate launcher icons from assets/nearpay_logo.png
+flutter pub run flutter_launcher_icons          # regenerate launcher icons from assets/tchipa_logo.png
 ```
 
 Release builds are produced by `.github/workflows/build.yml` on every push to `main` and published as the GitHub Release tagged `latest`. Codemagic config in `codemagic.yaml` mirrors this.

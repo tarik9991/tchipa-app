@@ -1,5 +1,5 @@
 name: tchipa
-description: "NearPay - Smart payment & product lookup for AliExpress/Temu"
+description: "Tchipa — Virtual Visa Card wallet (USDT on Polygon)"
 publish_to: 'none'
 version: 3.0.0+3
 
@@ -36,9 +36,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/nearpay_logo.png"
+  image_path: "assets/tchipa_logo.png"
   adaptive_icon_background: "#0D1117"
-  adaptive_icon_foreground: "assets/nearpay_logo.png"
+  adaptive_icon_foreground: "assets/tchipa_logo.png"
   min_sdk_android: 21
 
 flutter:

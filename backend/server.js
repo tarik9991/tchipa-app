@@ -137,7 +137,7 @@ function hashEmail(emailNorm) {
 //   1. Gmail SMTP (GMAIL_USER + GMAIL_APP_PASSWORD) — free, reliable
 //   2. Brevo HTTP API (BREVO_API_KEY) — fallback if Gmail not configured
 //   3. PM2 logs — last resort so the operator can ship the link manually
-const APP_BASE_URL    = process.env.APP_BASE_URL || 'http://76.13.255.239:3000';
+const APP_BASE_URL    = process.env.APP_BASE_URL || 'https://api.tchipa.co.uk';
 const MAIL_FROM_EMAIL = process.env.MAIL_FROM_EMAIL || 'no-reply@tchipa.co.uk';
 const MAIL_FROM_NAME  = process.env.MAIL_FROM_NAME  || 'Tchipa';
 

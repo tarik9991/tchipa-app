@@ -16,7 +16,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 // ============================================
 // CONFIGURATION
 // ============================================
-const String kVpsBase       = 'http://76.13.255.239:3000';
+const String kVpsBase       = 'https://api.tchipa.co.uk';
 const double kExchangeRate  = 242.0;
 const double kActivationFee = 7.0;
 const String kAgentTelegram = 'https://t.me/c/3983752002/1';

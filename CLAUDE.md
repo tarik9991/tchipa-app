@@ -43,7 +43,7 @@ Key cross-cutting points to know before changing code:
 - **`tx.wait()` was replaced with `waitForReceiptWithTimeout()`** in `forwarder.js` (commit `15b2123`) because `tx.wait()` could hang the polling cycle indefinitely after an RPC stall. Keep the bounded receipt poll — don't reintroduce `tx.wait()`.
 - **`orders.db` (SQLite) is shared** between `server.js` and `forwarder.js` via `better-sqlite3`. Tables: `orders`, `transactions`, `agent_orders` (server.js side) and `pending_orders`, `processed_txs`, `forwarder_state` (forwarder.js side). Schema migrations are inline `CREATE TABLE IF NOT EXISTS` + ad-hoc `PRAGMA table_info` checks — there is no migration tool.
 - **Backend reads env from `/var/www/tchipa-api/.env`** (hardcoded path in both `server.js` line 1 and `forwarder.js` ~line 8). Local dev requires either creating that path or temporarily editing it. `.env.example` shows the required keys: `VPS_WALLET_KEY`, `VPS_WALLET_ADDRESS`, `POLYGON_RPC`.
-- **Flutter client points at the VPS by IP** via `kVpsBase = 'http://76.13.255.239:3000'` (top of `lib/main.dart`). There's no dev/prod split — change this constant if pointing at a local backend.
+- **Flutter client talks to the VPS over HTTPS** via `kVpsBase = 'https://api.tchipa.co.uk'` (top of `lib/main.dart`). The hostname resolves to the VPS at `76.13.255.239` and is fronted by nginx as a reverse proxy that terminates TLS (Let's Encrypt) and forwards to the Node.js app on `127.0.0.1:3000` — the Node process itself is **not exposed on the public internet** anymore. iOS App Transport Security and Cloudflare both depend on this; do not bypass it. Setup script and config live in `backend/deploy/` (see `backend/deploy/README.md`). For local dev against a non-prod backend, change this constant.
 - **`lib/main.dart` is intentionally one file.** Top of file has models (`VccCard`, `VccOrder`, `VccTx`, `UserProfile`, `AgentOrder`), then `PayGateService` (HTTP client to the VPS), then screens (`HomeScreen`, `TransactionsScreen`, `ProfileScreen`, `AgentScreen` reached via Profile + PIN `1234`, `CardWebViewScreen`). Don't reach for a refactor into multiple files unless asked.
 
 ## Commands
@@ -70,7 +70,9 @@ npm install
 node server.js                                  # boots Express on :3000 and starts the forwarder
 ```
 
-On the VPS the process is managed by PM2 (`pm2 restart tchipa-api`, `pm2 logs tchipa-api`). `ecosystem.config.js` pins `cwd: /var/www/tchipa-api`, so the local checkout is the source you edit and `scp` over — there is no deploy script in the repo.
+On the VPS the process is managed by PM2 (`pm2 restart tchipa-api`, `pm2 logs tchipa-api`). `ecosystem.config.js` pins `cwd: /var/www/tchipa-api`, so the local checkout is the source you edit and `scp` over — there is no deploy script in the repo for the Node app itself.
+
+HTTPS / nginx side is bootstrapped once via `backend/deploy/setup-https.sh` (idempotent: `apt install nginx certbot`, drop `nginx-api.conf`, run `certbot --nginx`). The Node app stays plain HTTP on `127.0.0.1:3000`; nginx handles TLS for `api.tchipa.co.uk`. Cert renewal is automatic via `certbot.timer`. See `backend/deploy/README.md`.
 
 ### Website
 

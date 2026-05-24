@@ -165,6 +165,26 @@ function nextRpc() {
   console.log('[Forwarder] Changement RPC ->', RPC_URLS[rpcIndex]);
 }
 
+// Native POL transfer from the VPS wallet — used by the gas-loan endpoint to
+// fund Tchipa Wallet app users who hold USDT but no gas. Same bounded receipt
+// poll as sendUsdt so an RPC stall can't hang the caller.
+async function sendPol(toAddress, amountPol) {
+  const provider = makeProvider();
+  const wallet   = new ethers.Wallet(walletKey, provider);
+  const tx = await wallet.sendTransaction({
+    to: toAddress,
+    value: ethers.parseEther(String(amountPol)),
+  });
+  await waitForReceiptWithTimeout(tx.hash);
+  return tx.hash;
+}
+
+// Native POL balance (in POL units) of any address.
+async function getPolBalance(address) {
+  const hex = await rpcCall('eth_getBalance', [address, 'latest']);
+  return parseFloat(ethers.formatEther(BigInt(hex)));
+}
+
 // ── Match logic ──────────────────────────────────────────────────────────────
 function findOrderByFrom(fromAddr) {
   if (!fromAddr) return null;
@@ -473,4 +493,5 @@ module.exports = {
   init, addOrder, getAddress, getBalance,
   manualForward, getPendingOrders, getOrphanPayments, getRecentTxs,
   buildUniqueClientAmount,
+  sendPol, getPolBalance, getUsdtBalance,
 };

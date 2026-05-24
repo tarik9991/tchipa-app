@@ -78,6 +78,20 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_user_pin_email ON user_pins(email_hash);
   CREATE INDEX IF NOT EXISTS idx_user_pin_token ON user_pins(verify_token);
+
+  -- Gas loans for the self-custody Tchipa Wallet app (separate product).
+  -- A wallet with USDT but no POL can't pay gas; /gas/loan drips a little POL
+  -- from the VPS wallet so the app can broadcast, and the app immediately
+  -- repays the POL value back in USDT. One row per loan; used for cooldown.
+  CREATE TABLE IF NOT EXISTS gas_loans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    address     TEXT NOT NULL,           -- lowercased recipient wallet
+    pol_amount  REAL NOT NULL,
+    fee_usdt    REAL NOT NULL,
+    tx_hash     TEXT,
+    created_at  INTEGER NOT NULL         -- Date.now() ms
+  );
+  CREATE INDEX IF NOT EXISTS idx_gas_loans_addr ON gas_loans(address, created_at);
 `);
 
 // In-place migration for existing DBs created before these columns existed.
@@ -371,6 +385,13 @@ app.post('/auth/change-pin', (req, res) => {
 
 const PAYGATE_ADDRESS    = '0xF1d2574F796d59Fb1289A5E32950F0FbF1227f9F';
 const PAYGATE_WALLET_URL = 'https://api.paygate.to/control/wallet.php';
+
+// ── Gas-loan tunables (Tchipa Wallet app) ──────────────────────────────────
+const GAS_LOAN_POL      = 0.1;   // POL dripped per loan from the VPS wallet
+const GAS_FEE_USDT      = 0.40;  // flat USDT the app repays to the VPS wallet
+const GAS_THRESHOLD_POL = 0.02;  // a wallet under this POL "needs" a loan
+const GAS_LOAN_COOLDOWN_MS = 5 * 60 * 1000; // one loan per address / 5 min
+const { isAddress } = require('ethers');
 
 app.post('/paygate/create-wallet', async (req, res) => {
   const { callback, orderId } = req.body || {};
@@ -1118,6 +1139,58 @@ app.post('/debug/webview-snippet', (req, res) => {
 app.get('/wallet-address', async (req, res) => {
   const balance = await forwarder.getBalance();
   return res.json({ address: forwarder.getAddress(), network: 'Polygon', token: 'USDT', balance });
+});
+
+// ── Gas loan for the Tchipa Wallet app ─────────────────────────────────────
+// A self-custody wallet that holds USDT but no POL can't pay gas. We drip a
+// little POL from the VPS wallet so the app can broadcast; the app then repays
+// the value in USDT (GAS_FEE_USDT) in the same flow. Anti-abuse: only fund a
+// wallet that already holds USDT (so it can repay), only when it actually
+// lacks POL, and at most one loan per address per cooldown window.
+app.post('/gas/loan', async (req, res) => {
+  try {
+    const address = String((req.body && req.body.address) || '').trim();
+    if (!isAddress(address)) {
+      return res.status(400).json({ error: 'Adresse invalide.' });
+    }
+    const addrLc = address.toLowerCase();
+
+    const usdt = await forwarder.getUsdtBalance(address);
+    if (usdt < GAS_FEE_USDT) {
+      return res.status(400).json({
+        error: `Le wallet doit détenir au moins ${GAS_FEE_USDT} USDT pour un prêt de gas.`,
+      });
+    }
+
+    const pol = await forwarder.getPolBalance(address);
+    if (pol >= GAS_THRESHOLD_POL) {
+      return res.json({
+        funded: false, reason: 'POL suffisant', pol,
+        repayTo: forwarder.getAddress(), feeUsdt: GAS_FEE_USDT,
+      });
+    }
+
+    const last = db.prepare(
+      'SELECT created_at FROM gas_loans WHERE address = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(addrLc);
+    if (last && (Date.now() - last.created_at) < GAS_LOAN_COOLDOWN_MS) {
+      return res.status(429).json({ error: 'Prêt déjà accordé récemment. Réessayez dans quelques minutes.' });
+    }
+
+    const txHash = await forwarder.sendPol(address, GAS_LOAN_POL);
+    db.prepare(
+      'INSERT INTO gas_loans (address, pol_amount, fee_usdt, tx_hash, created_at) VALUES (?,?,?,?,?)'
+    ).run(addrLc, GAS_LOAN_POL, GAS_FEE_USDT, txHash, Date.now());
+
+    console.log(`[/gas/loan] ${GAS_LOAN_POL} POL -> ${address} tx=${txHash}`);
+    return res.json({
+      funded: true, txHash, polAmount: GAS_LOAN_POL,
+      repayTo: forwarder.getAddress(), feeUsdt: GAS_FEE_USDT,
+    });
+  } catch (e) {
+    console.error('[/gas/loan]', e.message);
+    return res.status(500).json({ error: 'Échec du prêt de gas.' });
+  }
 });
 
 app.listen(PORT, () => {

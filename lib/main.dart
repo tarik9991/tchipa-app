@@ -1794,6 +1794,8 @@ class _HomeScreenState extends State<HomeScreen>
   // an existing card on the device).
   Map<String, dynamic>? _pendingAgentCard;
   bool _pollingAgent = false;
+  List<Map<String, dynamic>> _rates = [];
+  String? _ratesDate;
 
   late AnimationController _shimmerCtrl;
   late AnimationController _glowCtrl;
@@ -1837,6 +1839,24 @@ class _HomeScreenState extends State<HomeScreen>
     final card = await VccCard.load();
     if (mounted) setState(() { _card = card; _loading = false; });
     _pollAgentCards();
+    _loadRates();
+  }
+
+  // Parallel-market rates scraped by the backend from squareportsaid.com.
+  // Best-effort: a failure just leaves the rates card hidden.
+  Future<void> _loadRates() async {
+    try {
+      final resp = await http
+          .get(Uri.parse('$kVpsBase/rates'))
+          .timeout(const Duration(seconds: 15));
+      if (resp.statusCode != 200) return;
+      final j = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _rates = (j['rates'] as List).cast<Map<String, dynamic>>();
+        _ratesDate = j['date'] as String?;
+      });
+    } catch (_) {/* leave the card hidden */}
   }
 
   Future<void> _pollAgentCards() async {
@@ -2166,6 +2186,7 @@ class _HomeScreenState extends State<HomeScreen>
     // implementation called fetchBalance (hardcoded to 0.0) and wrote 0
     // back to local storage, wiping the funded amount. We now just point
     // the user to Swype.
+    _loadRates();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: const Text('Solde temps réel non disponible. Ouvre le lien Swype pour voir le solde actuel.'),
@@ -2354,13 +2375,13 @@ class _HomeScreenState extends State<HomeScreen>
             RotationTransition(
               turns: _logoSpinCtrl,
               child: Container(
-                width: 36, height: 36,
+                width: 44, height: 44,
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
                       color: Color(0x7300D4FF),
-                      blurRadius: 12,
+                      blurRadius: 16,
                       spreadRadius: 1,
                     ),
                   ],
@@ -2416,6 +2437,10 @@ class _HomeScreenState extends State<HomeScreen>
                       _buildCardWidget(),
                       const SizedBox(height: 24),
                       _buildActions(),
+                      if (_rates.isNotEmpty) ...[
+                        const SizedBox(height: 32),
+                        _buildRates(),
+                      ],
                       if (_card?.isActivated == true) ...[
                         const SizedBox(height: 32),
                         _buildRecentActivity(),
@@ -2523,6 +2548,126 @@ class _HomeScreenState extends State<HomeScreen>
           },
         ),
       ),
+    );
+  }
+
+  static String _fmtRate(dynamic n) {
+    final d = (n as num).toDouble();
+    return d == d.roundToDouble() ? d.toStringAsFixed(0) : d.toString();
+  }
+
+  Widget _buildRates() {
+    final usdt = _rates.firstWhere((r) => r['code'] == 'USDT',
+        orElse: () => const {});
+    final others = _rates.where((r) => r['code'] != 'USDT').toList();
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: AppColors.isDark ? 0.7 : 1),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text('Taux du Square',
+                style: TextStyle(
+                    color: AppColors.label,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
+            const Spacer(),
+            if (_ratesDate != null)
+              Text(_ratesDate!,
+                  style: TextStyle(color: AppColors.textDim, fontSize: 11)),
+          ]),
+          const SizedBox(height: 14),
+          if (usdt.isNotEmpty) _usdtRateFeature(usdt),
+          if (others.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: others.map(_rateChip).toList(),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Text('Marché parallèle · squareportsaid.com',
+              style: TextStyle(color: AppColors.textDim, fontSize: 10.5)),
+        ],
+      ),
+    );
+  }
+
+  // USDT first and biggest — the currency the wallet pipeline runs on.
+  Widget _usdtRateFeature(Map<String, dynamic> r) {
+    const tether = Color(0xFF26A17B);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          tether.withValues(alpha: 0.16),
+          tether.withValues(alpha: 0.04),
+        ]),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: tether.withValues(alpha: 0.35)),
+      ),
+      child: Row(children: [
+        Container(
+          width: 46,
+          height: 46,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(color: tether, shape: BoxShape.circle),
+          child: const Text('₮',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 14),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('USDT',
+              style: TextStyle(
+                  color: AppColors.label,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800)),
+          Text('Tether · DZD',
+              style: TextStyle(color: AppColors.textSub, fontSize: 12)),
+        ]),
+        const Spacer(),
+        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(_fmtRate(r['buy']),
+              style: TextStyle(
+                  color: AppColors.label,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w900,
+                  height: 1)),
+          const SizedBox(height: 2),
+          Text('Achat · Vente ${_fmtRate(r['sell'])}',
+              style: TextStyle(color: AppColors.textSub, fontSize: 11.5)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _rateChip(Map<String, dynamic> r) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(r['code'] as String,
+            style: TextStyle(
+                color: AppColors.label,
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+        const SizedBox(width: 8),
+        Text('${_fmtRate(r['buy'])} / ${_fmtRate(r['sell'])}',
+            style: TextStyle(color: AppColors.textSub, fontSize: 12.5)),
+      ]),
     );
   }
 

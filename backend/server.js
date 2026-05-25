@@ -1193,6 +1193,99 @@ app.post('/gas/loan', async (req, res) => {
   }
 });
 
+// ── Exchange rates (scraped from squareportsaid.com) ─────────────────────────
+// The page is statically rendered Astro: the live rates ride along in the
+// `props` attribute of the Calculator island as HTML-entity-encoded JSON, where
+// every value is wrapped Astro-style as [typeCode, payload]. We decode the
+// entities, slice out the balanced `latestRates` block, then de-Astro it.
+// Cached in-process so we hit the source at most once per RATES_CACHE_TTL_MS —
+// the parallel market only moves a few times a day.
+const RATES_SOURCE_URL   = 'https://www.squareportsaid.com';
+const RATES_CACHE_TTL_MS  = 10 * 60 * 1000;
+// USDT first (it's what the wallet holds), then the rest in source order.
+const RATES_ORDER = ['USDT', 'EUR', 'USD', 'GBP', 'CAD', 'CHF', 'TRY', 'CNY', 'SAR', 'AED', 'TND', 'MAD'];
+let _ratesCache = { at: 0, data: null };
+
+function htmlDecode(s) {
+  return s.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+          .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+// Astro serializes each value as [typeCode, payload]; 1 = array, 0 = object/scalar.
+function deAstro(v) {
+  if (!Array.isArray(v)) return v;
+  const [code, payload] = v;
+  if (code === 1) return payload.map(deAstro);
+  if (code === 0 && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const o = {};
+    for (const k of Object.keys(payload)) o[k] = deAstro(payload[k]);
+    return o;
+  }
+  return payload;
+}
+
+// Return the balanced [...] substring beginning at the first '[' on/after `from`.
+function balancedSlice(str, from) {
+  const start = str.indexOf('[', from);
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < str.length; i++) {
+    const c = str[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') { if (--depth === 0) return str.slice(start, i + 1); }
+  }
+  return null;
+}
+
+function parseRatesFromHtml(html) {
+  const decoded = htmlDecode(html);
+  const at = decoded.indexOf('"latestRates":');
+  if (at < 0) throw new Error('latestRates introuvable dans la page source');
+  const slice = balancedSlice(decoded, at);
+  if (!slice) throw new Error('bloc latestRates illisible');
+  const flat = deAstro(JSON.parse(slice)); // { date, EUR:{buy,sell}, ..., USDT:{buy,sell} }
+  const rates = [];
+  for (const code of RATES_ORDER) {
+    const r = flat[code];
+    if (r && typeof r.buy === 'number' && typeof r.sell === 'number') {
+      rates.push({ code, buy: r.buy, sell: r.sell });
+    }
+  }
+  if (rates.length === 0) throw new Error('aucun taux exploitable');
+  return { date: flat.date || null, source: 'Square Port-Saïd', rates };
+}
+
+async function fetchRates() {
+  if (_ratesCache.data && (Date.now() - _ratesCache.at) < RATES_CACHE_TTL_MS) {
+    return _ratesCache.data;
+  }
+  const resp = await fetch(RATES_SOURCE_URL, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TchipaApp/1.0)' },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const parsed = parseRatesFromHtml(await resp.text());
+  const data = { ...parsed, updatedAt: Date.now() };
+  _ratesCache = { at: Date.now(), data };
+  return data;
+}
+
+// GET /rates — current parallel-market rates (USDT first), DZD buy/sell.
+app.get('/rates', async (req, res) => {
+  try {
+    res.json(await fetchRates());
+  } catch (e) {
+    if (_ratesCache.data) return res.json({ ..._ratesCache.data, stale: true });
+    console.error('[/rates]', e.message);
+    res.status(502).json({ error: 'Taux indisponibles pour le moment.' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Tchipa API actif sur http://localhost:${PORT}`);
 });

@@ -549,6 +549,90 @@
     [dir="rtl"] .nav-mid { flex-direction:row-reverse; }
     [dir="rtl"] .nav-right { flex-direction:row-reverse; }
     [dir="rtl"] .hero-btns { flex-direction:row-reverse; }
+
+    /* ── WALLET SHOWCASE ─────────────────────────────────────── */
+    .wallet-sec {
+      padding: 8rem 6%;
+      position: relative; z-index: 2; overflow: hidden;
+      background: rgba(22,27,34,.35);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 5rem;
+    }
+    .wallet-sec::before {
+      content:''; position:absolute; inset:0;
+      background: radial-gradient(circle at 75% 50%, rgba(139,92,246,.10), transparent 55%);
+      pointer-events:none;
+    }
+    .wallet-copy { flex:1; position:relative; z-index:3; }
+    .wallet-tag {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:rgba(139,92,246,.1); border:1px solid rgba(139,92,246,.3);
+      border-radius:100px; padding:.38rem 1rem;
+      font-size:.78rem; font-weight:800; color:var(--purple);
+      text-transform:uppercase; letter-spacing:.1em; margin-bottom:1.2rem;
+    }
+    .wallet-features { list-style:none; display:flex; flex-direction:column; gap:.85rem; margin:2rem 0; }
+    .wallet-features li { display:flex; gap:.75rem; align-items:flex-start; font-size:.94rem; color:var(--sub); }
+    .wallet-features .wf-ic {
+      flex:0 0 auto; width:30px;height:30px; border-radius:9px;
+      display:flex;align-items:center;justify-content:center; font-size:.9rem;
+      background:rgba(139,92,246,.14); box-shadow:0 0 18px rgba(139,92,246,.2);
+    }
+    .wallet-features strong { color:var(--text); font-weight:700; }
+
+    /* Spinning T stage */
+    .wallet-stage {
+      flex:1; position:relative; z-index:2;
+      min-height:440px;
+      display:flex; align-items:center; justify-content:center;
+      perspective:1400px;
+    }
+    #fireworks {
+      position:absolute; inset:0; z-index:1; pointer-events:none;
+    }
+    .t-halo {
+      position:absolute; width:380px; height:380px; border-radius:50%;
+      background:conic-gradient(from 0deg, var(--cyan), var(--purple), var(--gold), var(--cyan));
+      filter:blur(70px); opacity:.32; z-index:1;
+      animation:t-halo-spin 8s linear infinite;
+    }
+    @keyframes t-halo-spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
+    .t-spin-wrap {
+      position:relative; z-index:3;
+      transform-style:preserve-3d;
+      animation:t-spin 5s linear infinite;
+    }
+    @keyframes t-spin {
+      from { transform:rotateY(0deg); }
+      to   { transform:rotateY(360deg); }
+    }
+    .t-logo {
+      width:clamp(180px,22vw,300px); height:auto; display:block;
+      filter:drop-shadow(0 0 0 transparent);
+      animation:t-flash 3s ease-in-out infinite;
+    }
+    @keyframes t-flash {
+      0%,100% { filter:drop-shadow(0 0 18px rgba(0,212,255,.7)) drop-shadow(0 0 40px rgba(139,92,246,.45)); }
+      33%     { filter:drop-shadow(0 0 26px rgba(139,92,246,.85)) drop-shadow(0 0 55px rgba(0,212,255,.5)); }
+      66%     { filter:drop-shadow(0 0 24px rgba(245,158,11,.7)) drop-shadow(0 0 50px rgba(236,72,153,.5)); }
+    }
+    .wallet-badges { display:flex; gap:.75rem; flex-wrap:wrap; margin-top:1.8rem; }
+    .wallet-pill {
+      display:inline-flex; align-items:center; gap:.4rem;
+      background:rgba(22,27,34,.7); border:1px solid var(--border);
+      border-radius:100px; padding:.42rem .9rem; font-size:.8rem; font-weight:700; color:var(--sub);
+    }
+    @media(max-width:1024px){
+      .wallet-sec{ flex-direction:column; gap:2rem; text-align:center; }
+      .wallet-features li{ text-align:left; }
+      .wallet-stage{ min-height:360px; width:100%; }
+      .wallet-badges{ justify-content:center; }
+      .wallet-tag{ }
+    }
+    [dir="rtl"] .wallet-copy{ text-align:right; }
+    [dir="rtl"] .wallet-features li{ flex-direction:row-reverse; text-align:right; }
+    [dir="rtl"] .wallet-badges{ flex-direction:row-reverse; }
   </style>
 </head>
 <body>
@@ -562,6 +646,7 @@
     <a href="#features" data-k="nav.features">Features</a>
     <a href="#how"      data-k="nav.how">How it Works</a>
     <a href="/demo.html" data-k="nav.demo">▶ Demo</a>
+    <a href="#wallet"   data-k="nav.wallet">Wallet</a>
     <a href="#download" data-k="nav.download">Download</a>
   </div>
   <div class="nav-right">
@@ -783,6 +868,39 @@
   </div>
 </section>
 
+<!-- ── WALLET SHOWCASE ───────────────────────────────────────── -->
+<section id="wallet" class="wallet-sec">
+  <div class="wallet-copy reveal">
+    <span class="wallet-tag" data-k="wal.tag">👛 New · Self-Custody Wallet</span>
+    <h2 class="sec-h2"><span data-k="wal.h2a">The Tchipa Wallet</span><br><span class="grad-text" data-k="wal.h2b">your keys, your USDT</span></h2>
+    <p class="sec-lead" data-k="wal.lead">A standalone non-custodial crypto wallet for the Polygon network. Your 12-word seed never leaves your phone — Tchipa never holds your funds. Send, receive and store USDT &amp; POL, then fund your virtual cards in seconds.</p>
+    <ul class="wallet-features">
+      <li class="reveal reveal-d1"><span class="wf-ic">🔑</span><span><strong data-k="wal.f1t">Self-custody seed.</strong> <span data-k="wal.f1d">BIP39 12-word recovery phrase, encrypted in secure storage. You own your keys.</span></span></li>
+      <li class="reveal reveal-d2"><span class="wf-ic">⛽</span><span><strong data-k="wal.f2t">Gasless sending.</strong> <span data-k="wal.f2d">Out of POL? Tchipa fronts the gas so you can move USDT even with an empty gas tank.</span></span></li>
+      <li class="reveal reveal-d3"><span class="wf-ic">🔒</span><span><strong data-k="wal.f3t">PIN + biometrics.</strong> <span data-k="wal.f3d">6-digit PIN and fingerprint lock guard your wallet and your seed phrase.</span></span></li>
+      <li class="reveal reveal-d4"><span class="wf-ic">⚡</span><span><strong data-k="wal.f4t">Built for Polygon.</strong> <span data-k="wal.f4d">USDT &amp; POL balances, QR send/receive, instant low-fee transfers on chain 137.</span></span></li>
+    </ul>
+    <div class="wallet-badges">
+      <span class="wallet-pill">🟣 Polygon</span>
+      <span class="wallet-pill">💵 USDT</span>
+      <span class="wallet-pill" data-k="wal.pill3">🔐 Non-custodial</span>
+    </div>
+    <div class="hero-btns" style="margin-top:1.8rem;">
+      <a href="https://github.com/tarik9991/tchipa-wallet/releases/latest/download/app-release.apk" class="btn-primary">
+        <span>👛</span><span data-k="wal.cta">Download Wallet APK</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="wallet-stage reveal reveal-d2">
+    <canvas id="fireworks"></canvas>
+    <div class="t-halo"></div>
+    <div class="t-spin-wrap">
+      <img src="/tchipa_logo.png" alt="Tchipa T logo" class="t-logo">
+    </div>
+  </div>
+</section>
+
 <!-- ── CTA SECTION ───────────────────────────────────────────── -->
 <section class="cta-sec" id="download">
   <div class="cta-card reveal">
@@ -833,7 +951,7 @@
 /* ── TRANSLATIONS ────────────────────────────────────────── */
 const T = {
   en: {
-    'nav.features':'Features','nav.how':'How it Works','nav.demo':'▶ Demo','nav.download':'Download','nav.cta':'Get the App',
+    'nav.features':'Features','nav.how':'How it Works','nav.demo':'▶ Demo','nav.wallet':'Wallet','nav.download':'Download','nav.cta':'Get the App',
     'hero.badge':'🔒 v4 — Client PIN · Email Verified · Theft-Proof',
     'hero.h1a':'Your Virtual Card,','hero.h1b':'Activated Instantly',
     'hero.sub':'Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.',
@@ -859,6 +977,14 @@ const T = {
     'mock.li1':'Biometric fingerprint protection','mock.li2':'One-tap copy for card number & CVV',
     'mock.li3':'Transaction history & receipts','mock.li4':'Smart QR auto-fills exact amount in Binance',
     'app.balance':'Balance','app.status':'Card Status','app.active':'Active','app.today':'Today','app.btn':'+ Recharge Card',
+    'wal.tag':'👛 New · Self-Custody Wallet',
+    'wal.h2a':'The Tchipa Wallet','wal.h2b':'your keys, your USDT',
+    'wal.lead':'A standalone non-custodial crypto wallet for the Polygon network. Your 12-word seed never leaves your phone — Tchipa never holds your funds. Send, receive and store USDT & POL, then fund your virtual cards in seconds.',
+    'wal.f1t':'Self-custody seed.','wal.f1d':'BIP39 12-word recovery phrase, encrypted in secure storage. You own your keys.',
+    'wal.f2t':'Gasless sending.','wal.f2d':'Out of POL? Tchipa fronts the gas so you can move USDT even with an empty gas tank.',
+    'wal.f3t':'PIN + biometrics.','wal.f3d':'6-digit PIN and fingerprint lock guard your wallet and your seed phrase.',
+    'wal.f4t':'Built for Polygon.','wal.f4d':'USDT & POL balances, QR send/receive, instant low-fee transfers on chain 137.',
+    'wal.pill3':'🔐 Non-custodial','wal.cta':'Download Wallet APK',
     'cta.badge':'📲 Available for Android',
     'cta.h2a':'Start paying online','cta.h2b':'with crypto today',
     'cta.sub':'Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.',
@@ -870,7 +996,7 @@ const T = {
     'foot.copy':'© 2025 Tchipa. All rights reserved.','foot.tag':'Built with 💙 for digital payments',
   },
   ar: {
-    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.demo':'▶ العرض','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
+    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.demo':'▶ العرض','nav.wallet':'المحفظة','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
     'hero.badge':'🔒 v4 — رمز PIN العميل · بريد إلكتروني موثّق · ضد السرقة',
     'hero.h1a':'بطاقتك الافتراضية،','hero.h1b':'مُفعَّلة فوراً',
     'hero.sub':'تشيبا تتيح لك إنشاء بطاقات ماستركارد الافتراضية في دقائق. ادفع عبر الإنترنت حول العالم بـ USDT على شبكة Polygon — دون حاجة لحساب بنكي.',
@@ -896,6 +1022,14 @@ const T = {
     'mock.li1':'حماية بصمة الإصبع البيومترية','mock.li2':'نسخ رقم البطاقة والـ CVV بنقرة واحدة',
     'mock.li3':'سجل المعاملات والإيصالات','mock.li4':'QR ذكي يملأ المبلغ تلقائياً في Binance',
     'app.balance':'الرصيد','app.status':'حالة البطاقة','app.active':'نشطة','app.today':'اليوم','app.btn':'+ شحن البطاقة',
+    'wal.tag':'👛 جديد · محفظة بحفظ ذاتي',
+    'wal.h2a':'محفظة تشيبا','wal.h2b':'مفاتيحك، وUSDT الخاص بك',
+    'wal.lead':'محفظة كريبتو مستقلة بحفظ ذاتي لشبكة Polygon. عبارة الاسترداد المكوّنة من 12 كلمة لا تغادر هاتفك أبداً — تشيبا لا تحتفظ بأموالك. أرسل واستقبل وخزّن USDT وPOL، ثم اشحن بطاقاتك الافتراضية في ثوانٍ.',
+    'wal.f1t':'بذرة بحفظ ذاتي.','wal.f1d':'عبارة استرداد BIP39 من 12 كلمة، مشفّرة في تخزين آمن. أنت تملك مفاتيحك.',
+    'wal.f2t':'إرسال بدون رسوم غاز.','wal.f2d':'نفد رصيد POL؟ تشيبا تتقدّم برسوم الغاز لتتمكن من تحويل USDT حتى بخزان غاز فارغ.',
+    'wal.f3t':'رمز PIN + بصمة.','wal.f3d':'رمز PIN من 6 أرقام وقفل بصمة الإصبع يحميان محفظتك وعبارة البذرة.',
+    'wal.f4t':'مصمّمة لـ Polygon.','wal.f4d':'أرصدة USDT وPOL، إرسال/استقبال عبر QR، تحويلات فورية برسوم منخفضة على السلسلة 137.',
+    'wal.pill3':'🔐 بحفظ ذاتي','wal.cta':'تحميل محفظة APK',
     'cta.badge':'📲 متوفر لأندرويد',
     'cta.h2a':'ابدأ الدفع عبر الإنترنت','cta.h2b':'بالكريبتو اليوم',
     'cta.sub':'حمّل تشيبا لأندرويد واحصل على أول بطاقة افتراضية في أقل من دقيقتين. بدون بنك، بدون KYC، بدون حدود.',
@@ -1009,6 +1143,55 @@ if(scene) {
     }
   });
 }
+
+/* ── WALLET FIREWORKS ────────────────────────────────────── */
+(function(){
+  const fc = document.getElementById('fireworks');
+  if(!fc) return;
+  const fx = fc.getContext('2d');
+  const palette = ['0,212,255','139,92,246','245,158,11','16,185,129','236,72,153'];
+  let parts = [];
+  let running = false, raf = null, spawnTimer = 0, W = 0, H = 0;
+
+  function sizeFc(){
+    const r = fc.parentElement.getBoundingClientRect();
+    W = fc.width = r.width; H = fc.height = r.height;
+  }
+  function burst(x, y){
+    const col = palette[Math.floor(Math.random()*palette.length)];
+    const n = 38 + Math.floor(Math.random()*24);
+    for(let i=0;i<n;i++){
+      const a = (Math.PI*2*i)/n + Math.random()*.2;
+      const sp = Math.random()*3.4 + 1.6;
+      parts.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+        life:1, decay:Math.random()*.012+.008, col, r:Math.random()*2+1 });
+    }
+  }
+  function tickFx(){
+    fx.clearRect(0,0,W,H);
+    fx.globalCompositeOperation = 'lighter';
+    for(let i=parts.length-1;i>=0;i--){
+      const p = parts[i];
+      p.vy += .03; p.vx *= .985; p.vy *= .985;
+      p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+      if(p.life <= 0){ parts.splice(i,1); continue; }
+      fx.beginPath(); fx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      fx.fillStyle = `rgba(${p.col},${p.life})`; fx.fill();
+    }
+    fx.globalCompositeOperation = 'source-over';
+    if(--spawnTimer <= 0){
+      burst(W*(.2+Math.random()*.6), H*(.15+Math.random()*.5));
+      spawnTimer = 35 + Math.floor(Math.random()*40);
+    }
+    if(running) raf = requestAnimationFrame(tickFx);
+  }
+  function start(){ if(running) return; running = true; sizeFc(); spawnTimer = 0; tickFx(); }
+  function stop(){ running = false; if(raf) cancelAnimationFrame(raf); parts = []; fx.clearRect(0,0,W,H); }
+  window.addEventListener('resize', ()=>{ if(running) sizeFc(); });
+  new IntersectionObserver(es=>{
+    es.forEach(e=> e.isIntersecting ? start() : stop());
+  }, {threshold:.15}).observe(document.getElementById('wallet'));
+})();
 
 /* ── INIT ────────────────────────────────────────────────── */
 window.addEventListener('resize', resize);

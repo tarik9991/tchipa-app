@@ -588,7 +588,7 @@
       display:flex; align-items:center; justify-content:center;
       perspective:1400px;
     }
-    #fireworks {
+    .fx-canvas {
       position:absolute; inset:0; z-index:1; pointer-events:none;
     }
     .t-halo {
@@ -616,6 +616,20 @@
       0%,100% { filter:drop-shadow(0 0 18px rgba(0,212,255,.7)) drop-shadow(0 0 40px rgba(139,92,246,.45)); }
       33%     { filter:drop-shadow(0 0 26px rgba(139,92,246,.85)) drop-shadow(0 0 55px rgba(0,212,255,.5)); }
       66%     { filter:drop-shadow(0 0 24px rgba(245,158,11,.7)) drop-shadow(0 0 50px rgba(236,72,153,.5)); }
+    }
+    /* Top-of-page hero fireworks banner */
+    .topfx {
+      position:relative; width:100%;
+      min-height:clamp(240px,34vh,400px);
+      display:flex; align-items:center; justify-content:center;
+      overflow:hidden; perspective:1400px;
+      border-bottom:1px solid rgba(255,255,255,.05);
+    }
+    .topfx .t-halo { width:clamp(260px,32vw,420px); height:clamp(260px,32vw,420px); opacity:.4; }
+    .t-logo-top { width:clamp(150px,18vw,260px); }
+    @media (max-width:768px){ .topfx{ min-height:clamp(200px,28vh,300px); } }
+    @media (prefers-reduced-motion:reduce){
+      .t-spin-wrap{ animation:none; } .t-halo{ animation:none; }
     }
     .wallet-badges { display:flex; gap:.75rem; flex-wrap:wrap; margin-top:1.8rem; }
     .wallet-pill {
@@ -654,6 +668,15 @@
     <a href="#download" class="btn-nav" data-k="nav.cta">Get the App</a>
   </div>
 </nav>
+
+<!-- ── TOP FIREWORKS BANNER ───────────────────────────────── -->
+<div class="topfx" id="topfx">
+  <canvas class="fx-canvas" id="fireworks-top"></canvas>
+  <div class="t-halo"></div>
+  <div class="t-spin-wrap">
+    <img src="/tchipa_logo.png" alt="Tchipa T logo" class="t-logo t-logo-top">
+  </div>
+</div>
 
 <!-- ── HERO ───────────────────────────────────────────────── -->
 <section id="home" class="hero">
@@ -893,7 +916,7 @@
   </div>
 
   <div class="wallet-stage reveal reveal-d2">
-    <canvas id="fireworks"></canvas>
+    <canvas id="fireworks" class="fx-canvas"></canvas>
     <div class="t-halo"></div>
     <div class="t-spin-wrap">
       <img src="/tchipa_logo.png" alt="Tchipa T logo" class="t-logo">
@@ -904,7 +927,7 @@
 <!-- ── CTA SECTION ───────────────────────────────────────────── -->
 <section class="cta-sec" id="download">
   <div class="cta-card reveal">
-    <div class="badge" style="display:inline-flex;margin-bottom:1.4rem" data-k="cta.badge">📲 Available for Android</div>
+    <div class="badge" style="display:inline-flex;margin-bottom:1.4rem" data-k="cta.badge">📲 Available for Android & iPhone</div>
     <h2 class="cta-h2"><span data-k="cta.h2a">Start paying online</span><br><span class="grad-text" data-k="cta.h2b">with crypto today</span></h2>
     <p class="cta-sub" data-k="cta.sub">Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.</p>
     <div class="cta-btns">
@@ -1145,54 +1168,87 @@ if(scene) {
   });
 }
 
-/* ── WALLET FIREWORKS ────────────────────────────────────── */
-(function(){
-  const fc = document.getElementById('fireworks');
-  if(!fc) return;
-  const fx = fc.getContext('2d');
-  const palette = ['0,212,255','139,92,246','245,158,11','16,185,129','236,72,153'];
-  let parts = [];
+/* ── FIREWORKS (shared engine: rockets, flash, twinkle, willow) ── */
+function initFireworks(canvas){
+  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+  if(reduce) return;                       // honour reduced-motion: stay still
+  const fx = canvas.getContext('2d');
+  const palette = ['0,212,255','139,92,246','245,158,11','16,185,129','236,72,153','255,255,255'];
+  let parts = [], rockets = [];
   let running = false, raf = null, spawnTimer = 0, W = 0, H = 0;
+  const rand = (a,b)=> a + Math.random()*(b-a);
 
-  function sizeFc(){
-    const r = fc.parentElement.getBoundingClientRect();
-    W = fc.width = r.width; H = fc.height = r.height;
+  function size(){
+    const r = canvas.parentElement.getBoundingClientRect();
+    W = canvas.width = r.width; H = canvas.height = r.height;
   }
-  function burst(x, y){
-    const col = palette[Math.floor(Math.random()*palette.length)];
-    const n = 38 + Math.floor(Math.random()*24);
+  function explode(x, y, col){
+    parts.push({ flash:true, x, y, r:rand(26,42), life:1, decay:.06 });   // bright core flash
+    const n = 54 + Math.floor(Math.random()*40);
+    const ring = Math.random() < .45;                                     // crisp ring vs scatter
+    const baseSp = rand(2.2, 4.2);
     for(let i=0;i<n;i++){
-      const a = (Math.PI*2*i)/n + Math.random()*.2;
-      const sp = Math.random()*3.4 + 1.6;
-      parts.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
-        life:1, decay:Math.random()*.012+.008, col, r:Math.random()*2+1 });
+      const a  = (Math.PI*2*i)/n + rand(-.12,.12);
+      const sp = ring ? baseSp*rand(.9,1.1) : rand(1.2,4.8);
+      parts.push({ px:x, py:y, x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+        life:1, decay:rand(.006,.014), col, r:rand(1,2.6), tw:rand(0,6.28) });
+    }
+    if(Math.random() < .5){                                              // slow golden willow drips
+      for(let i=0;i<14;i++){
+        const a=rand(0,6.28), sp=rand(.6,1.8);
+        parts.push({ px:x, py:y, x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+          life:1, decay:rand(.004,.008), col:'245,158,11', r:rand(1,2), tw:rand(0,6.28), willow:true });
+      }
     }
   }
-  function tickFx(){
+  function launch(){
+    const x = rand(W*.15, W*.85);
+    rockets.push({ x, y:H+4, vy:-rand(6.5,9.5),
+      col:palette[Math.floor(Math.random()*(palette.length-1))], target:rand(H*.12, H*.45) });
+  }
+  function tick(){
     fx.clearRect(0,0,W,H);
     fx.globalCompositeOperation = 'lighter';
+    for(let i=rockets.length-1;i>=0;i--){
+      const rk = rockets[i];
+      rk.y += rk.vy; rk.vy += .12;
+      fx.beginPath(); fx.moveTo(rk.x, rk.y); fx.lineTo(rk.x, rk.y+12);
+      fx.strokeStyle = `rgba(${rk.col},.45)`; fx.lineWidth = 2; fx.stroke();
+      fx.beginPath(); fx.arc(rk.x, rk.y, 2.2, 0, Math.PI*2);
+      fx.fillStyle = `rgba(${rk.col},1)`; fx.fill();
+      if(rk.y <= rk.target || rk.vy >= 0){ explode(rk.x, rk.y, rk.col); rockets.splice(i,1); }
+    }
     for(let i=parts.length-1;i>=0;i--){
       const p = parts[i];
-      p.vy += .03; p.vx *= .985; p.vy *= .985;
-      p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+      if(p.flash){
+        p.life -= p.decay;
+        if(p.life <= 0){ parts.splice(i,1); continue; }
+        fx.beginPath(); fx.arc(p.x, p.y, p.r*p.life, 0, Math.PI*2);
+        fx.fillStyle = `rgba(255,255,255,${p.life*.8})`; fx.fill();
+        continue;
+      }
+      p.px=p.x; p.py=p.y;
+      p.vy += p.willow ? .015 : .035; p.vx *= .986; p.vy *= .986;
+      p.x += p.vx; p.y += p.vy; p.life -= p.decay; p.tw += .3;
       if(p.life <= 0){ parts.splice(i,1); continue; }
-      fx.beginPath(); fx.arc(p.x,p.y,p.r,0,Math.PI*2);
-      fx.fillStyle = `rgba(${p.col},${p.life})`; fx.fill();
+      const tw = .65 + .35*Math.sin(p.tw);                               // twinkle
+      fx.beginPath(); fx.moveTo(p.px, p.py); fx.lineTo(p.x, p.y);
+      fx.strokeStyle = `rgba(${p.col},${p.life*tw*.5})`; fx.lineWidth = p.r; fx.stroke();
+      fx.beginPath(); fx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      fx.fillStyle = `rgba(${p.col},${p.life*tw})`; fx.fill();
     }
     fx.globalCompositeOperation = 'source-over';
-    if(--spawnTimer <= 0){
-      burst(W*(.2+Math.random()*.6), H*(.15+Math.random()*.5));
-      spawnTimer = 35 + Math.floor(Math.random()*40);
-    }
-    if(running) raf = requestAnimationFrame(tickFx);
+    if(--spawnTimer <= 0){ launch(); spawnTimer = 26 + Math.floor(Math.random()*34); }
+    if(running) raf = requestAnimationFrame(tick);
   }
-  function start(){ if(running) return; running = true; sizeFc(); spawnTimer = 0; tickFx(); }
-  function stop(){ running = false; if(raf) cancelAnimationFrame(raf); parts = []; fx.clearRect(0,0,W,H); }
-  window.addEventListener('resize', ()=>{ if(running) sizeFc(); });
+  function start(){ if(running) return; running = true; size(); spawnTimer = 0; tick(); }
+  function stop(){ running = false; if(raf) cancelAnimationFrame(raf); parts = []; rockets = []; fx.clearRect(0,0,W,H); }
+  window.addEventListener('resize', ()=>{ if(running) size(); });
   new IntersectionObserver(es=>{
     es.forEach(e=> e.isIntersecting ? start() : stop());
-  }, {threshold:.15}).observe(document.getElementById('wallet'));
-})();
+  }, {threshold:.05}).observe(canvas.parentElement);
+}
+document.querySelectorAll('.fx-canvas').forEach(initFireworks);
 
 /* ── INIT ────────────────────────────────────────────────── */
 window.addEventListener('resize', resize);

@@ -2,8 +2,20 @@ require('dotenv').config({ path: '/var/www/tchipa-api/.env' });
 const forwarder = require('./forwarder');
 const path = require("path");
 const express = require('express');
+const cors = require('cors');
 const app = express();
 const PORT = 3000;
+// CORS: the Tchipa iPhone PWA (tchipa-pwa repo, served from GitHub Pages) calls
+// this API from the browser, so it needs Access-Control-* headers. The native
+// Android APK doesn't care about CORS. Allowlist the PWA origins; '*' would also
+// work since no cookies/credentials are used.
+app.use(cors({
+  origin: [
+    'https://tarik9991.github.io',
+    'https://tchipa.co.uk',
+    'https://www.tchipa.co.uk',
+  ],
+}));
 app.use(express.json());
 forwarder.init().catch(console.error);
 

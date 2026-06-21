@@ -1,11 +1,11 @@
 {
-    "name": "henini",
-    "short_name": "henini",
+    "name": "Tchipa",
+    "short_name": "Tchipa",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0D1117",
+    "theme_color": "#0D1117",
+    "description": "Tchipa — votre carte Visa virtuelle (USDT sur Polygon).",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 // ============================================
 // CONFIGURATION
@@ -737,6 +738,51 @@ class PayGateService {
   }
 
   static Future<double> fetchBalance(String cardId) async => 0.0;
+
+  // ----- /referral/* — affiliate program (1% of referred activations) -----
+
+  // My code, my referral count, and my earnings totals + recent rows.
+  static Future<Map<String, dynamic>> referralSummary(String phone) async {
+    final resp = await http
+        .get(Uri.parse('$kVpsBase/referral/summary/${Uri.encodeComponent(phone)}'))
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return body;
+    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // "I was referred by <code>." Set once, immutable afterwards.
+  static Future<void> referralClaim({required String phone, required String code}) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/referral/claim'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'phone': phone, 'code': code}),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (resp.statusCode == 200) return;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // Register/update the Polygon USDT address where earnings are auto-paid.
+  // PIN-gated server-side (reuses the client's own verified PIN).
+  static Future<void> setPayoutAddress({
+    required String phone,
+    required String pin,
+    required String address,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/referral/set-payout-address'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'phone': phone, 'pin': pin, 'address': address}),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (resp.statusCode == 200) return;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
 
   // ----- /auth/* — PIN setup + email magic-link -----
 
@@ -4809,6 +4855,472 @@ class TransactionsScreen extends StatelessWidget {
 // ============================================
 // PROFILE SCREEN
 // ============================================
+// ============================================
+// REFERRAL / AFFILIATE SCREEN — earn 1% on every card a friend activates
+// ============================================
+class ReferralScreen extends StatefulWidget {
+  const ReferralScreen({super.key});
+  @override
+  State<ReferralScreen> createState() => _ReferralScreenState();
+}
+
+class _ReferralScreenState extends State<ReferralScreen> {
+  static const _green = Color(0xFF10B981);
+  Map<String, dynamic>? _data;
+  bool _loading = true;
+  String? _error;
+  final _codeCtrl = TextEditingController();
+  bool _claiming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final d = await PayGateService.referralSummary(UserProfile.phone.trim());
+      if (mounted) setState(() { _data = d; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _loading = false; });
+    }
+  }
+
+  Future<void> _claim() async {
+    final code = _codeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) return;
+    setState(() => _claiming = true);
+    try {
+      await PayGateService.referralClaim(phone: UserProfile.phone.trim(), code: code);
+      _codeCtrl.clear();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Code de parrainage validé ✅'), backgroundColor: _green,
+        ));
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _claiming = false);
+    }
+  }
+
+  String _money(dynamic v) => '\$${(double.tryParse('$v') ?? 0).toStringAsFixed(2)}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        elevation: 0,
+        title: Text('Parrainage', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w700)),
+        iconTheme: IconThemeData(color: AppColors.text),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: _green))
+          : _error != null
+              ? _errorView()
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  color: _green,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 40),
+                    children: _content(),
+                  ),
+                ),
+    );
+  }
+
+  Widget _errorView() => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off_rounded, color: AppColors.textDim, size: 40),
+              const SizedBox(height: 12),
+              Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSub)),
+              const SizedBox(height: 16),
+              TextButton(onPressed: _load, child: const Text('Réessayer', style: TextStyle(color: _green))),
+            ],
+          ),
+        ),
+      );
+
+  List<Widget> _content() {
+    final d = _data!;
+    final code = d['code']?.toString() ?? '——';
+    final link = d['link']?.toString() ?? 'https://tchipa.co.uk';
+    final referredCount = d['referredCount'] ?? 0;
+    final myReferrer = d['referrerCode']?.toString();
+    final earnings = (d['earnings'] as List? ?? []);
+
+    return [
+      // Hero: the 1% promise
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            colors: [_green.withValues(alpha: 0.16), const Color(0xFFF59E0B).withValues(alpha: 0.10)],
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+          ),
+          border: Border.all(color: _green.withValues(alpha: 0.28)),
+        ),
+        child: Column(children: [
+          const Text('1%', style: TextStyle(color: _green, fontSize: 52, fontWeight: FontWeight.w900, height: 1)),
+          const SizedBox(height: 6),
+          Text('sur chaque carte activée par un ami que tu invites — payé en USDT.',
+              textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSub, fontSize: 13, height: 1.4)),
+        ]),
+      ),
+      const SizedBox(height: 18),
+
+      // My code
+      Text('TON CODE DE PARRAINAGE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+      const SizedBox(height: 8),
+      Container(
+        padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
+        decoration: BoxDecoration(
+          color: AppColors.card, borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Text(code, style: TextStyle(color: AppColors.text, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: 4)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy_rounded, color: _green),
+            tooltip: 'Copier le code',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: code));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Code copié')));
+            },
+          ),
+        ]),
+      ),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: link));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lien copié')));
+            },
+            icon: Icon(Icons.link_rounded, size: 18, color: AppColors.text),
+            label: Text('Copier le lien', style: TextStyle(color: AppColors.text)),
+            style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.border), padding: const EdgeInsets.symmetric(vertical: 12)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => Share.share(
+                'Rejoins Tchipa et crée ta carte Mastercard virtuelle avec mon code $code 👉 $link'),
+            icon: const Icon(Icons.share_rounded, size: 18, color: Colors.black),
+            label: const Text('Partager', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
+            style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(vertical: 12)),
+          ),
+        ),
+      ]),
+      const SizedBox(height: 22),
+
+      // Earnings stats
+      Row(children: [
+        _statCard('Filleuls', '$referredCount', const Color(0xFF00D4FF)),
+        const SizedBox(width: 10),
+        _statCard('En attente', _money(d['pendingEarned']), const Color(0xFFF59E0B)),
+        const SizedBox(width: 10),
+        _statCard('Total gagné', _money(d['totalEarned']), _green),
+      ]),
+      const SizedBox(height: 22),
+
+      // Enter a friend's code (only if not already referred)
+      if (myReferrer == null) ...[
+        Text('TU AS ÉTÉ INVITÉ ?', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _codeCtrl,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 6,
+              style: TextStyle(color: AppColors.inputFg, letterSpacing: 3, fontWeight: FontWeight.w700),
+              decoration: InputDecoration(
+                counterText: '',
+                hintText: 'CODE AMI',
+                hintStyle: TextStyle(color: AppColors.hint, letterSpacing: 2),
+                filled: true, fillColor: AppColors.card,
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _green)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          ElevatedButton(
+            onPressed: _claiming ? null : _claim,
+            style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
+            child: _claiming
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                : const Text('Valider', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+        const SizedBox(height: 22),
+      ] else ...[
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
+          child: Row(children: [
+            const Icon(Icons.check_circle_outline_rounded, color: _green, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Invité avec le code $myReferrer', style: TextStyle(color: AppColors.textSub, fontSize: 13))),
+          ]),
+        ),
+        const SizedBox(height: 22),
+      ],
+
+      // Auto-payout / withdrawal address
+      ..._payoutBlock(d),
+
+      // How it works
+      Text('COMMENT ÇA MARCHE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+      const SizedBox(height: 10),
+      _howRow('1', 'Partage ton code', 'Envoie ton code ou ton lien à tes amis.'),
+      _howRow('2', 'Ils activent une carte', 'Ton ami installe Tchipa et active une carte VCC.'),
+      _howRow('3', 'Tu gagnes 1%', 'Automatiquement crédité en USDT, sans limite de filleuls.'),
+      const SizedBox(height: 22),
+
+      // Recent earnings
+      if (earnings.isNotEmpty) ...[
+        Text('DERNIERS GAINS', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+        const SizedBox(height: 10),
+        ...earnings.map((e) {
+          final m = Map<String, dynamic>.from(e as Map);
+          final paid = m['status'] == 'paid';
+          return Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
+            child: Row(children: [
+              Icon(paid ? Icons.check_circle_rounded : Icons.hourglass_bottom_rounded,
+                  color: paid ? _green : const Color(0xFFF59E0B), size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Carte de ${_money(m['card_amount'])}', style: TextStyle(color: AppColors.text, fontSize: 13)),
+              ),
+              Text('+${_money(m['commission'])}', style: const TextStyle(color: _green, fontWeight: FontWeight.w800)),
+            ]),
+          );
+        }),
+      ],
+    ];
+  }
+
+  String _maskAddr(String a) => a.length > 12 ? '${a.substring(0, 6)}…${a.substring(a.length - 4)}' : a;
+
+  List<Widget> _payoutBlock(Map<String, dynamic> d) {
+    final addr = d['payoutAddress']?.toString();
+    final threshold = (double.tryParse('${d['payoutThreshold'] ?? 5}') ?? 5).toStringAsFixed(0);
+    final payouts = (d['payouts'] as List? ?? []);
+    return [
+      Text('RETRAIT AUTOMATIQUE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+      const SizedBox(height: 10),
+      if (addr == null)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.account_balance_wallet_outlined, color: _green, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Reçois tes gains automatiquement', style: TextStyle(color: AppColors.text, fontSize: 13.5, fontWeight: FontWeight.w700))),
+            ]),
+            const SizedBox(height: 6),
+            Text('Ajoute ton adresse USDT (Polygon). Dès que tes gains atteignent $threshold USDT, on te les envoie tout seul — sans rien faire.',
+                style: TextStyle(color: AppColors.textSub, fontSize: 12, height: 1.4)),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _setAddressDialog,
+                icon: const Icon(Icons.add_rounded, size: 18, color: Colors.black),
+                label: const Text('Ajouter mon adresse', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
+                style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(vertical: 12)),
+              ),
+            ),
+          ]),
+        )
+      else ...[
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+          child: Row(children: [
+            const Icon(Icons.check_circle_rounded, color: _green, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_maskAddr(addr), style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
+                const SizedBox(height: 2),
+                Text('Paiement auto dès $threshold USDT · Polygon', style: TextStyle(color: AppColors.textSub, fontSize: 11.5)),
+              ]),
+            ),
+            IconButton(
+              icon: Icon(Icons.edit_outlined, color: AppColors.textSub, size: 18),
+              tooltip: 'Modifier l\'adresse',
+              onPressed: _setAddressDialog,
+            ),
+          ]),
+        ),
+        if (payouts.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...payouts.map((p) {
+            final m = Map<String, dynamic>.from(p as Map);
+            final st = m['status']?.toString();
+            final confirmed = st == 'confirmed';
+            final hash = m['tx_hash']?.toString();
+            return InkWell(
+              onTap: hash == null ? null : () => launchUrl(Uri.parse('https://polygonscan.com/tx/$hash'), mode: LaunchMode.externalApplication),
+              child: Container(
+                margin: const EdgeInsets.only(top: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
+                child: Row(children: [
+                  Icon(confirmed ? Icons.check_circle_rounded : (st == 'failed' ? Icons.error_outline_rounded : Icons.sync_rounded),
+                      color: confirmed ? _green : (st == 'failed' ? Colors.redAccent : const Color(0xFFF59E0B)), size: 16),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(confirmed ? 'Payé' : (st == 'failed' ? 'Échec' : 'En cours'), style: TextStyle(color: AppColors.textSub, fontSize: 12.5))),
+                  Text('${_money(m['amount'])} USDT', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w700, fontSize: 12.5)),
+                  if (hash != null) Icon(Icons.open_in_new_rounded, color: AppColors.textDim, size: 13),
+                ]),
+              ),
+            );
+          }),
+        ],
+      ],
+      const SizedBox(height: 22),
+    ];
+  }
+
+  Future<void> _setAddressDialog() async {
+    final addrCtrl = TextEditingController();
+    final pinCtrl = TextEditingController();
+    bool busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Adresse de retrait USDT', style: TextStyle(color: AppColors.text, fontSize: 16)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Adresse Polygon (USDT) où recevoir tes gains. Modification protégée par ton PIN Tchipa.',
+                style: TextStyle(color: AppColors.textSub, fontSize: 12.5, height: 1.4)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: addrCtrl,
+              style: TextStyle(color: AppColors.inputFg, fontSize: 13, fontFamily: 'monospace'),
+              decoration: InputDecoration(
+                hintText: '0x…', hintStyle: TextStyle(color: AppColors.hint),
+                filled: true, fillColor: AppColors.card,
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _green)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: pinCtrl,
+              obscureText: true, keyboardType: TextInputType.number, maxLength: 6,
+              style: TextStyle(color: AppColors.inputFg, letterSpacing: 4),
+              decoration: InputDecoration(
+                counterText: '', hintText: 'PIN Tchipa', hintStyle: TextStyle(color: AppColors.hint),
+                filled: true, fillColor: AppColors.card,
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _green)),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: busy ? null : () => Navigator.pop(ctx), child: const Text('Annuler', style: TextStyle(color: Colors.white54))),
+            ElevatedButton(
+              onPressed: busy ? null : () async {
+                final address = addrCtrl.text.trim();
+                final pin = pinCtrl.text.trim();
+                if (address.isEmpty || pin.isEmpty) return;
+                setD(() => busy = true);
+                try {
+                  await PayGateService.setPayoutAddress(phone: UserProfile.phone.trim(), pin: pin, address: address);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Adresse enregistrée ✅'), backgroundColor: _green));
+                  }
+                  await _load();
+                } catch (e) {
+                  setD(() => busy = false);
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                      content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: Colors.redAccent));
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: _green),
+              child: busy
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                  : const Text('Enregistrer', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statCard(String label, String value, Color color) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
+          child: Column(children: [
+            Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 3),
+            Text(label, textAlign: TextAlign.center, style: TextStyle(color: AppColors.textDim, fontSize: 10.5)),
+          ]),
+        ),
+      );
+
+  Widget _howRow(String n, String title, String desc) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 26, height: 26, alignment: Alignment.center,
+            decoration: BoxDecoration(color: _green.withValues(alpha: 0.14), shape: BoxShape.circle, border: Border.all(color: _green.withValues(alpha: 0.4))),
+            child: Text(n, style: const TextStyle(color: _green, fontSize: 12, fontWeight: FontWeight.w800)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: TextStyle(color: AppColors.text, fontSize: 13.5, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(desc, style: TextStyle(color: AppColors.textSub, fontSize: 12, height: 1.35)),
+            ]),
+          ),
+        ]),
+      );
+}
+
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -5053,6 +5565,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               const SizedBox(height: 20),
+              // — Programme de parrainage (gagne 1% sur chaque carte d'un filleul)
+              GestureDetector(
+                onTap: () {
+                  if (UserProfile.phone.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Renseigne et enregistre ton numéro d\'abord.'),
+                    ));
+                    return;
+                  }
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const ReferralScreen()));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: const Color(0xFF10B981).withValues(alpha: 0.30)),
+                    borderRadius: BorderRadius.circular(14),
+                    color: const Color(0xFF10B981).withValues(alpha: 0.06),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.card_giftcard_rounded,
+                          color: Color(0xFF10B981), size: 18),
+                      SizedBox(width: 10),
+                      Text('Parrainage — gagne 1%',
+                          style: TextStyle(
+                              color: Color(0xFF10B981),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               GestureDetector(
                 onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const AgentScreen())),

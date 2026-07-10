@@ -43,6 +43,13 @@ const MIN_FORWARD       = 0.50;     // USDT, ignore poussiere
 const SUFFIX_STEP       = 0.000001; // 1 micro-USDT par unite de suffix
 const SUFFIX_MAX        = 9999;     // 9999 commandes uniques par cycle
 
+// ── Referral auto-payout (see server.js referral tables) ──────────────────────
+// The forwarder is the SOLE USDT sender, so referral payouts must run here,
+// serialized with the forward loop (same wallet → concurrent sends would clash
+// on nonce). processReferralPayouts() runs once per poll cycle under isPolling.
+const PAYOUT_THRESHOLD = 5;   // USDT — min accumulated earnings before an auto-payout
+const PAYOUT_DAILY_CAP = 50;  // USDT — max auto-payouts per 24h (anti-drain guardrail)
+
 // ── DB schema (migration safe) ───────────────────────────────────────────────
 const db = new Database(path.join(__dirname, 'orders.db'));
 db.exec(`
@@ -160,6 +167,22 @@ async function sendUsdt(toAddress, amount) {
   return tx.hash;
 }
 
+// Like sendUsdt, but invokes onHash(txHash) the instant the tx is broadcast —
+// BEFORE the (possibly-timing-out) receipt wait. This lets the caller persist
+// the hash so a later timeout is never mistaken for "not sent" (which would
+// wrongly re-credit funds that are actually in flight). If contract.transfer()
+// itself throws, nothing was broadcast and onHash is never called.
+async function sendUsdtTracked(toAddress, amount, onHash) {
+  const provider = makeProvider();
+  const wallet   = new ethers.Wallet(walletKey, provider);
+  const contract = new ethers.Contract(USDT_POLYGON, USDT_ABI, wallet);
+  const wei      = ethers.parseUnits(amount.toFixed(6), USDT_DECIMALS);
+  const tx       = await contract.transfer(toAddress, wei); // throws pre-broadcast
+  if (onHash) onHash(tx.hash);                              // broadcast done → persist hash
+  await waitForReceiptWithTimeout(tx.hash);                // may throw post-broadcast (timeout)
+  return tx.hash;
+}
+
 function nextRpc() {
   rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
   console.log('[Forwarder] Changement RPC ->', RPC_URLS[rpcIndex]);
@@ -183,6 +206,124 @@ async function sendPol(toAddress, amountPol) {
 async function getPolBalance(address) {
   const hex = await rpcCall('eth_getBalance', [address, 'latest']);
   return parseFloat(ethers.formatEther(BigInt(hex)));
+}
+
+// ── Referral auto-payout ──────────────────────────────────────────────────────
+// Atomically batch a referrer's 'pending' earnings into one 'sending' payout row
+// and flip those earnings to 'paying' so no later cycle re-claims them. Returns
+// { id, amount } or null (below threshold / nothing pending). Sync (better-sqlite3).
+function claimPayout(phone, address) {
+  const run = db.transaction(() => {
+    const es = db.prepare("SELECT commission FROM referral_earnings WHERE referrer_phone = ? AND status = 'pending'").all(phone);
+    const amount = parseFloat(es.reduce((a, e) => a + e.commission, 0).toFixed(6));
+    if (amount < PAYOUT_THRESHOLD) return null;
+    const info = db.prepare("INSERT INTO referral_payouts (referrer_phone, address, amount, status) VALUES (?, ?, ?, 'sending')").run(phone, address, amount);
+    const id = info.lastInsertRowid;
+    db.prepare("UPDATE referral_earnings SET status = 'paying', payout_id = ? WHERE referrer_phone = ? AND status = 'pending'").run(id, phone);
+    return { id, amount };
+  });
+  return run();
+}
+
+// Undo a claim whose send never left the wallet: earnings back to 'pending',
+// payout marked 'failed'. NEVER call this once a tx was broadcast.
+function revertPayout(id) {
+  db.transaction(() => {
+    db.prepare("UPDATE referral_earnings SET status = 'pending', payout_id = NULL WHERE payout_id = ?").run(id);
+    db.prepare("UPDATE referral_payouts SET status = 'failed' WHERE id = ?").run(id);
+  })();
+}
+
+function finalizePayout(id) {
+  db.transaction(() => {
+    db.prepare("UPDATE referral_payouts SET status = 'confirmed', confirmed_at = datetime('now') WHERE id = ?").run(id);
+    db.prepare("UPDATE referral_earnings SET status = 'paid', paid_at = datetime('now') WHERE payout_id = ?").run(id);
+  })();
+}
+
+// Finish any payout left 'sending' after a timeout/crash by checking its tx on
+// chain. Confirmed → finalize; on-chain revert → safe to unwind; not mined yet →
+// leave. A 'sending' row with NO tx_hash is left untouched (a broadcast may have
+// happened in the tiny window before the hash was persisted) — manual review.
+async function reconcilePayouts() {
+  let stuck;
+  try { stuck = db.prepare("SELECT id, tx_hash FROM referral_payouts WHERE status = 'sending'").all(); }
+  catch (_) { return; } // tables absent on a legacy DB
+  for (const p of stuck) {
+    if (!p.tx_hash) continue;
+    try {
+      const r = await rpcCall('eth_getTransactionReceipt', [p.tx_hash]);
+      if (r && r.blockNumber) {
+        if (parseInt(r.status, 16) === 1) { finalizePayout(p.id); console.log('[Payout] reconciled confirmed id=' + p.id); }
+        else { revertPayout(p.id); console.log('[Payout] reconciled on-chain-revert id=' + p.id); }
+      }
+    } catch (_) { /* transient RPC — retry next cycle */ }
+  }
+}
+
+// Main job: pay every referrer whose unpaid earnings crossed the threshold and
+// who registered an address, honouring the daily cap and a wallet floor that
+// protects USDT reserved for pending card forwards. Runs inside poll().
+async function processReferralPayouts() {
+  let candidates;
+  try {
+    candidates = db.prepare(`
+      SELECT e.referrer_phone AS phone, a.address AS address, SUM(e.commission) AS amount
+        FROM referral_earnings e
+        JOIN referral_payout_addresses a ON a.phone = e.referrer_phone
+       WHERE e.status = 'pending'
+       GROUP BY e.referrer_phone, a.address
+      HAVING amount >= ?
+    `).all(PAYOUT_THRESHOLD);
+  } catch (_) { return; } // tables absent on a legacy DB
+  if (!candidates.length) return;
+
+  for (const c of candidates) {
+    const paidToday = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) s FROM referral_payouts
+       WHERE status IN ('sending','confirmed') AND created_at >= datetime('now','start of day')
+    `).get().s;
+    if (paidToday >= PAYOUT_DAILY_CAP) { console.log('[Payout] daily cap ' + PAYOUT_DAILY_CAP + ' USDT reached'); break; }
+
+    const claim = claimPayout(c.phone, c.address);
+    if (!claim) continue;
+
+    if (paidToday + claim.amount > PAYOUT_DAILY_CAP) {
+      revertPayout(claim.id); // would blow the cap — retry a later day/cycle
+      continue;
+    }
+
+    // Wallet floor: keep enough USDT to cover every pending card forward.
+    let balance, reserved;
+    try {
+      balance  = await getUsdtBalance(walletAddress);
+      reserved = db.prepare('SELECT COALESCE(SUM(paygate_amount), 0) s FROM pending_orders').get().s;
+    } catch (e) { revertPayout(claim.id); continue; }
+    if (balance - claim.amount < reserved) {
+      console.log('[Payout] insufficient free funds (bal=' + balance.toFixed(4) + ' reserved=' + reserved.toFixed(4) + ' amt=' + claim.amount + ') — retry later');
+      revertPayout(claim.id);
+      continue;
+    }
+
+    let broadcast = false;
+    try {
+      const hash = await sendUsdtTracked(c.address, claim.amount, (h) => {
+        db.prepare("UPDATE referral_payouts SET tx_hash = ? WHERE id = ?").run(h, claim.id);
+        broadcast = true;
+      });
+      finalizePayout(claim.id);
+      console.log('[Payout] +' + claim.amount + ' USDT -> ' + c.phone + ' tx=' + hash);
+    } catch (err) {
+      if (broadcast) {
+        // Sent but unconfirmed: DO NOT revert (funds may be in flight).
+        // reconcilePayouts() will finalize/unwind once the tx is mined.
+        console.error('[Payout] broadcast ok, unconfirmed (will reconcile) id=' + claim.id + ': ' + err.message.slice(0, 80));
+      } else {
+        revertPayout(claim.id);
+        console.error('[Payout] pre-broadcast fail, reverted id=' + claim.id + ': ' + err.message.slice(0, 80));
+      }
+    }
+  }
 }
 
 // ── Match logic ──────────────────────────────────────────────────────────────
@@ -404,6 +545,15 @@ async function poll() {
     }
 
     stateSet('last_block', latest);
+
+    // Referral payouts run here so they share the wallet's single-sender
+    // serialization (isPolling) — no nonce clash with card forwards above.
+    try {
+      await reconcilePayouts();
+      await processReferralPayouts();
+    } catch (e) {
+      console.error('[Payout] cycle error:', e.message);
+    }
   } catch (err) {
     errCount++;
     console.error('[Forwarder] Erreur poll (' + errCount + '):', err.message.slice(0, 120));
@@ -494,4 +644,5 @@ module.exports = {
   manualForward, getPendingOrders, getOrphanPayments, getRecentTxs,
   buildUniqueClientAmount,
   sendPol, getPolBalance, getUsdtBalance,
+  PAYOUT_THRESHOLD, PAYOUT_DAILY_CAP,
 };

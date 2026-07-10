@@ -104,7 +104,70 @@ db.exec(`
     created_at  INTEGER NOT NULL         -- Date.now() ms
   );
   CREATE INDEX IF NOT EXISTS idx_gas_loans_addr ON gas_loans(address, created_at);
+
+  -- Referral / affiliate program (1% of every card a referred user activates).
+  -- Phone is the join key here too (same normalizePhone() as everywhere else).
+  --   referral_codes  : each phone's own shareable code (1 per phone).
+  --   referrals       : who referred whom — set ONCE per referred phone.
+  --   referral_earnings: one commission row per completed card (redeem_id is the
+  --                      PK so crediting is idempotent — fetchPayGateStatus can
+  --                      run many times without double-paying).
+  CREATE TABLE IF NOT EXISTS referral_codes (
+    phone       TEXT PRIMARY KEY,        -- normalizePhone()
+    code        TEXT NOT NULL UNIQUE,    -- 6-char A–Z/2–9, ambiguous chars removed
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS referrals (
+    phone           TEXT PRIMARY KEY,    -- the REFERRED user (normalizePhone)
+    referrer_phone  TEXT NOT NULL,       -- who invited them
+    referrer_code   TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_phone);
+  CREATE TABLE IF NOT EXISTS referral_earnings (
+    redeem_id       TEXT PRIMARY KEY,    -- 1 commission per card order (idempotent)
+    referrer_phone  TEXT NOT NULL,
+    referred_phone  TEXT NOT NULL,
+    card_amount     REAL NOT NULL,
+    commission      REAL NOT NULL,       -- REFERRAL_RATE * card_amount, in USDT
+    status          TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'paying' | 'paid'
+    payout_id       INTEGER,             -- referral_payouts.id once batched into a payout
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    paid_at         TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_earnings_referrer ON referral_earnings(referrer_phone);
+
+  -- Where a referrer wants their USDT paid. Set/changed ONLY via the PIN-gated
+  -- /referral/set-payout-address (theft vector otherwise). Lowercased 0x… Polygon.
+  CREATE TABLE IF NOT EXISTS referral_payout_addresses (
+    phone       TEXT PRIMARY KEY,
+    address     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  -- One on-chain payout batch. The forwarder (sole USDT sender) drives the
+  -- 'sending' → 'confirmed'/'failed' state machine; see forwarder.js.
+  CREATE TABLE IF NOT EXISTS referral_payouts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    referrer_phone  TEXT NOT NULL,
+    address         TEXT NOT NULL,
+    amount          REAL NOT NULL,
+    tx_hash         TEXT,
+    status          TEXT NOT NULL DEFAULT 'sending',  -- 'sending' | 'confirmed' | 'failed'
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    confirmed_at    TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_payouts_referrer ON referral_payouts(referrer_phone);
+  CREATE INDEX IF NOT EXISTS idx_payouts_status   ON referral_payouts(status);
 `);
+
+// Defensive migration: add payout_id if an earlier build created referral_earnings without it.
+try {
+  const cols = db.prepare("PRAGMA table_info(referral_earnings)").all().map(c => c.name);
+  if (cols.length && !cols.includes('payout_id')) {
+    db.exec("ALTER TABLE referral_earnings ADD COLUMN payout_id INTEGER");
+    console.log('[db] migrated: referral_earnings.payout_id added');
+  }
+} catch (_) { /* table may not exist yet on a truly fresh DB — created above */ }
 
 // In-place migration for existing DBs created before these columns existed.
 // Inline PRAGMA check (no migration tool — see CLAUDE.md conventions).
@@ -260,6 +323,59 @@ function normalizePhone(raw) {
   return (hasPlus ? '+' : '') + digits;
 }
 console.log('[db] Orders DB ready at', DB_PATH);
+
+// ============================================================
+// Referral / affiliate program — 1% of every referred activation
+// ============================================================
+const REFERRAL_RATE = 0.01; // 1% of the card amount, credited to the referrer
+// No I/O/O/1/0 to keep codes unambiguous when spoken/typed.
+const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function genReferralCode() {
+  let c = '';
+  for (let i = 0; i < 6; i++) c += REF_ALPHABET[Math.floor(Math.random() * REF_ALPHABET.length)];
+  return c;
+}
+
+// Idempotent per phone: returns the existing code or mints a new unique one.
+function getOrCreateReferralCode(phone) {
+  const existing = db.prepare('SELECT code FROM referral_codes WHERE phone = ?').get(phone);
+  if (existing) return existing.code;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const code = genReferralCode();
+    try {
+      db.prepare('INSERT INTO referral_codes (phone, code) VALUES (?, ?)').run(phone, code);
+      return code;
+    } catch (e) {
+      // UNIQUE collision on code OR a concurrent insert on phone — re-check phone.
+      const now = db.prepare('SELECT code FROM referral_codes WHERE phone = ?').get(phone);
+      if (now) return now.code;
+      // else: code collided, loop and try another code
+    }
+  }
+  throw new Error('could not allocate referral code');
+}
+
+// Credit the referrer 1% when a referred user's card is actually issued.
+// Called from fetchPayGateStatus on completion. INSERT OR IGNORE keyed on
+// redeem_id means repeated status polls never double-credit.
+function creditReferral(redeemId, referredPhone, cardAmount) {
+  if (!referredPhone) return;
+  const ref = db.prepare('SELECT referrer_phone, referrer_code FROM referrals WHERE phone = ?').get(referredPhone);
+  if (!ref) return; // this user wasn't referred by anyone
+  const amt = parseFloat(cardAmount) || 0;
+  if (amt <= 0) return;
+  const commission = parseFloat((amt * REFERRAL_RATE).toFixed(6));
+  const info = db.prepare(`
+    INSERT OR IGNORE INTO referral_earnings
+      (redeem_id, referrer_phone, referred_phone, card_amount, commission, status)
+    VALUES (?, ?, ?, ?, ?, 'pending')
+  `).run(redeemId, ref.referrer_phone, referredPhone, amt, commission);
+  if (info.changes > 0) {
+    console.log('[referral] +' + commission + ' USDT to ' + ref.referrer_phone +
+      ' (referred ' + referredPhone + ' activated $' + amt + ')');
+  }
+}
 
 
 // ============================================================
@@ -773,7 +889,7 @@ async function fetchPayGateStatus(redeemId) {
   const isReady    = data.card_issuer_status === 'completed';
 
   // Mirror progress into agent_orders if this redeem_id was created via the agent flow.
-  const agentRow = db.prepare('SELECT status FROM agent_orders WHERE redeem_id = ?').get(redeemId);
+  const agentRow = db.prepare('SELECT status, phone, amount_usd FROM agent_orders WHERE redeem_id = ?').get(redeemId);
   if (agentRow) {
     const newStatus = isReady ? 'completed' : (isPaid ? 'paid' : 'pending');
     if (newStatus !== agentRow.status || (isReady && redeemLink)) {
@@ -782,6 +898,12 @@ async function fetchPayGateStatus(redeemId) {
            SET status = ?, redeem_link = COALESCE(?, redeem_link), updated_at = datetime('now')
          WHERE redeem_id = ?
       `).run(newStatus, redeemLink, redeemId);
+    }
+    // Referral payout: the card is now actually issued → credit the referrer 1%.
+    // Idempotent (redeem_id PK), so repeated status polls are safe.
+    if (isReady) {
+      try { creditReferral(redeemId, agentRow.phone, agentRow.amount_usd); }
+      catch (e) { console.error('[referral] credit error:', e.message); }
     }
   }
 
@@ -1082,8 +1204,145 @@ app.get('/paygate/vcc-balance/:cardId', (req, res) => {
 
 
 // ============================================================
+// Referral / affiliate endpoints (client app)
+// ============================================================
+
+// GET /referral/code/:phone — the caller's own shareable code (minted on first ask).
+app.get('/referral/code/:phone', (req, res) => {
+  const phone = normalizePhone(req.params.phone);
+  if (!phone) return res.status(400).json({ error: 'phone invalide' });
+  try {
+    const code = getOrCreateReferralCode(phone);
+    res.json({ code, link: 'https://tchipa.co.uk/?ref=' + code });
+  } catch (e) {
+    console.error('[/referral/code] error:', e.message);
+    res.status(500).json({ error: 'could not allocate code' });
+  }
+});
+
+// POST /referral/claim { phone, code } — the caller says "I was referred by <code>".
+// Set once, immutable afterwards. Can't refer yourself; code must exist.
+app.post('/referral/claim', (req, res) => {
+  const { phone, code } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  const normCode  = String(code || '').trim().toUpperCase();
+  if (!normPhone) return res.status(400).json({ error: 'phone invalide' });
+  if (!/^[A-Z2-9]{6}$/.test(normCode)) return res.status(400).json({ error: 'BAD_CODE', message: 'Code invalide.' });
+
+  const existing = db.prepare('SELECT referrer_code FROM referrals WHERE phone = ?').get(normPhone);
+  if (existing) return res.status(409).json({ error: 'ALREADY_REFERRED', message: 'Un code de parrainage est déjà lié à ce compte.', referrerCode: existing.referrer_code });
+
+  const owner = db.prepare('SELECT phone FROM referral_codes WHERE code = ?').get(normCode);
+  if (!owner) return res.status(404).json({ error: 'CODE_NOT_FOUND', message: 'Ce code n\'existe pas.' });
+  if (owner.phone === normPhone) return res.status(400).json({ error: 'SELF_REFERRAL', message: 'Tu ne peux pas utiliser ton propre code.' });
+
+  db.prepare('INSERT INTO referrals (phone, referrer_phone, referrer_code) VALUES (?, ?, ?)')
+    .run(normPhone, owner.phone, normCode);
+  console.log('[referral] ' + normPhone + ' referred by ' + owner.phone + ' (' + normCode + ')');
+  res.json({ ok: true, referrerCode: normCode });
+});
+
+// POST /referral/set-payout-address { phone, pin, address }
+// PIN-gated so nobody can redirect another user's earnings (the only theft
+// vector for auto-payout). Reuses the client's own verified PIN (user_pins).
+app.post('/referral/set-payout-address', (req, res) => {
+  const { phone, pin, address } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  if (!normPhone || !pin || !address) return res.status(400).json({ error: 'phone, pin et address requis' });
+  const addr = String(address).trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+    return res.status(400).json({ error: 'BAD_ADDRESS', message: 'Adresse Polygon invalide (0x + 40 caractères hex).' });
+  }
+  const userRow = db.prepare('SELECT pin_hash, pin_salt, verified FROM user_pins WHERE phone = ?').get(normPhone);
+  if (!userRow || !userRow.verified) {
+    return res.status(409).json({ error: 'PIN_NOT_SET', message: 'Configure ton PIN Tchipa (Profil) avant d\'ajouter une adresse de retrait.' });
+  }
+  if (!verifyPin(String(pin), userRow.pin_salt, userRow.pin_hash)) {
+    return res.status(403).json({ error: 'BAD_PIN', message: 'PIN invalide.' });
+  }
+  db.prepare(`
+    INSERT INTO referral_payout_addresses (phone, address, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(phone) DO UPDATE SET address = excluded.address, updated_at = datetime('now')
+  `).run(normPhone, addr.toLowerCase());
+  console.log('[referral] payout address set for ' + normPhone + ' -> ' + addr.toLowerCase());
+  res.json({ ok: true, address: addr.toLowerCase() });
+});
+
+// GET /referral/summary/:phone — my code, my referrals count, my earnings.
+app.get('/referral/summary/:phone', (req, res) => {
+  const phone = normalizePhone(req.params.phone);
+  if (!phone) return res.status(400).json({ error: 'phone invalide' });
+  const code = getOrCreateReferralCode(phone);
+  const referredCount = db.prepare('SELECT COUNT(*) n FROM referrals WHERE referrer_phone = ?').get(phone).n;
+  const totals = db.prepare(`
+    SELECT
+      COALESCE(SUM(commission), 0) total,
+      COALESCE(SUM(CASE WHEN status IN ('pending','paying') THEN commission ELSE 0 END), 0) pending,
+      COALESCE(SUM(CASE WHEN status = 'paid'                THEN commission ELSE 0 END), 0) paid
+    FROM referral_earnings WHERE referrer_phone = ?
+  `).get(phone);
+  const earnings = db.prepare(`
+    SELECT card_amount, commission, status, created_at
+      FROM referral_earnings WHERE referrer_phone = ?
+     ORDER BY created_at DESC LIMIT 50
+  `).all(phone);
+  const mine = db.prepare('SELECT referrer_code FROM referrals WHERE phone = ?').get(phone);
+  const addrRow = db.prepare('SELECT address FROM referral_payout_addresses WHERE phone = ?').get(phone);
+  const payouts = db.prepare(`
+    SELECT amount, tx_hash, status, created_at
+      FROM referral_payouts WHERE referrer_phone = ?
+     ORDER BY created_at DESC LIMIT 20
+  `).all(phone);
+  res.json({
+    code,
+    link: 'https://tchipa.co.uk/?ref=' + code,
+    referrerCode:  mine ? mine.referrer_code : null,  // whose code I used, if any
+    referredCount,
+    totalEarned:   +(+totals.total).toFixed(6),
+    pendingEarned: +(+totals.pending).toFixed(6),
+    paidEarned:    +(+totals.paid).toFixed(6),
+    payoutAddress:   addrRow ? addrRow.address : null,
+    payoutThreshold: forwarder.PAYOUT_THRESHOLD,
+    payoutDailyCap:  forwarder.PAYOUT_DAILY_CAP,
+    payouts,
+    earnings,
+  });
+});
+
+// ============================================================
 // Admin endpoints (gestion manuelle VCC)
 // ============================================================
+
+// GET /admin/referral-earnings?status=pending — payout worklist for the operator.
+app.get('/admin/referral-earnings', (req, res) => {
+  const status = req.query.status;
+  const rows = status
+    ? db.prepare('SELECT * FROM referral_earnings WHERE status = ? ORDER BY created_at DESC').all(String(status))
+    : db.prepare('SELECT * FROM referral_earnings ORDER BY created_at DESC').all();
+  const byReferrer = db.prepare(`
+    SELECT referrer_phone,
+           COALESCE(SUM(CASE WHEN status='pending' THEN commission ELSE 0 END),0) pending,
+           COALESCE(SUM(commission),0) total
+      FROM referral_earnings GROUP BY referrer_phone ORDER BY pending DESC
+  `).all();
+  res.json({ count: rows.length, rows, byReferrer });
+});
+
+// POST /admin/referral-mark-paid { redeem_id? , referrer_phone? }
+// Mark one earning (by redeem_id) or all pending earnings of a referrer as paid.
+app.post('/admin/referral-mark-paid', (req, res) => {
+  const { redeem_id, referrer_phone } = req.body || {};
+  let info;
+  if (redeem_id) {
+    info = db.prepare("UPDATE referral_earnings SET status='paid', paid_at=datetime('now') WHERE redeem_id = ? AND status='pending'").run(String(redeem_id));
+  } else if (referrer_phone) {
+    info = db.prepare("UPDATE referral_earnings SET status='paid', paid_at=datetime('now') WHERE referrer_phone = ? AND status='pending'").run(normalizePhone(referrer_phone));
+  } else {
+    return res.status(400).json({ error: 'redeem_id ou referrer_phone requis' });
+  }
+  res.json({ ok: true, marked: info.changes });
+});
 
 // GET /admin/pending-orders — liste les ordres en attente de paiement
 app.get('/admin/pending-orders', (req, res) => {

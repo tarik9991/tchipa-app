@@ -648,6 +648,104 @@
     [dir="rtl"] .wallet-copy{ text-align:right; }
     [dir="rtl"] .wallet-features li{ flex-direction:row-reverse; text-align:right; }
     [dir="rtl"] .wallet-badges{ flex-direction:row-reverse; }
+
+    /* ── AFFILIATE / REFERRAL ─────────────────────────────────── */
+    .aff-sec {
+      padding:8rem 6%; position:relative; z-index:2; overflow:hidden;
+      background:rgba(22,27,34,.35);
+      border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+    }
+    .aff-sec::before {
+      content:''; position:absolute; inset:0; pointer-events:none;
+      background:radial-gradient(circle at 22% 38%, rgba(16,185,129,.10), transparent 55%);
+    }
+    .aff-head { text-align:center; max-width:640px; margin:0 auto 3.5rem; position:relative; z-index:2; }
+    .aff-head .sec-lead { margin:0 auto; }
+    .aff-tag {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3);
+      border-radius:100px; padding:.38rem 1rem;
+      font-size:.78rem; font-weight:800; color:var(--green);
+      text-transform:uppercase; letter-spacing:.1em; margin-bottom:1.2rem;
+    }
+    .aff-top {
+      display:grid; grid-template-columns:.85fr 1.15fr; gap:2rem; align-items:stretch;
+      position:relative; z-index:2; max-width:1100px; margin:0 auto;
+    }
+    .aff-hero-num {
+      background:rgba(22,27,34,.6); border:1px solid rgba(16,185,129,.22);
+      border-radius:24px; padding:3rem 2rem; text-align:center;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      backdrop-filter:blur(20px); position:relative; overflow:hidden;
+    }
+    .aff-hero-num::after {
+      content:''; position:absolute; inset:0; border-radius:24px; pointer-events:none;
+      background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(245,158,11,.06));
+    }
+    .aff-pct {
+      font-size:clamp(4.5rem,11vw,7.5rem); font-weight:900; line-height:1; letter-spacing:-.05em;
+      background:linear-gradient(135deg,var(--green),var(--gold));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+      position:relative; z-index:2;
+    }
+    .aff-pct-sub { font-size:1rem; color:var(--sub); margin-top:.6rem; position:relative; z-index:2; max-width:250px; line-height:1.55; }
+    .aff-calc {
+      background:rgba(22,27,34,.6); border:1px solid var(--border);
+      border-radius:24px; padding:2.4rem 2.2rem; backdrop-filter:blur(20px);
+      position:relative; z-index:2;
+    }
+    .aff-calc-title { font-size:1.05rem; font-weight:800; margin-bottom:1.6rem; }
+    .aff-calc-row { display:flex; justify-content:space-between; align-items:baseline; }
+    .aff-calc-label { font-size:.85rem; color:var(--sub); }
+    .aff-calc-amt { font-size:1.7rem; font-weight:900; color:var(--cyan); letter-spacing:-.02em; }
+    .aff-slider {
+      -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:100px;
+      background:var(--card); outline:none; margin:1rem 0 2rem;
+    }
+    .aff-slider::-webkit-slider-thumb {
+      -webkit-appearance:none; appearance:none; width:22px; height:22px; border-radius:50%;
+      background:linear-gradient(135deg,var(--green),var(--gold)); cursor:pointer;
+      box-shadow:0 0 14px rgba(16,185,129,.6); border:2px solid #0d1117;
+    }
+    .aff-slider::-moz-range-thumb {
+      width:22px; height:22px; border-radius:50%; border:2px solid #0d1117;
+      background:linear-gradient(135deg,var(--green),var(--gold)); cursor:pointer;
+    }
+    .aff-earn {
+      background:rgba(16,185,129,.08); border:1px solid rgba(16,185,129,.25);
+      border-radius:16px; padding:1.4rem; text-align:center;
+    }
+    .aff-earn-lbl { font-size:.8rem; color:var(--sub); text-transform:uppercase; letter-spacing:.08em; }
+    .aff-earn-val {
+      font-size:2.6rem; font-weight:900; letter-spacing:-.03em; margin-top:.3rem; line-height:1;
+      background:linear-gradient(135deg,var(--green),var(--gold));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .aff-earn-note { font-size:.78rem; color:var(--sub); margin-top:.5rem; }
+    .aff-steps {
+      display:grid; grid-template-columns:repeat(3,1fr); gap:1.4rem;
+      max-width:1100px; margin:3.5rem auto 0; position:relative; z-index:2;
+    }
+    .aff-step {
+      background:rgba(22,27,34,.6); border:1px solid var(--border);
+      border-radius:var(--radius); padding:2rem; backdrop-filter:blur(20px); transition:all .3s;
+    }
+    .aff-step:hover { border-color:rgba(16,185,129,.3); transform:translateY(-5px); box-shadow:0 20px 60px rgba(0,0,0,.3); }
+    .aff-step-ic {
+      width:52px; height:52px; border-radius:15px;
+      display:flex; align-items:center; justify-content:center; font-size:1.4rem; margin-bottom:1.1rem;
+      background:rgba(16,185,129,.14); box-shadow:0 0 22px rgba(16,185,129,.18);
+    }
+    .aff-step-n { font-size:.72rem; font-weight:800; color:var(--green); text-transform:uppercase; letter-spacing:.12em; margin-bottom:.4rem; }
+    .aff-step-t { font-size:1.1rem; font-weight:700; margin-bottom:.5rem; }
+    .aff-step-d { font-size:.88rem; color:var(--sub); line-height:1.65; }
+    .aff-cta { text-align:center; margin-top:3rem; position:relative; z-index:2; }
+    @media(max-width:900px){
+      .aff-top{ grid-template-columns:1fr; }
+      .aff-steps{ grid-template-columns:1fr; }
+    }
+    [dir="rtl"] .aff-head{ }
+    [dir="rtl"] .aff-step{ text-align:right; }
   </style>
 </head>
 <body>
@@ -662,6 +760,7 @@
     <a href="#how"      data-k="nav.how">How it Works</a>
     <a href="/demo.html" data-k="nav.demo">▶ Demo</a>
     <a href="#wallet"   data-k="nav.wallet">Wallet</a>
+    <a href="#affiliate" data-k="nav.aff">Affiliate</a>
     <a href="#download" data-k="nav.download">Download</a>
   </div>
   <div class="nav-right">
@@ -925,6 +1024,63 @@
   </div>
 </section>
 
+<!-- ── AFFILIATE PROGRAM ─────────────────────────────────────── -->
+<section id="affiliate" class="aff-sec">
+  <div class="aff-head reveal">
+    <span class="aff-tag" data-k="aff.tag">💸 Affiliate Program</span>
+    <h2 class="sec-h2"><span data-k="aff.h2a">Invite friends,</span> <span class="grad-text" data-k="aff.h2b">earn 1% forever</span></h2>
+    <p class="sec-lead" data-k="aff.lead">Share your referral code from inside the app. Every time someone you invite activates a Tchipa virtual card, you automatically earn 1% of the card amount — credited in USDT.</p>
+  </div>
+
+  <div class="aff-top">
+    <div class="aff-hero-num reveal">
+      <div class="aff-pct">1%</div>
+      <p class="aff-pct-sub" data-k="aff.pctsub">of every card your friends activate — yours to keep, in USDT.</p>
+    </div>
+
+    <div class="aff-calc reveal reveal-d1">
+      <div class="aff-calc-title" data-k="aff.calctitle">💰 Estimate your earnings</div>
+      <div class="aff-calc-row">
+        <span class="aff-calc-label" data-k="aff.calclabel">Your friend's card amount</span>
+        <span class="aff-calc-amt" id="affAmt">$200</span>
+      </div>
+      <input type="range" min="5" max="1000" step="5" value="200" class="aff-slider" id="affSlider" aria-label="Card amount">
+      <div class="aff-earn">
+        <div class="aff-earn-lbl" data-k="aff.earnlbl">You earn</div>
+        <div class="aff-earn-val" id="affEarn">$2.00</div>
+        <div class="aff-earn-note" data-k="aff.earnnote">per activated card · 1% paid in USDT</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="aff-steps">
+    <div class="aff-step reveal">
+      <div class="aff-step-ic">🔗</div>
+      <div class="aff-step-n" data-k="aff.s1n">Step 1</div>
+      <div class="aff-step-t" data-k="aff.s1t">Get your code</div>
+      <p class="aff-step-d" data-k="aff.s1d">Open Tchipa → Profile → Referral. Your personal code and link are generated automatically — no signup needed.</p>
+    </div>
+    <div class="aff-step reveal reveal-d1">
+      <div class="aff-step-ic">📣</div>
+      <div class="aff-step-n" data-k="aff.s2n">Step 2</div>
+      <div class="aff-step-t" data-k="aff.s2t">Share it</div>
+      <p class="aff-step-d" data-k="aff.s2d">Send it to friends on WhatsApp, Instagram, TikTok or Telegram. They install Tchipa and activate a card with your code.</p>
+    </div>
+    <div class="aff-step reveal reveal-d2">
+      <div class="aff-step-ic">🤑</div>
+      <div class="aff-step-n" data-k="aff.s3n">Step 3</div>
+      <div class="aff-step-t" data-k="aff.s3t">Earn 1%</div>
+      <p class="aff-step-d" data-k="aff.s3d">You automatically earn 1% of every card they activate, credited in USDT on Polygon. Track your earnings live in the app. No limit on referrals.</p>
+    </div>
+  </div>
+
+  <div class="aff-cta reveal">
+    <a href="#download" class="btn-primary">
+      <span>💸</span><span data-k="aff.cta">Get the app &amp; start earning</span>
+    </a>
+  </div>
+</section>
+
 <!-- ── CTA SECTION ───────────────────────────────────────────── -->
 <section class="cta-sec" id="download">
   <div class="cta-card reveal">
@@ -977,7 +1133,7 @@
 /* ── TRANSLATIONS ────────────────────────────────────────── */
 const T = {
   en: {
-    'nav.features':'Features','nav.how':'How it Works','nav.demo':'▶ Demo','nav.wallet':'Wallet','nav.download':'Download','nav.cta':'Get the App',
+    'nav.features':'Features','nav.how':'How it Works','nav.demo':'▶ Demo','nav.wallet':'Wallet','nav.aff':'Affiliate','nav.download':'Download','nav.cta':'Get the App',
     'hero.badge':'🔒 v4 — Client PIN · Email Verified · Theft-Proof',
     'hero.h1a':'Your Virtual Card,','hero.h1b':'Activated Instantly',
     'hero.sub':'Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.',
@@ -1011,6 +1167,17 @@ const T = {
     'wal.f3t':'PIN + biometrics.','wal.f3d':'6-digit PIN and fingerprint lock guard your wallet and your seed phrase.',
     'wal.f4t':'Built for Polygon.','wal.f4d':'USDT & POL balances, QR send/receive, instant low-fee transfers on chain 137.',
     'wal.pill3':'🔐 Non-custodial','wal.cta':'Download Wallet APK',
+    'aff.tag':'💸 Affiliate Program',
+    'aff.h2a':'Invite friends,','aff.h2b':'earn 1% forever',
+    'aff.lead':'Share your referral code from inside the app. Every time someone you invite activates a Tchipa virtual card, you automatically earn 1% of the card amount — credited in USDT.',
+    'aff.pctsub':'of every card your friends activate — yours to keep, in USDT.',
+    'aff.calctitle':'💰 Estimate your earnings',
+    'aff.calclabel':"Your friend's card amount",
+    'aff.earnlbl':'You earn','aff.earnnote':'per activated card · 1% paid in USDT',
+    'aff.s1n':'Step 1','aff.s1t':'Get your code','aff.s1d':'Open Tchipa → Profile → Referral. Your personal code and link are generated automatically — no signup needed.',
+    'aff.s2n':'Step 2','aff.s2t':'Share it','aff.s2d':'Send it to friends on WhatsApp, Instagram, TikTok or Telegram. They install Tchipa and activate a card with your code.',
+    'aff.s3n':'Step 3','aff.s3t':'Earn 1%','aff.s3d':'You automatically earn 1% of every card they activate, credited in USDT on Polygon. Track your earnings live in the app. No limit on referrals.',
+    'aff.cta':'Get the app & start earning',
     'cta.badge':'📲 Available for Android & iPhone',
     'cta.h2a':'Start paying online','cta.h2b':'with crypto today',
     'cta.sub':'Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.',
@@ -1023,7 +1190,7 @@ const T = {
     'foot.copy':'© 2025 Tchipa. All rights reserved.','foot.tag':'Built with 💙 for digital payments',
   },
   ar: {
-    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.demo':'▶ العرض','nav.wallet':'المحفظة','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
+    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.demo':'▶ العرض','nav.wallet':'المحفظة','nav.aff':'الشراكة','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
     'hero.badge':'🔒 v4 — رمز PIN العميل · بريد إلكتروني موثّق · ضد السرقة',
     'hero.h1a':'بطاقتك الافتراضية،','hero.h1b':'مُفعَّلة فوراً',
     'hero.sub':'تشيبا تتيح لك إنشاء بطاقات ماستركارد الافتراضية في دقائق. ادفع عبر الإنترنت حول العالم بـ USDT على شبكة Polygon — دون حاجة لحساب بنكي.',
@@ -1057,6 +1224,17 @@ const T = {
     'wal.f3t':'رمز PIN + بصمة.','wal.f3d':'رمز PIN من 6 أرقام وقفل بصمة الإصبع يحميان محفظتك وعبارة البذرة.',
     'wal.f4t':'مصمّمة لـ Polygon.','wal.f4d':'أرصدة USDT وPOL، إرسال/استقبال عبر QR، تحويلات فورية برسوم منخفضة على السلسلة 137.',
     'wal.pill3':'🔐 بحفظ ذاتي','wal.cta':'تحميل محفظة APK',
+    'aff.tag':'💸 برنامج الشراكة',
+    'aff.h2a':'ادعُ أصدقاءك،','aff.h2b':'واربح 1% مدى الحياة',
+    'aff.lead':'شارك رمز الإحالة من داخل التطبيق. في كل مرة يفعّل فيها شخص دعوته بطاقة تشيبا الافتراضية، تربح تلقائياً 1% من قيمة البطاقة — تُضاف بـ USDT.',
+    'aff.pctsub':'من كل بطاقة يفعّلها أصدقاؤك — لك بالكامل، بـ USDT.',
+    'aff.calctitle':'💰 احسب أرباحك',
+    'aff.calclabel':'قيمة بطاقة صديقك',
+    'aff.earnlbl':'أنت تربح','aff.earnnote':'لكل بطاقة مفعّلة · 1% تُدفع بـ USDT',
+    'aff.s1n':'الخطوة 1','aff.s1t':'احصل على رمزك','aff.s1d':'افتح تشيبا ← الملف الشخصي ← الإحالة. يُنشأ رمزك ورابطك الشخصي تلقائياً — دون أي تسجيل.',
+    'aff.s2n':'الخطوة 2','aff.s2t':'شاركه','aff.s2d':'أرسله لأصدقائك على واتساب أو إنستغرام أو تيك توك أو تيليغرام. يثبّتون تشيبا ويفعّلون بطاقة برمزك.',
+    'aff.s3n':'الخطوة 3','aff.s3t':'اربح 1%','aff.s3d':'تربح تلقائياً 1% من كل بطاقة يفعّلونها، تُضاف بـ USDT على شبكة Polygon. تابع أرباحك مباشرة في التطبيق. بلا حدّ لعدد الإحالات.',
+    'aff.cta':'ابدأ الربح — حمّل التطبيق',
     'cta.badge':'📲 متوفر لأندرويد وآيفون',
     'cta.h2a':'ابدأ الدفع عبر الإنترنت','cta.h2b':'بالكريبتو اليوم',
     'cta.sub':'حمّل تشيبا لأندرويد واحصل على أول بطاقة افتراضية في أقل من دقيقتين. بدون بنك، بدون KYC، بدون حدود.',
@@ -1253,6 +1431,20 @@ function initFireworks(canvas){
   }, {threshold:.05}).observe(canvas.parentElement);
 }
 document.querySelectorAll('.fx-canvas').forEach(initFireworks);
+
+/* ── AFFILIATE EARNINGS CALCULATOR ──────────────────────── */
+const affSlider = document.getElementById('affSlider');
+if (affSlider) {
+  const affAmt = document.getElementById('affAmt');
+  const affEarn = document.getElementById('affEarn');
+  const updateAff = () => {
+    const amt = +affSlider.value;
+    affAmt.textContent = '$' + amt;
+    affEarn.textContent = '$' + (amt * 0.01).toFixed(2);
+  };
+  affSlider.addEventListener('input', updateAff);
+  updateAff();
+}
 
 /* ── INIT ────────────────────────────────────────────────── */
 window.addEventListener('resize', resize);

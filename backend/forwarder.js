@@ -47,8 +47,12 @@ const SUFFIX_MAX        = 9999;     // 9999 commandes uniques par cycle
 // The forwarder is the SOLE USDT sender, so referral payouts must run here,
 // serialized with the forward loop (same wallet → concurrent sends would clash
 // on nonce). processReferralPayouts() runs once per poll cycle under isPolling.
-const PAYOUT_THRESHOLD = 5;   // USDT — min accumulated earnings before an auto-payout
-const PAYOUT_DAILY_CAP = 50;  // USDT — max auto-payouts per 24h (anti-drain guardrail)
+const PAYOUT_THRESHOLD   = 5;   // USDT — min accumulated earnings before an auto-payout
+const PAYOUT_DAILY_CAP   = 50;  // USDT — max auto-payouts per 24h (anti-drain guardrail)
+const PAYOUT_WALLET_FLOOR = 20; // USDT — always keep this much in the wallet as a working
+                                // cushion for card forwards; pay referrals only from surplus.
+                                // (We can't reserve against pending_orders: most are unpaid,
+                                // so their USDT isn't in the wallet — that blocks payouts forever.)
 
 // ── DB schema (migration safe) ───────────────────────────────────────────────
 const db = new Database(path.join(__dirname, 'orders.db'));
@@ -293,14 +297,12 @@ async function processReferralPayouts() {
       continue;
     }
 
-    // Wallet floor: keep enough USDT to cover every pending card forward.
-    let balance, reserved;
-    try {
-      balance  = await getUsdtBalance(walletAddress);
-      reserved = db.prepare('SELECT COALESCE(SUM(paygate_amount), 0) s FROM pending_orders').get().s;
-    } catch (e) { revertPayout(claim.id); continue; }
-    if (balance - claim.amount < reserved) {
-      console.log('[Payout] insufficient free funds (bal=' + balance.toFixed(4) + ' reserved=' + reserved.toFixed(4) + ' amt=' + claim.amount + ') — retry later');
+    // Wallet floor: never let a payout pull the wallet below the working cushion.
+    let balance;
+    try { balance = await getUsdtBalance(walletAddress); }
+    catch (e) { revertPayout(claim.id); continue; }
+    if (balance - claim.amount < PAYOUT_WALLET_FLOOR) {
+      console.log('[Payout] below wallet floor (bal=' + balance.toFixed(4) + ' floor=' + PAYOUT_WALLET_FLOOR + ' amt=' + claim.amount + ') — retry later');
       revertPayout(claim.id);
       continue;
     }

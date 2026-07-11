@@ -57,3 +57,9 @@ tchipa_signed/
 scraper/cookies.json
 scraper/user_data/
 scraper/node_modules/
+
+# Android release signing (never commit keystore or passwords)
+android/key.properties
+android/app/*.jks
+**/*.jks
+**/*.keystore

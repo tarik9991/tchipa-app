@@ -1,0 +1,154 @@
+=========================================================================
+TCHIPA — KNOWLEDGE BASE FOR THE WEBSITE ASSISTANT
+(Two products: "Tchipa" the virtual-card app, and "Tchipa Wallet" the crypto wallet.)
+This file is the ONLY source of truth. Do not invent facts, prices, or card numbers.
+=========================================================================
+
+
+== 1. WHAT IS TCHIPA (the main app) ==========================================
+
+Tchipa is a mobile app that turns crypto (USDT) into a real VIRTUAL CREDIT CARD
+(Mastercard or Visa) that you can use to pay on any website online — from Algeria,
+with no bank account and no KYC.
+
+- No bank needed. No document, no ID verification (no KYC).
+- Instant: your card is generated in under 2 minutes.
+- Works worldwide online: Amazon, AliExpress, Temu, Netflix, Shopify stores, PayPal
+  top-ups, subscriptions — anywhere that accepts Mastercard / Visa online.
+- Built for Algeria: you pay in Algerian dinars (DZD) via BaridiMob (Poste / Barid
+  IMob mobile transfer), and Tchipa handles the crypto side for you.
+- The card is virtual (a number + expiry + CVV shown in the app). There is no plastic
+  card; it is used for online payments only.
+
+Tagline: "Your virtual card, activated instantly. No bank, no KYC, no limits."
+
+
+== 2. HOW TO GET A CARD (step by step) =======================================
+
+1. Download the app:
+   - Android: go to tchipa.co.uk and tap "Download APK".
+   - iPhone: on tchipa.co.uk tap "Open on iPhone" — open it in Safari, then
+     Share → Add to Home Screen (it installs as an app, no App Store needed).
+
+2. Choose how much you want on the card (the card amount in USD).
+   - Mastercard: from 5 USD up to 499 USD.
+   - Visa: from 5 USD up to 1000 USD.
+
+3. Contact a Tchipa agent (a real person, USDT reseller in Algeria) — usually via
+   Telegram. You tell them the card amount.
+
+4. Pay the agent in Algerian dinars (DZD) via BaridiMob, at the day's exchange rate.
+   - The rate changes daily. It is around 242 DZD per 1 USD (indicative — the app
+     shows the live "Square" market rate on the home screen).
+   - There is a small activation fee of about 7 USD per card, included when you order.
+
+5. The agent then sends the exact amount of USDT (on the Polygon network) to the
+   address Tchipa generated for your order.
+
+6. Within about 2 minutes, the card appears inside your Tchipa app: card number,
+   expiry date and CVV. You can start paying online immediately.
+
+The agent handles the crypto for you — you only deal in dinars via BaridiMob. You do
+NOT need to own or understand crypto to use the main Tchipa app.
+
+
+== 3. WHO IS A "TCHIPA AGENT" ================================================
+
+A Tchipa agent is a REAL PERSON — a USDT reseller in Algeria — not a bot and not an
+automated Telegram service. You pay the agent in dinars via BaridiMob; the agent sends
+the equivalent USDT to your card order. Coordination (price of the day, BaridiMob
+proof, card delivery) happens directly, usually on Telegram.
+
+To become an agent yourself, you use the Tchipa app in "Agent mode" (in the app:
+Profile → enter the agent PIN). Agents buy/resell USDT and serve clients.
+
+
+== 4. PRICES, RATES AND LIMITS ==============================================
+
+- Exchange rate: about 242 DZD per 1 USD, but it CHANGES EVERY DAY. The app shows the
+  live parallel-market ("Square") rate. Always confirm the day's rate with your agent.
+- Activation fee: about 7 USD per card.
+- Card amount range: Mastercard 5–499 USD, Visa 5–1000 USD.
+- Network fees: payments use USDT on Polygon, which has ultra-low fees and instant
+  confirmation (no expensive gas).
+- Tchipa does not charge hidden monthly fees; you pay for the card amount + the
+  activation fee, in dinars, at the day's rate.
+
+
+== 5. SECURITY ============================================================
+
+- Current app version is v4: protected by a client PIN, email verification, and
+  theft-proof card claiming (a card is tied to your phone number / order, so someone
+  else cannot grab it).
+- No KYC: your card is linked to your order, not to your personal identity.
+- USDT runs on the Polygon network (fast, cheap, secure).
+
+
+== 6. AFFILIATE / REFERRAL PROGRAM (earn 1%) ================================
+
+Tchipa has a referral (affiliate) program:
+- You earn 1% of the amount loaded on every card created by people you refer.
+- Get your personal referral code in the app: Profile → the green "Parrainage / earn 1%"
+  button. Share your code; when a new user enters it and buys cards, you earn 1% of each.
+- Automatic on-chain payout: once your earnings reach 5 USDT, Tchipa automatically sends
+  your USDT to a Polygon address you register in the app (protected by your PIN).
+- There is a safety daily cap of 50 USDT per day on automatic payouts.
+- Earnings are credited automatically each time a referred card is actually issued.
+
+
+== 7. TCHIPA WALLET (the second, separate app) =============================
+
+Tchipa Wallet is a DIFFERENT app from the main Tchipa card app. Do not confuse them:
+- The main Tchipa app = makes virtual cards to pay online.
+- Tchipa Wallet = a self-custody crypto wallet to store, send and receive USDT.
+
+Tchipa Wallet details:
+- Self-custody / non-custodial: YOU own your funds. The app creates a 12-word secret
+  recovery phrase (seed). Tchipa never holds your money or your keys. If you lose your
+  seed phrase and PIN, no one can recover your funds — back up the seed safely.
+- Holds and moves USDT and POL on the Polygon network (chain 137).
+- Send / receive ERC-20 tokens, scan/show QR codes for addresses.
+- Locked by a 6-digit PIN, with optional fingerprint / biometric unlock.
+- Gas loan feature: if you have USDT but no POL to pay network gas, the wallet can lend
+  you a tiny amount of POL so you can send, and it is automatically repaid in USDT. This
+  means you can move USDT even with zero POL.
+- Shows the live "Square" exchange rate (DZD) on the home screen, like the main app.
+- Download: on tchipa.co.uk tap "Download Wallet" (Android APK).
+
+Use Tchipa Wallet if you want to hold your own USDT. Use the main Tchipa app if you
+just want a virtual card to pay online.
+
+
+== 8. DOWNLOAD & IMPORTANT UPDATE NOTE =====================================
+
+- Everything is downloaded from the official website: tchipa.co.uk.
+- Android: "Download APK". iPhone: "Open on iPhone" (Safari → Add to Home Screen).
+- IMPORTANT for existing users: this latest version is signed with a new secure signing
+  key. If you already had Tchipa installed, you must UNINSTALL the old app once, then
+  install this new version. After that, all future updates install normally over the top.
+
+
+== 9. SUPPORT / CONTACT ====================================================
+
+- For anything about a specific order (payment sent but card not received, wrong amount,
+  BaridiMob proof, becoming an agent, buying/selling USDT): contact the Tchipa agent on
+  Telegram. The Telegram support link is on the website (the "Telegram Support" button
+  in the download section).
+- The assistant cannot see individual orders, card numbers, balances or payments — for
+  those, always send the user to Telegram support.
+
+
+== 10. COMMON QUESTIONS (guidance for answers) =============================
+
+- "Do I need a bank?" No. You pay in dinars via BaridiMob only.
+- "Do I need to know crypto?" No, not for the main card app — the agent handles USDT.
+  Tchipa Wallet is for people who DO want to handle their own USDT.
+- "Is there KYC / do I send my ID?" No KYC is required.
+- "How fast?" The card is issued in about 2 minutes after the agent sends the USDT.
+- "Where can I pay?" Any online store accepting Mastercard/Visa: Amazon, AliExpress,
+  Temu, Netflix, Shopify, subscriptions, etc.
+- "Can I get a physical card?" No, Tchipa cards are virtual (online payments only).
+- "What currency do I pay in?" Algerian dinars (DZD), via BaridiMob, at the day's rate.
+- "How do I earn money with Tchipa?" Through the 1% referral program, or by becoming a
+  USDT-reselling agent.
+=========================================================================

@@ -488,6 +488,8 @@
     .cta-sub { font-size:1.05rem; color:var(--sub); max-width:480px; margin:0 auto 2.5rem; line-height:1.7; position:relative; }
     .cta-btns { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; position:relative; }
     .cta-hint { margin:1.4rem auto 0; font-size:.88rem; color:var(--sub); opacity:.85; position:relative; }
+    .update-warn { display:flex; align-items:flex-start; gap:.6rem; max-width:560px; margin:0 auto 1.6rem; padding:.85rem 1.1rem; text-align:left; font-size:.9rem; line-height:1.45; color:var(--gold); background:rgba(245,158,11,0.09); border:1px solid rgba(245,158,11,0.32); border-radius:14px; }
+    [dir="rtl"] .update-warn { text-align:right; }
 
     /* ── FOOTER ──────────────────────────────────────────────── */
     footer {
@@ -1087,6 +1089,7 @@
     <div class="badge" style="display:inline-flex;margin-bottom:1.4rem" data-k="cta.badge">📲 Available for Android & iPhone</div>
     <h2 class="cta-h2"><span data-k="cta.h2a">Start paying online</span><br><span class="grad-text" data-k="cta.h2b">with crypto today</span></h2>
     <p class="cta-sub" data-k="cta.sub">Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.</p>
+    <div class="update-warn"><span>⚠️</span><span data-k="cta.warn">Already have Tchipa installed? Uninstall the old app first, then reinstall this version (security update). Future updates will install normally.</span></div>
     <div class="cta-btns">
       <a href="https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk" class="btn-primary"><span>⬇</span><span data-k="cta.btn1">Download APK</span></a>
       <a href="https://tarik9991.github.io/tchipa-pwa/" target="_blank" rel="noopener" class="btn-primary"><span></span><span data-k="cta.btn4">Open on iPhone</span></a>
@@ -1183,6 +1186,7 @@ const T = {
     'cta.sub':'Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.',
     'cta.btn1':'Download APK','cta.btn2':'Telegram Support','cta.btn3':'Download Wallet','cta.btn4':' Open on iPhone',
     'cta.ios':' iPhone: open in Safari, then Share → Add to Home Screen.',
+    'cta.warn':'Already have Tchipa installed? Uninstall the old app first, then reinstall this version (security update). Future updates will install normally.',
     'foot.desc':'Virtual credit cards powered by crypto. Pay online worldwide without a bank account. Powered by Polygon & PayGate.',
     'foot.h1':'Product','foot.h2':'Support','foot.h3':'Network',
     'foot.l1a':'Features','foot.l1b':'How it Works','foot.l1c':'Download',
@@ -1240,6 +1244,7 @@ const T = {
     'cta.sub':'حمّل تشيبا لأندرويد واحصل على أول بطاقة افتراضية في أقل من دقيقتين. بدون بنك، بدون KYC، بدون حدود.',
     'cta.btn1':'تحميل APK','cta.btn2':'دعم عبر تيليغرام','cta.btn3':'تحميل المحفظة','cta.btn4':' فتح على آيفون',
     'cta.ios':' آيفون: افتح في Safari، ثم شارك ← إضافة إلى الشاشة الرئيسية.',
+    'cta.warn':'عندك Tchipa مثبّت من قبل؟ احذف التطبيق القديم أولاً ثم أعد تثبيت هذه النسخة (تحديث أمني). التحديثات القادمة ستُثبّت تلقائياً.',
     'foot.desc':'بطاقات ائتمان افتراضية مدعومة بالكريبتو. ادفع عبر الإنترنت حول العالم دون حساب بنكي. مدعوم بـ Polygon و PayGate.',
     'foot.h1':'المنتج','foot.h2':'الدعم','foot.h3':'الشبكة',
     'foot.l1a':'الميزات','foot.l1b':'كيف يعمل','foot.l1c':'تحميل',
@@ -1456,6 +1461,153 @@ setTimeout(()=>{
     if(el.getBoundingClientRect().top < innerHeight) el.classList.add('in');
   });
 },100);
+</script>
+
+<!-- ── AI ASSISTANT WIDGET ──────────────────────────────────── -->
+<style>
+  #ai-fab{position:fixed;z-index:900;bottom:22px;right:22px;display:flex;align-items:center;gap:9px;
+    background:linear-gradient(135deg,var(--cyan),var(--purple));color:#04121a;border:none;cursor:pointer;
+    padding:13px 18px;border-radius:40px;font:inherit;font-weight:700;font-size:.92rem;
+    box-shadow:0 10px 30px rgba(0,212,255,.32);transition:transform .18s,box-shadow .18s}
+  #ai-fab:hover{transform:translateY(-2px);box-shadow:0 14px 38px rgba(139,92,246,.4)}
+  #ai-fab svg{width:22px;height:22px}
+  [dir="rtl"] #ai-fab{right:auto;left:22px}
+  #ai-panel{position:fixed;z-index:901;bottom:22px;right:22px;width:min(380px,calc(100vw - 32px));
+    height:min(560px,calc(100vh - 44px));background:var(--surface);border:1px solid var(--border);
+    border-radius:22px;display:none;flex-direction:column;overflow:hidden;
+    box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  #ai-panel.open{display:flex;animation:aiUp .22s ease}
+  [dir="rtl"] #ai-panel{right:auto;left:22px}
+  @keyframes aiUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .ai-head{display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid var(--border);
+    background:linear-gradient(135deg,rgba(0,212,255,.09),rgba(139,92,246,.09))}
+  .ai-head .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex:none}
+  .ai-head h4{margin:0;font-size:.95rem;font-weight:700;color:var(--text);flex:1}
+  #ai-close{background:none;border:none;color:var(--sub);font-size:1.5rem;line-height:1;cursor:pointer;padding:0 4px}
+  #ai-close:hover{color:var(--text)}
+  .ai-body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:11px}
+  .ai-intro{color:var(--sub);font-size:.9rem;line-height:1.55}
+  .ai-sugg{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .ai-sugg button{background:var(--card);border:1px solid var(--border);color:var(--text);cursor:pointer;
+    border-radius:12px;padding:8px 12px;font:inherit;font-size:.8rem;text-align:left;transition:border-color .15s}
+  .ai-sugg button:hover{border-color:var(--cyan);color:var(--cyan)}
+  .ai-msg{max-width:88%;padding:10px 13px;border-radius:14px;font-size:.9rem;line-height:1.55;white-space:normal;word-wrap:break-word}
+  .ai-msg.user{align-self:flex-end;background:linear-gradient(135deg,var(--cyan),var(--purple));color:#04121a;font-weight:500;border-bottom-right-radius:4px}
+  [dir="rtl"] .ai-msg.user{align-self:flex-start;border-bottom-right-radius:14px;border-bottom-left-radius:4px}
+  .ai-msg.bot{align-self:flex-start;background:var(--card);color:var(--text);border:1px solid var(--border);border-bottom-left-radius:4px}
+  [dir="rtl"] .ai-msg.bot{align-self:flex-end;border-bottom-left-radius:14px;border-bottom-right-radius:4px}
+  .ai-msg.typing{color:var(--sub);font-style:italic}
+  .ai-msg strong{color:var(--cyan)}
+  .ai-foot{padding:11px;border-top:1px solid var(--border)}
+  .ai-inrow{display:flex;gap:8px;align-items:flex-end}
+  #ai-input{flex:1;resize:none;max-height:110px;background:var(--bg);color:var(--text);border:1px solid var(--border);
+    border-radius:12px;padding:10px 12px;font:inherit;font-size:.88rem;line-height:1.5}
+  #ai-input:focus{outline:none;border-color:var(--cyan)}
+  #ai-send{background:linear-gradient(135deg,var(--cyan),var(--purple));border:none;color:#04121a;cursor:pointer;
+    border-radius:12px;padding:0 16px;height:42px;font:inherit;font-weight:700}
+  #ai-send:disabled{opacity:.5;cursor:default}
+  .ai-disc{color:var(--sub);font-size:.68rem;margin-top:7px;text-align:center;opacity:.8}
+</style>
+
+<button id="ai-fab" aria-label="assistant">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.4 4.8L3 21l4.4-1.3A9 9 0 1 0 12 3z"/><path d="M8 11h8M8 14h5" stroke-linecap="round"/></svg>
+  <span class="lbl"></span>
+</button>
+
+<div id="ai-panel" role="dialog" aria-modal="false">
+  <div class="ai-head"><span class="dot"></span><h4></h4><button id="ai-close" aria-label="close">×</button></div>
+  <div class="ai-body" id="ai-body"></div>
+  <div class="ai-foot">
+    <div class="ai-inrow">
+      <textarea id="ai-input" rows="1"></textarea>
+      <button id="ai-send"></button>
+    </div>
+    <div class="ai-disc"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const API = "https://api.tchipa.co.uk/assistant/ask";
+  const T = {
+    en:{ fab:"Ask Tchipa", head:"Tchipa Assistant",
+      intro:"Hi! Ask me anything about Tchipa — how to get a virtual card, prices, the wallet, or the 1% affiliate program.",
+      ph:"Type your question…", send:"Send",
+      sugg:["How do I get a card?","How much does it cost?","What is Tchipa Wallet?","How does the 1% affiliate work?"],
+      disc:"AI assistant · answers based on the Tchipa docs.",
+      err:"Something went wrong. Please try again.", think:"typing…" },
+    ar:{ fab:"اسأل تشيبا", head:"مساعد تشيبا",
+      intro:"مرحباً! اسألني أي شيء عن تشيبا — كيف تحصل على بطاقة افتراضية، الأسعار، المحفظة، أو برنامج الشراكة 1%.",
+      ph:"اكتب سؤالك…", send:"إرسال",
+      sugg:["كيف أحصل على بطاقة؟","كم التكلفة؟","ما هي محفظة تشيبا؟","كيف تعمل الشراكة 1%؟"],
+      disc:"مساعد ذكي · الأجوبة مبنية على وثائق تشيبا.",
+      err:"حدث خطأ. أعد المحاولة.", think:"يكتب…" }
+  };
+  // Le site expose une variable globale `lang` ('en'|'ar') + toggleLang(). On suit notre
+  // propre état et on s'accroche à toggleLang pour réagir au changement de langue.
+  let curLang = (typeof lang !== "undefined" && T[lang]) ? lang : "en";
+  const $id = id => document.getElementById(id);
+  const fab=$id("ai-fab"), panel=$id("ai-panel"), body=$id("ai-body"),
+        input=$id("ai-input"), send=$id("ai-send"), closeBtn=$id("ai-close");
+  let history=[], busy=false, started=false;
+
+  function esc(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+  function fmt(s){return esc(s).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\n/g,"<br>");}
+
+  function applyLang(){
+    const t=T[curLang];
+    fab.querySelector(".lbl").textContent=t.fab;
+    panel.querySelector(".ai-head h4").textContent=t.head;
+    input.placeholder=t.ph; send.textContent=t.send;
+    panel.querySelector(".ai-disc").textContent=t.disc;
+    if(!started) renderIntro();
+  }
+  function renderIntro(){
+    const t=T[curLang];
+    body.innerHTML=`<div class="ai-intro" dir="auto">${esc(t.intro)}</div>
+      <div class="ai-sugg">${t.sugg.map(q=>`<button type="button" dir="auto">${esc(q)}</button>`).join("")}</div>`;
+    body.querySelectorAll(".ai-sugg button").forEach(b=>b.addEventListener("click",()=>ask(b.textContent)));
+  }
+  function addMsg(text,cls){
+    const d=document.createElement("div");
+    d.className="ai-msg "+cls; d.setAttribute("dir","auto");
+    d.innerHTML=cls.indexOf("bot")>=0?fmt(text):esc(text);
+    body.appendChild(d); body.scrollTop=body.scrollHeight; return d;
+  }
+  async function ask(q){
+    q=(q||"").trim(); if(!q||busy) return;
+    if(!started){started=true; body.innerHTML="";}
+    busy=true; send.disabled=true;
+    addMsg(q,"user"); input.value=""; input.style.height="auto";
+    const typing=addMsg(T[curLang].think,"bot typing");
+    try{
+      const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({question:q,history:history.slice(-6)})});
+      const data=await r.json();
+      const ans=data.answer||T[curLang].err;
+      typing.remove(); addMsg(ans,"bot");
+      history.push({role:"user",content:q},{role:"assistant",content:ans});
+    }catch(e){ typing.remove(); addMsg(T[curLang].err,"bot"); }
+    busy=false; send.disabled=false; input.focus();
+  }
+  function toggle(open){
+    panel.classList.toggle("open",open);
+    fab.style.display=open?"none":"flex";
+    if(open){ applyLang(); input.focus(); }
+  }
+  fab.addEventListener("click",()=>toggle(true));
+  closeBtn.addEventListener("click",()=>toggle(false));
+  send.addEventListener("click",()=>ask(input.value));
+  input.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(input.value);} });
+  input.addEventListener("input",()=>{ input.style.height="auto"; input.style.height=Math.min(input.scrollHeight,110)+"px"; });
+
+  // s'accrocher au switch de langue global du site
+  if(typeof window.toggleLang==="function"){
+    const orig=window.toggleLang;
+    window.toggleLang=function(){ orig.apply(this,arguments); curLang=(curLang==="en"?"ar":"en"); applyLang(); };
+  }
+  applyLang();
+})();
 </script>
 </body>
 </html>

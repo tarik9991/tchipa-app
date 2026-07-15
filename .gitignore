@@ -63,3 +63,6 @@ android/key.properties
 android/app/*.jks
 **/*.jks
 **/*.keystore
+
+# tchipa-ai service secrets (deployed only on the VPS)
+tchipa-ai/.env

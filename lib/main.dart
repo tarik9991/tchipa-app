@@ -846,7 +846,12 @@ class PayGateService {
 
   // Client-side: unlock a PIN-gated card. PIN is the client's own secret,
   // never seen by the agent.
-  static Future<({String redeemLink, String redeemId})> claimCardWithPin({
+  // Returns EITHER a redeemLink (provider-hosted page, the PayGate shape) OR
+  // raw card data (manual issuance when the provider gives no link). The
+  // backend hands card data over exactly once and wipes it, so the caller must
+  // persist it locally on the spot — a second call will not return it again.
+  static Future<({String? redeemLink, String redeemId, Map<String, dynamic>? card})>
+      claimCardWithPin({
     required String phone,
     required String cardToken,
     required String pin,
@@ -862,12 +867,176 @@ class PayGateService {
     if (resp.statusCode == 200) {
       final link = body['redeemLink']?.toString();
       final rid  = body['redeemId']?.toString();
-      if (link == null || link.isEmpty || rid == null || rid.isEmpty) {
-        throw Exception('Lien de carte indisponible');
+      final card = body['card'] is Map
+          ? Map<String, dynamic>.from(body['card'] as Map)
+          : null;
+      if (rid == null || rid.isEmpty) throw Exception('Réponse incomplète du serveur');
+      if ((link == null || link.isEmpty) && card == null) {
+        throw Exception('Carte indisponible');
       }
-      return (redeemLink: link, redeemId: rid);
+      return (redeemLink: (link != null && link.isNotEmpty) ? link : null,
+              redeemId: rid, card: card);
     }
-    throw Exception(body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+    throw Exception(body['message']?.toString() ??
+        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // ── Manual issuance (agent) ────────────────────────────────────────────
+  // Used when no provider API is available — the agent buys the card by hand
+  // on whatever dashboard is alive and records it here. Prefer cardLink; only
+  // send pan/cvv/exp when the provider gives no shareable link.
+  static Future<Map<String, dynamic>> manualIssue({
+    required String phone,
+    required double amountUsd,
+    String? flow,
+    String? provider,
+    String? cardLink,
+    String? pan,
+    String? cvv,
+    String? exp,
+    String? holderName,
+    String? issuedBy,
+    String? providerCardId,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/cards/manual-issue'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'phone': phone,
+            'amountUsd': amountUsd,
+            if (flow != null) 'flow': flow,
+            if (provider != null) 'provider': provider,
+            if (providerCardId != null && providerCardId.isNotEmpty)
+              'providerCardId': providerCardId,
+            if (cardLink != null && cardLink.isNotEmpty) 'cardLink': cardLink,
+            if (pan != null && pan.isNotEmpty) 'pan': pan,
+            if (cvv != null && cvv.isNotEmpty) 'cvv': cvv,
+            if (exp != null && exp.isNotEmpty) 'exp': exp,
+            if (holderName != null) 'holderName': holderName,
+            if (issuedBy != null) 'issuedBy': issuedBy,
+          }),
+        )
+        .timeout(const Duration(seconds: 25));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return body;
+    throw Exception(body['message']?.toString() ??
+        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // Agent: a client's cards plus the upstream id needed to top each one up.
+  // Never returns redeem_link or card data — the agent has no business reading
+  // either, same rule as the automated path.
+  static Future<List<Map<String, dynamic>>> fetchClientCards(String phone) async {
+    final resp = await http
+        .get(Uri.parse('$kVpsBase/admin/client-cards?phone=${Uri.encodeComponent(phone)}'))
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode != 200) {
+      throw Exception(body['message']?.toString() ??
+          body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+    }
+    return (body['cards'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  // Records a top-up the agent already performed upstream. The card in the
+  // client's hands is unchanged — this is bookkeeping, which is why a recharge
+  // costs only the deposit fee instead of a fresh issuance fee.
+  static Future<void> manualRecharge({
+    required String cardToken,
+    required double amountUsd,
+    String? providerCardId,
+    String? issuedBy,
+    String? note,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/cards/manual-recharge'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'cardToken': cardToken,
+            'amountUsd': amountUsd,
+            if (providerCardId != null && providerCardId.isNotEmpty)
+              'providerCardId': providerCardId,
+            if (issuedBy != null) 'issuedBy': issuedBy,
+            if (note != null) 'note': note,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (resp.statusCode == 200) return;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    throw Exception(body['message']?.toString() ??
+        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // ── 3D Secure relay ────────────────────────────────────────────────────
+  // The OTP reaches the account owner, never the client's phone — inherent to
+  // reselling. The client asks here; the code arrives either from the Telegram
+  // bridge automatically or from the agent by hand.
+  static Future<int> request3ds({
+    required String phone,
+    required String cardToken,
+    String? merchant,
+  }) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/threeds/request'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'phone': phone,
+            'cardToken': cardToken,
+            if (merchant != null && merchant.isNotEmpty) 'merchant': merchant,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    if (resp.statusCode == 200) return (body['requestId'] as num).toInt();
+    throw Exception(body['message']?.toString() ??
+        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
+  }
+
+  // Polled while the client waits. Also picks up codes the bridge delivered
+  // before the client even asked — the provider pushes as soon as the merchant
+  // challenges, which is usually first.
+  static Future<String?> fetch3dsCode({
+    required String phone,
+    required String cardToken,
+  }) async {
+    final uri = Uri.parse('$kVpsBase/threeds/latest'
+        '?phone=${Uri.encodeComponent(phone)}'
+        '&cardToken=${Uri.encodeComponent(cardToken)}');
+    final resp = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) return null;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return body['available'] == true ? body['code']?.toString() : null;
+  }
+
+  // Agent side: who is waiting, on which card, for how long.
+  static Future<List<Map<String, dynamic>>> fetch3dsPending() async {
+    final resp = await http
+        .get(Uri.parse('$kVpsBase/admin/threeds/pending'))
+        .timeout(const Duration(seconds: 20));
+    if (resp.statusCode != 200) return [];
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (body['requests'] as List? ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
+  static Future<void> answer3ds({required int id, required String code}) async {
+    final resp = await http
+        .post(
+          Uri.parse('$kVpsBase/admin/threeds/answer'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'id': id, 'code': code}),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (resp.statusCode == 200) return;
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    throw Exception(body['message']?.toString() ??
+        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
   }
 }
 
@@ -1421,6 +1590,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UserProfile.load();
   await AppSettings.load();
+  await ShopApi.load();
+  await Cart.load();
   runApp(const TchipaApp());
 }
 
@@ -1708,7 +1879,10 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _idx = 0;
+  // Boutique first: PayGate/Swype cards are gone (2026-09), the shop is the product.
   static const _screens = [
+    ShopScreen(),
+    WalletScreen(),
     HomeScreen(),
     TransactionsScreen(),
     ProfileScreen(),
@@ -1719,7 +1893,7 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     if (UserProfile.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        setState(() => _idx = 2);
+        setState(() => _idx = 4);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Row(children: [
             const Icon(Icons.person_outline, color: Color(0xFF00D4FF)),
@@ -1764,9 +1938,11 @@ class _MainScreenState extends State<MainScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _NavPill(icon: Icons.credit_card_rounded, label: 'Carte',     sel: _idx == 0, onTap: () => setState(() => _idx = 0)),
-                  _NavPill(icon: Icons.receipt_long_rounded, label: 'Historique', sel: _idx == 1, onTap: () => setState(() => _idx = 1)),
-                  _NavPill(icon: Icons.person_rounded,       label: 'Profil',    sel: _idx == 2, onTap: () => setState(() => _idx = 2)),
+                  _NavPill(icon: Icons.storefront_rounded,   label: 'Boutique',   sel: _idx == 0, onTap: () => setState(() => _idx = 0)),
+                  _NavPill(icon: Icons.account_balance_wallet_rounded, label: 'Solde', sel: _idx == 1, onTap: () => setState(() => _idx = 1)),
+                  _NavPill(icon: Icons.credit_card_rounded,  label: 'Carte',      sel: _idx == 2, onTap: () => setState(() => _idx = 2)),
+                  _NavPill(icon: Icons.receipt_long_rounded, label: 'Historique', sel: _idx == 3, onTap: () => setState(() => _idx = 3)),
+                  _NavPill(icon: Icons.person_rounded,       label: 'Profil',     sel: _idx == 4, onTap: () => setState(() => _idx = 4)),
                 ],
               ),
             ),
@@ -1992,15 +2168,55 @@ class _HomeScreenState extends State<HomeScreen>
         link == null || link.isEmpty || redeemId == null || redeemId.isEmpty) {
       final phone = UserProfile.phone.trim();
       if (phone.isEmpty || cardToken == null || cardToken.isEmpty) return;
-      final unlocked = requiresPin
-          ? await _promptPinAndFetch(
-              phone: phone, cardToken: cardToken, cardValue: cardValue)
-          : await _promptClaimCodeAndFetch(
-              phone: phone, cardToken: cardToken, cardValue: cardValue);
-      if (unlocked == null) return; // user cancelled or kept failing
-      link = unlocked.redeemLink;
-      redeemId = unlocked.redeemId;
+      Map<String, dynamic>? manualCard;
+      if (requiresPin) {
+        final unlocked = await _promptPinAndFetch(
+            phone: phone, cardToken: cardToken, cardValue: cardValue);
+        if (unlocked == null) return; // cancelled or kept failing
+        link = unlocked.redeemLink;
+        redeemId = unlocked.redeemId;
+        manualCard = unlocked.card;
+      } else {
+        final unlocked = await _promptClaimCodeAndFetch(
+            phone: phone, cardToken: cardToken, cardValue: cardValue);
+        if (unlocked == null) return;
+        link = unlocked.redeemLink;
+        redeemId = unlocked.redeemId;
+      }
+
+      // Manually-issued card with no provider page: the data came back once
+      // and is now gone server-side, so persist and show it immediately.
+      if (manualCard != null) {
+        final card = VccCard(
+          cardId: redeemId,
+          redeemId: redeemId,
+          redeemLink: '',
+          balance: cardValue,
+          isActivated: true,
+          holderName: holderName,
+        );
+        await card.save();
+        if (mounted) setState(() { _card = card; _pendingAgentCard = null; });
+        try { await PayGateService.markCardDelivered(redeemId); } catch (_) {}
+        if (!mounted) return;
+        await showModalBottomSheet<void>(
+          context: context,
+          backgroundColor: Colors.transparent,
+          isScrollControlled: true,
+          builder: (_) => ManualCardSheet(
+            pan: manualCard!['pan']?.toString() ?? '',
+            cvv: manualCard['cvv']?.toString() ?? '',
+            exp: manualCard['exp']?.toString() ?? '',
+            holderName: holderName,
+            amount: cardValue,
+            phone: phone,
+            cardToken: cardToken,
+          ),
+        );
+        return;
+      }
     }
+    if (link == null || link.isEmpty) return;
 
     final base = VccCard(
       cardId: redeemId,
@@ -2040,7 +2256,8 @@ class _HomeScreenState extends State<HomeScreen>
   // Prompts the user for their own Tchipa PIN (set at install via PinSetup),
   // exchanges it via /cards/claim-with-pin. PIN is never shared with the
   // agent, so even a malicious agent who has phone+card_token can't claim.
-  Future<({String redeemLink, String redeemId})?> _promptPinAndFetch({
+  Future<({String? redeemLink, String redeemId, Map<String, dynamic>? card})?>
+      _promptPinAndFetch({
     required String phone,
     required String cardToken,
     required double cardValue,
@@ -2048,7 +2265,7 @@ class _HomeScreenState extends State<HomeScreen>
     final ctrl = TextEditingController();
     String? errorMsg;
     bool busy = false;
-    ({String redeemLink, String redeemId})? result;
+    ({String? redeemLink, String redeemId, Map<String, dynamic>? card})? result;
 
     await showDialog<void>(
       context: context,
@@ -4794,6 +5011,242 @@ class _GlassDetailCard extends StatelessWidget {
 // ============================================
 // TRANSACTIONS SCREEN
 // ============================================
+// Shown for manually-issued cards, i.e. when the provider hands over raw card
+// data instead of a hosted page. Also carries the 3DS relay: the OTP for a
+// resold card reaches the account owner, never the buyer's phone, so the
+// client pulls it through here mid-checkout.
+class ManualCardSheet extends StatefulWidget {
+  final String pan, cvv, exp, phone, cardToken;
+  final String? holderName;
+  final double amount;
+  const ManualCardSheet({
+    super.key,
+    required this.pan,
+    required this.cvv,
+    required this.exp,
+    required this.phone,
+    required this.cardToken,
+    required this.amount,
+    this.holderName,
+  });
+
+  @override
+  State<ManualCardSheet> createState() => _ManualCardSheetState();
+}
+
+class _ManualCardSheetState extends State<ManualCardSheet> {
+  bool _revealed = false;
+  bool _waiting3ds = false;
+  String? _code;
+  String? _error;
+  Timer? _poll;
+  int _elapsed = 0;
+
+  static const _pollEvery = Duration(seconds: 3);
+  static const _giveUpAfter = 300; // matches THREEDS_TTL_SEC server-side
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  String get _prettyPan {
+    final digits = widget.pan.replaceAll(RegExp(r'\D'), '');
+    final out = <String>[];
+    for (var i = 0; i < digits.length; i += 4) {
+      out.add(digits.substring(i, (i + 4 > digits.length) ? digits.length : i + 4));
+    }
+    return out.join(' ');
+  }
+
+  Future<void> _copy(String label, String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$label copié'), duration: const Duration(seconds: 1)),
+    );
+  }
+
+  Future<void> _ask3ds() async {
+    setState(() { _waiting3ds = true; _code = null; _error = null; _elapsed = 0; });
+    try {
+      await PayGateService.request3ds(
+          phone: widget.phone, cardToken: widget.cardToken, merchant: 'achat en ligne');
+    } catch (e) {
+      setState(() {
+        _waiting3ds = false;
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+      return;
+    }
+    _poll?.cancel();
+    _poll = Timer.periodic(_pollEvery, (t) async {
+      _elapsed += _pollEvery.inSeconds;
+      String? code;
+      try {
+        code = await PayGateService.fetch3dsCode(
+            phone: widget.phone, cardToken: widget.cardToken);
+      } catch (_) {/* transient — keep polling */}
+      if (!mounted) { t.cancel(); return; }
+      if (code != null && code.isNotEmpty) {
+        t.cancel();
+        setState(() { _code = code; _waiting3ds = false; });
+      } else if (_elapsed >= _giveUpAfter) {
+        t.cancel();
+        setState(() {
+          _waiting3ds = false;
+          _error = 'Pas de code reçu. Relance la demande depuis la page de paiement.';
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+          left: 20, right: 20, top: 20,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 28),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 42, height: 4,
+            decoration: BoxDecoration(
+                color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(height: 18),
+          Text('Ta carte de \$${widget.amount.toStringAsFixed(0)}',
+              style: TextStyle(
+                  color: AppColors.label, fontSize: 19, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text('Note-la maintenant — elle ne sera plus affichée',
+              style: TextStyle(color: Colors.orangeAccent.withValues(alpha: 0.9), fontSize: 12)),
+          const SizedBox(height: 18),
+
+          _row('Numéro', _revealed ? _prettyPan : '•••• •••• •••• ${_last4()}',
+              onCopy: () => _copy('Numéro', widget.pan.replaceAll(RegExp(r'\D'), ''))),
+          _row('Expiration', _revealed ? widget.exp : '••/••',
+              onCopy: () => _copy('Expiration', widget.exp)),
+          _row('CVV', _revealed ? widget.cvv : '•••',
+              onCopy: () => _copy('CVV', widget.cvv)),
+          if (widget.holderName != null && widget.holderName!.isNotEmpty)
+            _row('Titulaire', widget.holderName!),
+
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: () => setState(() => _revealed = !_revealed),
+            icon: Icon(_revealed ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                size: 18),
+            label: Text(_revealed ? 'Masquer' : 'Afficher'),
+          ),
+
+          const Divider(height: 28),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Code de vérification (3D Secure)',
+                style: TextStyle(
+                    color: AppColors.label, fontWeight: FontWeight.w700, fontSize: 14)),
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Si le site te demande un code, appuie ici — il arrive en quelques secondes.',
+              style: TextStyle(color: AppColors.textDim, fontSize: 12.5, height: 1.4),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          if (_code != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00D4FF).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
+              ),
+              child: Column(children: [
+                Text(_code!,
+                    style: const TextStyle(
+                        color: Color(0xFF00D4FF), fontSize: 30,
+                        fontWeight: FontWeight.bold, letterSpacing: 6)),
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: () => _copy('Code', _code!),
+                  icon: const Icon(Icons.copy_rounded, size: 16),
+                  label: const Text('Copier'),
+                ),
+              ]),
+            )
+          else
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _waiting3ds ? null : _ask3ds,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                icon: _waiting3ds
+                    ? const SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.shield_outlined, size: 18),
+                label: Text(_waiting3ds
+                    ? 'En attente du code…  ${_elapsed}s'
+                    : 'Demander mon code 3DS'),
+              ),
+            ),
+
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
+                textAlign: TextAlign.center),
+          ],
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
+  String _last4() {
+    final d = widget.pan.replaceAll(RegExp(r'\D'), '');
+    return d.length >= 4 ? d.substring(d.length - 4) : d;
+  }
+
+  Widget _row(String label, String value, {VoidCallback? onCopy}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(children: [
+        SizedBox(
+          width: 92,
+          child: Text(label, style: TextStyle(color: AppColors.textDim, fontSize: 13)),
+        ),
+        Expanded(
+          child: Text(value,
+              style: TextStyle(
+                  color: AppColors.label, fontSize: 15.5,
+                  fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+        ),
+        if (onCopy != null)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.copy_rounded, size: 17, color: Colors.white38),
+            onPressed: onCopy,
+          ),
+      ]),
+    );
+  }
+}
+
 class TransactionsScreen extends StatelessWidget {
   const TransactionsScreen({super.key});
 
@@ -5604,6 +6057,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 12),
               GestureDetector(
                 onTap: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const AgentWalletScreen())),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: const Color(0xFF8B5CF6).withValues(alpha: 0.30)),
+                    borderRadius: BorderRadius.circular(14),
+                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.06),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.support_agent_rounded,
+                          color: Color(0xFF8B5CF6), size: 18),
+                      SizedBox(width: 10),
+                      Text('Espace agent — créditer un client',
+                          style: TextStyle(
+                              color: Color(0xFF8B5CF6),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const AgentScreen())),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 14),
@@ -5812,6 +6293,8 @@ class _AgentScreenState extends State<AgentScreen>
   AgentOrder? _current; // active order being processed
   Timer? _autoPoll;
   bool _pinIsDefault = true;
+  int _pending3ds = 0;     // badge: clients stuck mid-checkout waiting on an OTP
+  Timer? _threedsPoll;
 
   @override
   void initState() {
@@ -5841,12 +6324,22 @@ class _AgentScreenState extends State<AgentScreen>
   @override
   void dispose() {
     _autoPoll?.cancel();
+    _threedsPoll?.cancel();
     _shakeCtrl.dispose();
     _phoneCtrl.dispose();
     _nameCtrl.dispose();
     _emailCtrl.dispose();
     _customCtrl.dispose();
     super.dispose();
+  }
+
+  // A waiting client has ~5 minutes before the merchant's checkout expires,
+  // so the badge has to be near-live or the relay is pointless.
+  void _start3dsWatch() {
+    _threedsPoll?.cancel();
+    _refresh3dsCount();
+    _threedsPoll = Timer.periodic(
+        const Duration(seconds: 20), (_) => _refresh3dsCount());
   }
 
   void _pressDigit(String d) {
@@ -5868,6 +6361,7 @@ class _AgentScreenState extends State<AgentScreen>
   void _checkPin() {
     if (_pin == _pinExpected) {
       setState(() { _unlocked = true; _pinError = false; });
+      _start3dsWatch();
     } else {
       setState(() { _pin = ''; _pinError = true; });
       _shakeCtrl.forward(from: 0);
@@ -6198,10 +6692,702 @@ class _AgentScreenState extends State<AgentScreen>
             ),
           ]),
         ),
+      // Provider-independent tools, added after the July-2026 outage: issue a
+      // card bought by hand on any dashboard, and relay 3DS codes that land on
+      // our side instead of the buyer's phone.
+      if (_current == null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+          child: Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _manualIssueSheet,
+                icon: const Icon(Icons.credit_card_rounded, size: 17),
+                label: const Text('Carte', style: TextStyle(fontSize: 13)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _rechargeSheet,
+                icon: const Icon(Icons.add_card_rounded, size: 17),
+                label: const Text('Recharge', style: TextStyle(fontSize: 13)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _threedsInbox,
+                icon: const Icon(Icons.shield_outlined, size: 17),
+                label: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Text('3DS', style: TextStyle(fontSize: 13)),
+                  if (_pending3ds > 0) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                          color: Colors.redAccent,
+                          borderRadius: BorderRadius.circular(9)),
+                      child: Text('$_pending3ds',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 11,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ]),
+              ),
+            ),
+          ]),
+        ),
       Expanded(
         child: _current != null ? _buildOrderStatus() : _buildForm(),
       ),
     ]);
+  }
+
+  // ── Manual issuance ───────────────────────────────────────────────────
+  // The agent already bought the card upstream; this only records it so the
+  // client's existing PIN-gated flow can deliver it. A one-time LINK is always
+  // preferred — raw PAN is stored encrypted and wiped the moment the client
+  // reads it, so we hold card data for minutes, not forever.
+  Future<void> _manualIssueSheet() async {
+    final phoneCtrl = TextEditingController(text: _phoneCtrl.text.trim());
+    final amountCtrl = TextEditingController();
+    final linkCtrl = TextEditingController();
+    final panCtrl = TextEditingController();
+    final cvvCtrl = TextEditingController();
+    final expCtrl = TextEditingController();
+    final refCtrl = TextEditingController();
+    final cardIdCtrl = TextEditingController();
+    bool useLink = true;
+    bool busy = false;
+    String? err;
+    String? okMsg;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
+        Future<void> submit() async {
+          final phone = phoneCtrl.text.trim();
+          final amount = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
+          if (phone.length < 6) {
+            setSheet(() => err = 'Téléphone du client requis');
+            return;
+          }
+          if (amount == null || amount <= 0) {
+            setSheet(() => err = 'Montant invalide');
+            return;
+          }
+          final pan = panCtrl.text.replaceAll(RegExp(r'[\s-]'), '');
+          if (useLink) {
+            if (!linkCtrl.text.trim().startsWith('https://')) {
+              setSheet(() => err = 'Le lien doit commencer par https://');
+              return;
+            }
+          } else {
+            if (!RegExp(r'^\d{15,19}$').hasMatch(pan)) {
+              setSheet(() => err = 'Numéro invalide (15-19 chiffres)');
+              return;
+            }
+            if (!RegExp(r'^\d{3,4}$').hasMatch(cvvCtrl.text.trim())) {
+              setSheet(() => err = 'CVV invalide');
+              return;
+            }
+            if (!RegExp(r'^\d{2}/\d{2,4}$').hasMatch(expCtrl.text.trim())) {
+              setSheet(() => err = 'Expiration au format MM/AA');
+              return;
+            }
+          }
+          setSheet(() { busy = true; err = null; });
+          try {
+            final res = await PayGateService.manualIssue(
+              phone: phone,
+              amountUsd: amount,
+              provider: refCtrl.text.trim().isEmpty ? null : refCtrl.text.trim(),
+              providerCardId: cardIdCtrl.text.trim(),
+              cardLink: useLink ? linkCtrl.text.trim() : null,
+              pan: useLink ? null : pan,
+              cvv: useLink ? null : cvvCtrl.text.trim(),
+              exp: useLink ? null : expCtrl.text.trim(),
+            );
+            final code = res['claimCode']?.toString();
+            setSheet(() {
+              busy = false;
+              okMsg = code != null && code.isNotEmpty
+                  ? 'Enregistrée. Donne ce code au client : $code'
+                  : 'Enregistrée. Le client la débloque avec son PIN.';
+            });
+          } catch (e) {
+            setSheet(() {
+              busy = false;
+              err = e.toString().replaceFirst('Exception: ', '');
+            });
+          }
+        }
+
+        InputDecoration deco(String hint) => InputDecoration(
+              hintText: hint,
+              hintStyle: TextStyle(color: AppColors.hint, fontSize: 13.5),
+              filled: true,
+              fillColor: AppColors.card,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  borderSide: BorderSide.none),
+            );
+
+        return Padding(
+          padding: EdgeInsets.only(
+              left: 20, right: 20, top: 18,
+              bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 24),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Carte achetée manuellement',
+                    style: TextStyle(
+                        color: AppColors.label, fontSize: 17,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text('Achète la carte chez ton fournisseur, puis saisis-la ici.',
+                    style: TextStyle(color: AppColors.textDim, fontSize: 12.5),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 18),
+                TextField(controller: phoneCtrl, keyboardType: TextInputType.phone,
+                    style: TextStyle(color: AppColors.inputFg),
+                    decoration: deco('Téléphone du client  +213…')),
+                const SizedBox(height: 10),
+                TextField(controller: amountCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: TextStyle(color: AppColors.inputFg),
+                    decoration: deco('Montant USD  ex: 20')),
+                const SizedBox(height: 10),
+                TextField(controller: refCtrl,
+                    style: TextStyle(color: AppColors.inputFg),
+                    decoration: deco('Fournisseur  ex: flexcard  (optionnel)')),
+                const SizedBox(height: 10),
+                TextField(controller: cardIdCtrl,
+                    style: TextStyle(color: AppColors.inputFg),
+                    decoration: deco('ID de la carte chez le fournisseur')),
+                const SizedBox(height: 4),
+                Text(
+                  'Indispensable pour pouvoir la recharger plus tard — '
+                  'c\'est là qu\'est la marge.',
+                  style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: true, label: Text('Lien')),
+                    ButtonSegment(value: false, label: Text('Numéro')),
+                  ],
+                  selected: {useLink},
+                  onSelectionChanged: (s) => setSheet(() => useLink = s.first),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  useLink
+                      ? 'Recommandé : le numéro ne transite jamais par nos serveurs.'
+                      : 'Stocké chiffré, puis effacé dès que le client l\'a lu.',
+                  style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                if (useLink)
+                  TextField(controller: linkCtrl,
+                      style: TextStyle(color: AppColors.inputFg),
+                      decoration: deco('https://…  lien à usage unique'))
+                else ...[
+                  TextField(controller: panCtrl,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: AppColors.inputFg),
+                      decoration: deco('Numéro de carte')),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(controller: expCtrl,
+                          style: TextStyle(color: AppColors.inputFg),
+                          decoration: deco('MM/AA')),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(controller: cvvCtrl,
+                          keyboardType: TextInputType.number,
+                          style: TextStyle(color: AppColors.inputFg),
+                          decoration: deco('CVV')),
+                    ),
+                  ]),
+                ],
+                if (err != null) ...[
+                  const SizedBox(height: 12),
+                  Text(err!,
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
+                      textAlign: TextAlign.center),
+                ],
+                if (okMsg != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(okMsg!,
+                        style: const TextStyle(
+                            color: Colors.greenAccent, fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.center),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: busy ? null : (okMsg != null
+                        ? () => Navigator.of(sheetCtx).pop()
+                        : submit),
+                    style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14)),
+                    child: busy
+                        ? const SizedBox(
+                            width: 17, height: 17,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : Text(okMsg != null ? 'Fermer' : 'Enregistrer la carte'),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        );
+      }),
+    );
+    _refresh3dsCount();
+  }
+
+  // ── Recharge ──────────────────────────────────────────────────────────
+  // The profitable path: the issuance fee was paid once, a top-up costs only
+  // the deposit percentage. The agent looks up the client, reads the upstream
+  // card id, tops it up on the provider dashboard, then records it here.
+  Future<void> _rechargeSheet() async {
+    final phoneCtrl = TextEditingController(text: _phoneCtrl.text.trim());
+    final amountCtrl = TextEditingController();
+    List<Map<String, dynamic>> cards = [];
+    Map<String, dynamic>? selected;
+    bool searching = false;
+    bool busy = false;
+    String? err;
+    String? okMsg;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
+        Future<void> search() async {
+          final p = phoneCtrl.text.trim();
+          if (p.length < 6) {
+            setSheet(() => err = 'Téléphone requis');
+            return;
+          }
+          setSheet(() { searching = true; err = null; okMsg = null; selected = null; });
+          try {
+            final r = await PayGateService.fetchClientCards(p);
+            setSheet(() {
+              cards = r;
+              searching = false;
+              if (r.isEmpty) err = 'Aucune carte pour ce numéro.';
+            });
+          } catch (e) {
+            setSheet(() {
+              searching = false;
+              err = e.toString().replaceFirst('Exception: ', '');
+            });
+          }
+        }
+
+        Future<void> submit() async {
+          final amount = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
+          if (selected == null) {
+            setSheet(() => err = 'Choisis une carte');
+            return;
+          }
+          if (amount == null || amount <= 0) {
+            setSheet(() => err = 'Montant invalide');
+            return;
+          }
+          setSheet(() { busy = true; err = null; });
+          try {
+            await PayGateService.manualRecharge(
+              cardToken: selected!['cardToken'].toString(),
+              amountUsd: amount,
+            );
+            setSheet(() {
+              busy = false;
+              okMsg = 'Recharge de \$${amount.toStringAsFixed(0)} enregistrée.';
+            });
+            await search();
+          } catch (e) {
+            setSheet(() {
+              busy = false;
+              err = e.toString().replaceFirst('Exception: ', '');
+            });
+          }
+        }
+
+        InputDecoration deco(String hint) => InputDecoration(
+              hintText: hint,
+              hintStyle: TextStyle(color: AppColors.hint, fontSize: 13.5),
+              filled: true,
+              fillColor: AppColors.card,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  borderSide: BorderSide.none),
+            );
+
+        return Padding(
+          padding: EdgeInsets.only(
+              left: 16, right: 16, top: 50,
+              bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 20),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            padding: const EdgeInsets.all(18),
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Recharger un client',
+                    style: TextStyle(
+                        color: AppColors.label, fontSize: 17,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 14),
+                Row(children: [
+                  Expanded(
+                    child: TextField(controller: phoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        style: TextStyle(color: AppColors.inputFg),
+                        decoration: deco('Téléphone du client')),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: searching ? null : search,
+                    style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 14)),
+                    child: searching
+                        ? const SizedBox(
+                            width: 15, height: 15,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Chercher'),
+                  ),
+                ]),
+                if (cards.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  ...cards.map((c) {
+                    final isSel = selected != null &&
+                        selected!['cardToken'] == c['cardToken'];
+                    final upstream = c['providerCardId']?.toString();
+                    return GestureDetector(
+                      onTap: () => setSheet(() { selected = c; err = null; }),
+                      child: Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(13),
+                        decoration: BoxDecoration(
+                          color: isSel
+                              ? const Color(0xFF00D4FF).withValues(alpha: 0.12)
+                              : AppColors.card,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: isSel
+                                  ? const Color(0xFF00D4FF)
+                                  : Colors.white.withValues(alpha: 0.07)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(children: [
+                              Text('\$${(c['totalUsd'] as num?)?.toStringAsFixed(0) ?? '?'}',
+                                  style: TextStyle(
+                                      color: AppColors.label, fontSize: 15,
+                                      fontWeight: FontWeight.bold)),
+                              const SizedBox(width: 8),
+                              Text('${c['provider'] ?? '?'}',
+                                  style: TextStyle(
+                                      color: AppColors.textDim, fontSize: 12)),
+                              const Spacer(),
+                              if ((c['rechargeCount'] as num? ?? 0) > 0)
+                                Text('${c['rechargeCount']} recharge(s)',
+                                    style: const TextStyle(
+                                        color: Colors.greenAccent, fontSize: 11.5)),
+                            ]),
+                            const SizedBox(height: 6),
+                            if (upstream != null && upstream.isNotEmpty)
+                              Row(children: [
+                                Expanded(
+                                  child: Text('ID fournisseur : $upstream',
+                                      style: const TextStyle(
+                                          color: Color(0xFF00D4FF),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600)),
+                                ),
+                                IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  icon: const Icon(Icons.copy_rounded,
+                                      size: 16, color: Colors.white38),
+                                  onPressed: () async {
+                                    await Clipboard.setData(
+                                        ClipboardData(text: upstream));
+                                    if (sheetCtx.mounted) {
+                                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                                        const SnackBar(
+                                            content: Text('ID copié'),
+                                            duration: Duration(seconds: 1)),
+                                      );
+                                    }
+                                  },
+                                ),
+                              ])
+                            else
+                              Text(
+                                'Aucun ID enregistré — retrouve la carte à la main '
+                                'chez le fournisseur.',
+                                style: TextStyle(
+                                    color: Colors.orangeAccent.withValues(alpha: 0.9),
+                                    fontSize: 11.5),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Recharge d\'abord la carte chez le fournisseur, puis note le '
+                    'montant ici.',
+                    style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(controller: amountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      style: TextStyle(color: AppColors.inputFg),
+                      decoration: deco('Montant rechargé (USD)')),
+                ],
+                if (err != null) ...[
+                  const SizedBox(height: 12),
+                  Text(err!,
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
+                      textAlign: TextAlign.center),
+                ],
+                if (okMsg != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.greenAccent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(okMsg!,
+                        style: const TextStyle(
+                            color: Colors.greenAccent, fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.center),
+                  ),
+                ],
+                if (cards.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: busy ? null : submit,
+                      style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14)),
+                      child: busy
+                          ? const SizedBox(
+                              width: 17, height: 17,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Enregistrer la recharge'),
+                    ),
+                  ),
+                ],
+              ]),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  // ── 3DS inbox ─────────────────────────────────────────────────────────
+  // Each row says WHICH client is waiting on WHICH card — the attribution the
+  // provider's Telegram feed cannot give you once two clients buy at once.
+  Future<void> _threedsInbox() async {
+    // State lives OUTSIDE the StatefulBuilder — declaring it inside would reset
+    // it on every rebuild and spin load() forever.
+    List<Map<String, dynamic>> rows = [];
+    bool loading = true;
+    String? err;
+    bool started = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
+        Future<void> load() async {
+          setSheet(() { loading = true; err = null; });
+          try {
+            final r = await PayGateService.fetch3dsPending();
+            setSheet(() { rows = r; loading = false; });
+          } catch (e) {
+            setSheet(() {
+              loading = false;
+              err = e.toString().replaceFirst('Exception: ', '');
+            });
+          }
+        }
+
+        if (!started) {
+          started = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) => load());
+        }
+
+        Future<void> answer(int id) async {
+          final ctrl = TextEditingController();
+          final ok = await showDialog<bool>(
+            context: sheetCtx,
+            builder: (d) => AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: Text('Code reçu du fournisseur',
+                  style: TextStyle(color: AppColors.label, fontSize: 16)),
+              content: TextField(
+                controller: ctrl,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                style: TextStyle(color: AppColors.inputFg, letterSpacing: 4),
+                decoration: const InputDecoration(hintText: '123456'),
+              ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(d).pop(false),
+                    child: const Text('Annuler')),
+                ElevatedButton(
+                    onPressed: () => Navigator.of(d).pop(true),
+                    child: const Text('Envoyer')),
+              ],
+            ),
+          );
+          if (ok != true) return;
+          try {
+            await PayGateService.answer3ds(id: id, code: ctrl.text.trim());
+            await load();
+          } catch (e) {
+            setSheet(() => err = e.toString().replaceFirst('Exception: ', ''));
+          }
+        }
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 60, 16, 20),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            padding: const EdgeInsets.all(18),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(children: [
+                Expanded(
+                  child: Text('Demandes 3D Secure',
+                      style: TextStyle(
+                          color: AppColors.label, fontSize: 16.5,
+                          fontWeight: FontWeight.bold)),
+                ),
+                IconButton(
+                    onPressed: load,
+                    icon: const Icon(Icons.refresh_rounded, size: 20)),
+              ]),
+              const SizedBox(height: 4),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (err != null)
+                Text(err!, style: const TextStyle(color: Colors.redAccent, fontSize: 12.5))
+              else if (rows.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 26),
+                  child: Text('Aucun client en attente.',
+                      style: TextStyle(color: AppColors.textDim, fontSize: 13)),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 400),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: rows.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final r = rows[i];
+                      final left = (r['seconds_left'] as num?)?.toInt() ?? 0;
+                      return Row(children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(r['phone']?.toString() ?? '?',
+                                  style: TextStyle(
+                                      color: AppColors.label,
+                                      fontWeight: FontWeight.w700, fontSize: 14)),
+                              const SizedBox(height: 2),
+                              Text(
+                                '\$${r['amount_usd'] ?? '?'} · ${r['provider'] ?? '?'}'
+                                ' · ${left}s restantes',
+                                style: TextStyle(
+                                    color: left < 60
+                                        ? Colors.orangeAccent
+                                        : AppColors.textDim,
+                                    fontSize: 11.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => answer((r['id'] as num).toInt()),
+                          style: ElevatedButton.styleFrom(
+                              visualDensity: VisualDensity.compact),
+                          child: const Text('Coller', style: TextStyle(fontSize: 12.5)),
+                        ),
+                      ]);
+                    },
+                  ),
+                ),
+            ]),
+          ),
+        );
+      }),
+    );
+    _refresh3dsCount();
+  }
+
+  Future<void> _refresh3dsCount() async {
+    try {
+      final r = await PayGateService.fetch3dsPending();
+      if (mounted) setState(() => _pending3ds = r.length);
+    } catch (_) {/* badge is cosmetic */}
   }
 
   Widget _buildForm() {
@@ -7190,6 +8376,1500 @@ class _CardWebViewScreenState extends State<CardWebViewScreen> {
               ),
             ),
           ),
+      ]),
+    );
+  }
+}
+
+// ============================================
+// BOUTIQUE 1688 + PORTE-MONNAIE $ (2026-09-28)
+// ============================================
+// PayGate/Swype are gone: Tchipa now sells clothes (1688 catalogue) paid with
+// a USD balance. The balance is credited by a human agent (dinars via
+// BaridiMob). Server routes: /shop/*, /wallet/*, /agent/* in backend/server.js.
+// The app never sends a price — the server charges the chosen variant's price.
+
+const LinearGradient _kShopGrad =
+    LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]);
+
+String _usd(num v) => '${v.toStringAsFixed(2)} \$';
+
+String _idemKey() {
+  final r = Random.secure();
+  return List.generate(24, (_) => r.nextInt(16).toRadixString(16)).join();
+}
+
+String _thumb(String? url) =>
+    url == null ? '' : (url.contains('alicdn.com') ? '${url}_300x300.jpg' : url);
+
+class ApiError implements Exception {
+  final int status;
+  final String message;
+  final Map<String, dynamic> body;
+  ApiError(this.status, this.message, this.body);
+  @override
+  String toString() => message;
+}
+
+class ShopApi {
+  static const _tokKey = 'wallet_token', _agentKey = 'agent_token';
+  static String? walletToken;
+  static String? agentToken;
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    walletToken = p.getString(_tokKey);
+    agentToken = p.getString(_agentKey);
+  }
+
+  static Future<void> _save(String k, String? v) async {
+    final p = await SharedPreferences.getInstance();
+    if (v == null) {
+      await p.remove(k);
+    } else {
+      await p.setString(k, v);
+    }
+  }
+
+  static Future<Map<String, dynamic>> _req(String method, String path,
+      {Map<String, dynamic>? body, String? bearer}) async {
+    final uri = Uri.parse('$kVpsBase$path');
+    final h = {
+      'Content-Type': 'application/json',
+      if (bearer != null) 'Authorization': 'Bearer $bearer',
+    };
+    http.Response r;
+    try {
+      r = method == 'GET'
+          ? await http.get(uri, headers: h).timeout(const Duration(seconds: 25))
+          : await http
+              .post(uri, headers: h, body: jsonEncode(body ?? {}))
+              .timeout(const Duration(seconds: 25));
+    } on TimeoutException {
+      throw ApiError(0, 'Le serveur ne répond pas. Réessaie dans un instant.', {});
+    } catch (_) {
+      throw ApiError(0, 'Pas de connexion internet.', {});
+    }
+    Map<String, dynamic> d;
+    try {
+      d = jsonDecode(r.body) as Map<String, dynamic>;
+    } catch (_) {
+      d = {};
+    }
+    if (r.statusCode >= 400) {
+      if (r.statusCode == 401 && bearer != null && bearer == walletToken) {
+        walletToken = null;
+        await _save(_tokKey, null);
+      }
+      throw ApiError(r.statusCode, (d['error'] ?? 'Erreur ${r.statusCode}').toString(), d);
+    }
+    return d;
+  }
+
+  // Client wallet
+  static bool get loggedIn => walletToken != null;
+  static Future<double> login(String phone, String pin) async {
+    final d = await _req('POST', '/wallet/login', body: {'phone': phone, 'pin': pin});
+    walletToken = d['token'] as String;
+    await _save(_tokKey, walletToken);
+    return (d['balanceUsd'] as num).toDouble();
+  }
+
+  static Future<Map<String, dynamic>> me() => _req('GET', '/wallet/me', bearer: walletToken);
+
+  static Future<void> logout() async {
+    try {
+      await _req('POST', '/wallet/logout', bearer: walletToken);
+    } catch (_) {}
+    walletToken = null;
+    await _save(_tokKey, null);
+  }
+
+  // Shop
+  static Future<List<dynamic>> categories() async =>
+      (await _req('GET', '/shop/categories'))['categories'] as List;
+
+  static Future<Map<String, dynamic>> products({String? category, String q = '', int page = 1}) {
+    final qs = {
+      'page': '$page',
+      if (category != null) 'category': category,
+      if (q.trim().isNotEmpty) 'q': q.trim(),
+    };
+    return _req('GET', '/shop/products?${Uri(queryParameters: qs).query}');
+  }
+
+  static Future<Map<String, dynamic>> product(int id) => _req('GET', '/shop/products/$id');
+
+  static Future<Map<String, dynamic>> placeOrder(
+          List<CartLine> lines, Map<String, String> delivery, String idem) =>
+      _req('POST', '/shop/orders', bearer: walletToken, body: {
+        'items': lines
+            .map((l) => {'productId': l.productId, 'variant': l.variant, 'qty': l.qty})
+            .toList(),
+        'delivery': delivery,
+        'idempotencyKey': idem,
+      });
+
+  static Future<List<dynamic>> myOrders() async =>
+      (await _req('GET', '/shop/orders', bearer: walletToken))['orders'] as List;
+
+  // Agent
+  static Future<Map<String, dynamic>> agentMe([String? token]) =>
+      _req('GET', '/agent/me', bearer: token ?? agentToken);
+
+  static Future<void> setAgentToken(String? t) async {
+    agentToken = t;
+    await _save(_agentKey, t);
+  }
+
+  static Future<Map<String, dynamic>> agentCredit(
+          {required String phone,
+          required String amount,
+          int? dzd,
+          String? ref,
+          required String idem}) =>
+      _req('POST', '/agent/wallet/credit', bearer: agentToken, body: {
+        'phone': phone,
+        'amountUsd': amount,
+        if (dzd != null) 'dzd': dzd,
+        if (ref != null && ref.isNotEmpty) 'ref': ref,
+        'idempotencyKey': idem,
+      });
+
+  static Future<List<dynamic>> agentCredits() async =>
+      (await _req('GET', '/agent/credits', bearer: agentToken))['credits'] as List;
+}
+
+// ── Panier (persisté sur le téléphone) ──────────────────────────────────
+class CartLine {
+  final int productId;
+  final String title;
+  final String? image;
+  final String variant; // 1688 props_names, ex. "Color:Black;Size:L"
+  final Map<String, dynamic> props;
+  final double unitUsd; // prix affiché ; le serveur recalcule au paiement
+  int qty;
+  CartLine({
+    required this.productId,
+    required this.title,
+    required this.image,
+    required this.variant,
+    required this.props,
+    required this.unitUsd,
+    this.qty = 1,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'productId': productId, 'title': title, 'image': image, 'variant': variant,
+        'props': props, 'unitUsd': unitUsd, 'qty': qty,
+      };
+
+  factory CartLine.fromJson(Map<String, dynamic> j) => CartLine(
+        productId: j['productId'] as int,
+        title: j['title'] as String,
+        image: j['image'] as String?,
+        variant: j['variant'] as String,
+        props: Map<String, dynamic>.from(j['props'] as Map? ?? {}),
+        unitUsd: (j['unitUsd'] as num).toDouble(),
+        qty: j['qty'] as int,
+      );
+
+  String get variantLabel => props.values.join(' · ');
+}
+
+class Cart {
+  static final ValueNotifier<List<CartLine>> lines = ValueNotifier(<CartLine>[]);
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    try {
+      final raw = jsonDecode(p.getString('cart_v1') ?? '[]') as List;
+      lines.value = raw.map((e) => CartLine.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    } catch (_) {
+      lines.value = [];
+    }
+  }
+
+  static Future<void> _persist() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('cart_v1', jsonEncode(lines.value.map((l) => l.toJson()).toList()));
+  }
+
+  static void add(CartLine l) {
+    final list = List.of(lines.value);
+    final i = list.indexWhere((x) => x.productId == l.productId && x.variant == l.variant);
+    if (i >= 0) {
+      list[i].qty = min(10, list[i].qty + l.qty);
+    } else {
+      list.add(l);
+    }
+    lines.value = list;
+    _persist();
+  }
+
+  static void setQty(CartLine l, int q) {
+    if (q <= 0) return remove(l);
+    l.qty = min(10, q);
+    lines.value = List.of(lines.value);
+    _persist();
+  }
+
+  static void remove(CartLine l) {
+    lines.value = List.of(lines.value)..remove(l);
+    _persist();
+  }
+
+  static void clear() {
+    lines.value = [];
+    _persist();
+  }
+
+  static int get count => lines.value.fold(0, (s, l) => s + l.qty);
+  static double get total => lines.value.fold(0.0, (s, l) => s + l.unitUsd * l.qty);
+}
+
+// ── Petits éléments partagés ─────────────────────────────────────────────
+class _GradButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onTap;
+  final bool busy;
+  const _GradButton({required this.label, required this.onTap, this.busy = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null && !busy;
+    return Opacity(
+      opacity: enabled ? 1 : 0.5,
+      child: GestureDetector(
+        onTap: enabled ? onTap : null,
+        child: Container(
+          height: 52,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(gradient: _kShopGrad, borderRadius: BorderRadius.circular(16)),
+          child: busy
+              ? const SizedBox(
+                  width: 22, height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+              : Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+      ),
+    );
+  }
+}
+
+InputDecoration _field(String label, {String? hint, IconData? icon}) => InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: icon == null ? null : Icon(icon, color: AppColors.hint, size: 20),
+      labelStyle: TextStyle(color: AppColors.sublabel),
+      hintStyle: TextStyle(color: AppColors.hint),
+      filled: true,
+      fillColor: AppColors.card,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+    );
+
+void _toast(BuildContext context, String msg, {bool error = false}) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    content: Text(msg),
+    backgroundColor: error ? const Color(0xFFB42318) : null,
+    behavior: SnackBarBehavior.floating,
+  ));
+}
+
+Widget _netImage(String? url, {BoxFit fit = BoxFit.cover, bool thumb = true}) {
+  if (url == null || url.isEmpty) return Container(color: AppColors.card);
+  return Image.network(
+    thumb ? _thumb(url) : url,
+    fit: fit,
+    errorBuilder: (_, __, ___) => thumb
+        ? Image.network(url, fit: fit,
+            errorBuilder: (_, __, ___) => Container(color: AppColors.card))
+        : Container(color: AppColors.card),
+    loadingBuilder: (c, child, p) => p == null ? child : Container(color: AppColors.card),
+  );
+}
+
+class _CartButton extends StatelessWidget {
+  const _CartButton();
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<CartLine>>(
+      valueListenable: Cart.lines,
+      builder: (_, __, ___) => GestureDetector(
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CartScreen())),
+        child: Stack(clipBehavior: Clip.none, children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14)),
+            child: Icon(Icons.shopping_bag_outlined, color: AppColors.label),
+          ),
+          if (Cart.count > 0)
+            Positioned(
+              right: -4, top: -4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(gradient: _kShopGrad, borderRadius: BorderRadius.circular(10)),
+                child: Text('${Cart.count}',
+                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Connexion au solde (téléphone + PIN créé à l'installation) ──────────
+Future<bool> showWalletLogin(BuildContext context) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (_) => const _WalletLoginSheet(),
+  );
+  return ok == true;
+}
+
+class _WalletLoginSheet extends StatefulWidget {
+  const _WalletLoginSheet();
+  @override
+  State<_WalletLoginSheet> createState() => _WalletLoginSheetState();
+}
+
+class _WalletLoginSheetState extends State<_WalletLoginSheet> {
+  final _phone = TextEditingController(text: UserProfile.phone);
+  final _pin = TextEditingController();
+  bool _busy = false;
+  String? _err;
+
+  Future<void> _go() async {
+    setState(() { _busy = true; _err = null; });
+    try {
+      await ShopApi.login(_phone.text.trim(), _pin.text.trim());
+      if (mounted) Navigator.pop(context, true);
+    } on ApiError catch (e) {
+      var msg = e.message;
+      if (e.status == 403 && e.body['attemptsRemaining'] != null) {
+        msg = 'PIN incorrect — encore ${e.body['attemptsRemaining']} essai(s).';
+      } else if (e.status == 409) {
+        msg = "Ce numéro n'a pas encore de PIN Tchipa. Crée-le dans l'onglet Profil.";
+      }
+      setState(() => _err = msg);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text('Mon solde Tchipa',
+            style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 6),
+        Text('Connecte-toi avec ton numéro et ton PIN Tchipa.',
+            style: TextStyle(color: AppColors.sublabel)),
+        const SizedBox(height: 16),
+        TextField(controller: _phone, keyboardType: TextInputType.phone,
+            style: TextStyle(color: AppColors.inputFg),
+            decoration: _field('Téléphone', icon: Icons.phone_rounded)),
+        const SizedBox(height: 10),
+        TextField(controller: _pin, keyboardType: TextInputType.number, obscureText: true, maxLength: 8,
+            style: TextStyle(color: AppColors.inputFg),
+            decoration: _field('PIN', icon: Icons.lock_rounded)),
+        if (_err != null)
+          Padding(padding: const EdgeInsets.only(bottom: 10),
+              child: Text(_err!, style: const TextStyle(color: Color(0xFFF97066)))),
+        _GradButton(label: 'Se connecter', busy: _busy, onTap: _go),
+      ]),
+    );
+  }
+}
+
+// ── Onglet Boutique ──────────────────────────────────────────────────────
+class ShopScreen extends StatefulWidget {
+  const ShopScreen({super.key});
+  @override
+  State<ShopScreen> createState() => _ShopScreenState();
+}
+
+class _ShopScreenState extends State<ShopScreen> {
+  final _scroll = ScrollController();
+  final _search = TextEditingController();
+  List<dynamic> _cats = [];
+  String? _cat;
+  final List<dynamic> _items = [];
+  int _page = 0;
+  bool _hasMore = true, _loading = false;
+  String? _err;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(() {
+      if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _more();
+    });
+    _reload();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _reload() async {
+    setState(() { _items.clear(); _page = 0; _hasMore = true; _err = null; });
+    try {
+      final c = await ShopApi.categories();
+      if (mounted) setState(() => _cats = c);
+    } catch (_) {}
+    await _more();
+  }
+
+  Future<void> _more() async {
+    if (_loading || !_hasMore) return;
+    setState(() => _loading = true);
+    try {
+      final d = await ShopApi.products(category: _cat, q: _search.text, page: _page + 1);
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(d['items'] as List);
+        _page++;
+        _hasMore = d['hasMore'] == true;
+      });
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _err = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Widget _chip(String label, String? value) {
+    final sel = _cat == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: () { _cat = value; _reload(); },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            gradient: sel ? _kShopGrad : null,
+            color: sel ? null : AppColors.card,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: sel ? Colors.white : AppColors.label, fontWeight: FontWeight.w700, fontSize: 13)),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          onRefresh: _reload,
+          child: CustomScrollView(controller: _scroll, slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Row(children: [
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Boutique',
+                        style: TextStyle(color: AppColors.label, fontSize: 28, fontWeight: FontWeight.w800)),
+                    Text('Vêtements livrés en Algérie, payés avec ton solde',
+                        style: TextStyle(color: AppColors.sublabel, fontSize: 13)),
+                  ])),
+                  const _CartButton(),
+                ]),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
+                child: TextField(
+                  controller: _search,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _reload(),
+                  style: TextStyle(color: AppColors.inputFg),
+                  decoration: _field('Rechercher', hint: 'robe longue, abaya, pyjama…', icon: Icons.search_rounded),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 40,
+                child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 20),
+                    children: [
+                      _chip('Tout', null),
+                      for (final c in _cats) _chip('${c['name']}', c['name'] as String),
+                    ]),
+              ),
+            ),
+            if (_cats.isNotEmpty && _cats.length < 5)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Text('Homme, Hijab, Abaya et Enfants arrivent très bientôt.',
+                      style: TextStyle(color: AppColors.hint, fontSize: 12.5)),
+                ),
+              ),
+            if (_err != null && _items.isEmpty)
+              SliverToBoxAdapter(
+                child: Padding(padding: const EdgeInsets.all(24),
+                    child: Text(_err!, style: TextStyle(color: AppColors.sublabel))),
+              ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2, mainAxisSpacing: 14, crossAxisSpacing: 12, childAspectRatio: 0.60),
+                delegate: SliverChildBuilderDelegate(
+                  (_, i) => _ProductTile(p: _items[i] as Map<String, dynamic>),
+                  childCount: _items.length,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 16, bottom: 120),
+                child: Center(
+                  child: _loading
+                      ? const CircularProgressIndicator()
+                      : (!_hasMore && _items.isEmpty && _err == null
+                          ? Text('Aucun article trouvé', style: TextStyle(color: AppColors.sublabel))
+                          : const SizedBox.shrink()),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductTile extends StatelessWidget {
+  final Map<String, dynamic> p;
+  const _ProductTile({required this.p});
+
+  @override
+  Widget build(BuildContext context) {
+    final from = (p['priceFrom'] as num).toDouble();
+    return GestureDetector(
+      onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => ProductScreen(productId: p['id'] as int))),
+      child: Container(
+        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          AspectRatio(aspectRatio: 1, child: _netImage(p['image'] as String?)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+            child: Text('${p['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: AppColors.label, fontSize: 13, fontWeight: FontWeight.w600, height: 1.25)),
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('dès ', style: TextStyle(color: AppColors.hint, fontSize: 11)),
+              Text(_usd(from),
+                  style: const TextStyle(color: Color(0xFF00D4FF), fontSize: 16, fontWeight: FontWeight.w800)),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Fiche produit : chaque variante (couleur × taille) a son prix ─────────
+String _optLabel(String k) {
+  final l = k.toLowerCase();
+  if (l.contains('colo')) return 'Couleur';
+  if (l.contains('height')) return 'Taille (hauteur de l\'enfant)';
+  if (l.contains('size')) return 'Taille';
+  if (l.contains('length')) return 'Longueur';
+  return k;
+}
+
+class ProductScreen extends StatefulWidget {
+  final int productId;
+  const ProductScreen({super.key, required this.productId});
+  @override
+  State<ProductScreen> createState() => _ProductScreenState();
+}
+
+class _ProductScreenState extends State<ProductScreen> {
+  Map<String, dynamic>? _p;
+  String? _err;
+  final Map<String, String> _sel = {};
+  int _qty = 1, _img = 0;
+
+  List<Map<String, dynamic>> get _variants =>
+      ((_p?['variants'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+  // Options built from the variants themselves, so every chip maps to a real variant.
+  Map<String, List<String>> get _options {
+    final o = <String, List<String>>{};
+    for (final v in _variants) {
+      (v['props'] as Map).forEach((k, val) {
+        final list = o.putIfAbsent('$k', () => []);
+        if (!list.contains('$val')) list.add('$val');
+      });
+    }
+    return o;
+  }
+
+  Map<String, dynamic>? get _current {
+    for (final v in _variants) {
+      final props = v['props'] as Map;
+      if (_sel.entries.every((e) => '${props[e.key]}' == e.value)) return v;
+    }
+    return null;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final d = await ShopApi.product(widget.productId);
+      if (!mounted) return;
+      setState(() => _p = d);
+      if (_variants.isNotEmpty) {
+        (_variants.first['props'] as Map).forEach((k, v) => _sel['$k'] = '$v');
+        setState(() {});
+      }
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _err = e.message);
+    }
+  }
+
+  void _pick(String key, String value) {
+    setState(() {
+      _sel[key] = value;
+      if (_current == null) {
+        // Keep the tapped value, move the other options to the first variant that has it.
+        final v = _variants.firstWhere((v) => '${(v['props'] as Map)[key]}' == value, orElse: () => {});
+        if (v.isNotEmpty) (v['props'] as Map).forEach((k, val) => _sel['$k'] = '$val');
+      }
+    });
+  }
+
+  bool _available(String key, String value) => _variants.any((v) {
+        final props = v['props'] as Map;
+        if ('${props[key]}' != value) return false;
+        return _sel.entries.where((e) => e.key != key).every((e) => '${props[e.key]}' == e.value);
+      });
+
+  void _add() {
+    final v = _current;
+    if (v == null) return;
+    Cart.add(CartLine(
+      productId: widget.productId,
+      title: '${_p!['title']}',
+      image: _p!['image'] as String?,
+      variant: '${v['name']}',
+      props: Map<String, dynamic>.from(v['props'] as Map),
+      unitUsd: (v['priceUsd'] as num).toDouble(),
+      qty: _qty,
+    ));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Ajouté au panier'),
+      behavior: SnackBarBehavior.floating,
+      action: SnackBarAction(
+          label: 'Voir le panier',
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CartScreen()))),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _p;
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg,
+        foregroundColor: AppColors.label,
+        elevation: 0,
+        actions: const [Padding(padding: EdgeInsets.only(right: 12), child: _CartButton())],
+      ),
+      body: p == null
+          ? Center(
+              child: _err != null
+                  ? Text(_err!, style: TextStyle(color: AppColors.sublabel))
+                  : const CircularProgressIndicator())
+          : _body(p),
+    );
+  }
+
+  Widget _body(Map<String, dynamic> p) {
+    final images = ((p['images'] as List?) ?? []).cast<String>();
+    final v = _current;
+    final opts = _options;
+    final hasSize = opts.keys.any((k) => k.toLowerCase().contains('size') || k.toLowerCase().contains('height'));
+    return Column(children: [
+      Expanded(
+        child: ListView(padding: EdgeInsets.zero, children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: Stack(children: [
+              PageView.builder(
+                itemCount: max(1, images.length),
+                onPageChanged: (i) => setState(() => _img = i),
+                itemBuilder: (_, i) =>
+                    _netImage(images.isEmpty ? null : images[i], thumb: false),
+              ),
+              if (images.length > 1)
+                Positioned(
+                  bottom: 10, left: 0, right: 0,
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    for (var i = 0; i < images.length; i++)
+                      Container(
+                        width: i == _img ? 18 : 6, height: 6,
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: i == _img ? 0.95 : 0.5),
+                            borderRadius: BorderRadius.circular(3)),
+                      ),
+                  ]),
+                ),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${p['title']}',
+                  style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(v == null ? 'Choisis une option disponible' : _usd(v['priceUsd'] as num),
+                  style: const TextStyle(color: Color(0xFF00D4FF), fontSize: 26, fontWeight: FontWeight.w900)),
+              Text('Livraison en Algérie et douane comprises',
+                  style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+              for (final e in opts.entries) ...[
+                const SizedBox(height: 18),
+                Text(_optLabel(e.key),
+                    style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final val in e.value)
+                    GestureDetector(
+                      onTap: () => _pick(e.key, val),
+                      child: Opacity(
+                        opacity: _available(e.key, val) ? 1 : 0.4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                          decoration: BoxDecoration(
+                            gradient: _sel[e.key] == val ? _kShopGrad : null,
+                            color: _sel[e.key] == val ? null : AppColors.card,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(val,
+                              style: TextStyle(
+                                  color: _sel[e.key] == val ? Colors.white : AppColors.label,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ),
+                ]),
+              ],
+              if (hasSize)
+                Container(
+                  margin: const EdgeInsets.only(top: 16),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFF79009).withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Text(
+                      'Tailles chinoises : elles taillent petit. Prends 1 à 2 tailles au-dessus de ta taille habituelle.',
+                      style: TextStyle(color: AppColors.label, fontSize: 13)),
+                ),
+              const SizedBox(height: 18),
+              Row(children: [
+                Text('Quantité', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                IconButton(
+                    onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
+                    icon: Icon(Icons.remove_circle_outline, color: AppColors.label)),
+                Text('$_qty', style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w700)),
+                IconButton(
+                    onPressed: _qty < 10 ? () => setState(() => _qty++) : null,
+                    icon: Icon(Icons.add_circle_outline, color: AppColors.label)),
+              ]),
+              const SizedBox(height: 24),
+            ]),
+          ),
+        ]),
+      ),
+      SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+          child: _GradButton(
+              label: v == null ? 'Indisponible' : 'Ajouter au panier — ${_usd((v['priceUsd'] as num) * _qty)}',
+              onTap: v == null ? null : _add),
+        ),
+      ),
+    ]);
+  }
+}
+
+// ── Panier + paiement avec le solde ──────────────────────────────────────
+const List<String> kWilayas = [
+  'Adrar', 'Chlef', 'Laghouat', 'Oum El Bouaghi', 'Batna', 'Béjaïa', 'Biskra', 'Béchar', 'Blida', 'Bouira',
+  'Tamanrasset', 'Tébessa', 'Tlemcen', 'Tiaret', 'Tizi Ouzou', 'Alger', 'Djelfa', 'Jijel', 'Sétif', 'Saïda',
+  'Skikda', 'Sidi Bel Abbès', 'Annaba', 'Guelma', 'Constantine', 'Médéa', 'Mostaganem', "M'Sila", 'Mascara',
+  'Ouargla', 'Oran', 'El Bayadh', 'Illizi', 'Bordj Bou Arréridj', 'Boumerdès', 'El Tarf', 'Tindouf',
+  'Tissemsilt', 'El Oued', 'Khenchela', 'Souk Ahras', 'Tipaza', 'Mila', 'Aïn Defla', 'Naâma',
+  'Aïn Témouchent', 'Ghardaïa', 'Relizane', 'Timimoun', 'Bordj Badji Mokhtar', 'Ouled Djellal', 'Béni Abbès',
+  'In Salah', 'In Guezzam', 'Touggourt', 'Djanet', "El M'Ghair", 'El Meniaa',
+];
+
+class CartScreen extends StatefulWidget {
+  const CartScreen({super.key});
+  @override
+  State<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends State<CartScreen> {
+  final _name = TextEditingController(text: UserProfile.name);
+  final _phone = TextEditingController(text: UserProfile.phone);
+  final _commune = TextEditingController();
+  final _address = TextEditingController();
+  String? _wilaya;
+  double? _balance;
+  bool _busy = false;
+  String _idem = _idemKey(); // one key per checkout attempt: a double tap pays once
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshBalance();
+  }
+
+  Future<void> _refreshBalance() async {
+    if (!ShopApi.loggedIn) return;
+    try {
+      final d = await ShopApi.me();
+      if (mounted) setState(() => _balance = (d['balanceUsd'] as num).toDouble());
+    } catch (_) {}
+  }
+
+  bool get _formOk =>
+      _name.text.trim().isNotEmpty && _phone.text.trim().length >= 9 && _wilaya != null;
+
+  Future<void> _pay() async {
+    if (!ShopApi.loggedIn) {
+      if (!await showWalletLogin(context)) return;
+      await _refreshBalance();
+    }
+    setState(() => _busy = true);
+    try {
+      final d = await ShopApi.placeOrder(Cart.lines.value, {
+        'fullName': _name.text.trim(),
+        'phone': _phone.text.trim(),
+        'wilaya': _wilaya!,
+        'commune': _commune.text.trim(),
+        'address': _address.text.trim(),
+      }, _idem);
+      Cart.clear();
+      _idem = _idemKey();
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Commande #${d['orderId']} payée',
+              style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w800)),
+          content: Text(
+              'Nous achetons tes articles chez le fournisseur. Suis ta commande dans « Mon solde → Mes commandes ».\n\n'
+              'Solde restant : ${_usd(d['balanceUsd'] as num)}',
+              style: TextStyle(color: AppColors.sublabel)),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+        ),
+      );
+      if (mounted) {
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OrdersScreen()));
+      }
+    } on ApiError catch (e) {
+      if (!mounted) return;
+      if (e.status == 402) {
+        final missing = (e.body['totalUsd'] as num) - (e.body['balanceUsd'] as num);
+        _toast(context, 'Solde insuffisant : il te manque ${_usd(missing)}. Paie ton agent en dinars pour recharger.',
+            error: true);
+        _refreshBalance();
+      } else if (e.status == 401) {
+        _toast(context, 'Session expirée, reconnecte-toi.', error: true);
+      } else {
+        _toast(context, e.message, error: true);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+          backgroundColor: AppColors.bg, foregroundColor: AppColors.label, elevation: 0,
+          title: const Text('Mon panier')),
+      body: ValueListenableBuilder<List<CartLine>>(
+        valueListenable: Cart.lines,
+        builder: (_, lines, __) {
+          if (lines.isEmpty) {
+            return Center(
+                child: Text('Ton panier est vide', style: TextStyle(color: AppColors.sublabel, fontSize: 16)));
+          }
+          return ListView(padding: const EdgeInsets.all(16), children: [
+            for (final l in lines)
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
+                child: Row(children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(10),
+                      child: SizedBox(width: 70, height: 70, child: _netImage(l.image))),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(l.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w600)),
+                    Text(l.variantLabel, style: TextStyle(color: AppColors.sublabel, fontSize: 12)),
+                    Text(_usd(l.unitUsd * l.qty),
+                        style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.w800)),
+                  ])),
+                  Column(children: [
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(visualDensity: VisualDensity.compact,
+                          onPressed: () => Cart.setQty(l, l.qty - 1),
+                          icon: Icon(Icons.remove, color: AppColors.label, size: 18)),
+                      Text('${l.qty}', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+                      IconButton(visualDensity: VisualDensity.compact,
+                          onPressed: () => Cart.setQty(l, l.qty + 1),
+                          icon: Icon(Icons.add, color: AppColors.label, size: 18)),
+                    ]),
+                  ]),
+                ]),
+              ),
+            const SizedBox(height: 8),
+            Text('Livraison', style: TextStyle(color: AppColors.label, fontSize: 17, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 10),
+            TextField(controller: _name, onChanged: (_) => setState(() {}),
+                style: TextStyle(color: AppColors.inputFg), decoration: _field('Nom et prénom')),
+            const SizedBox(height: 10),
+            TextField(controller: _phone, keyboardType: TextInputType.phone, onChanged: (_) => setState(() {}),
+                style: TextStyle(color: AppColors.inputFg), decoration: _field('Téléphone pour le livreur')),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _wilaya,
+              isExpanded: true,
+              dropdownColor: AppColors.surface,
+              style: TextStyle(color: AppColors.inputFg),
+              decoration: _field('Wilaya'),
+              items: [
+                for (var i = 0; i < kWilayas.length; i++)
+                  DropdownMenuItem(value: kWilayas[i], child: Text('${i + 1} — ${kWilayas[i]}')),
+              ],
+              onChanged: (v) => setState(() => _wilaya = v),
+            ),
+            const SizedBox(height: 10),
+            TextField(controller: _commune, style: TextStyle(color: AppColors.inputFg), decoration: _field('Commune')),
+            const SizedBox(height: 10),
+            TextField(controller: _address, style: TextStyle(color: AppColors.inputFg),
+                decoration: _field('Adresse (rue, quartier, point de repère)')),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
+              child: Column(children: [
+                Row(children: [
+                  Text('Total', style: TextStyle(color: AppColors.label, fontSize: 16, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  Text(_usd(Cart.total),
+                      style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w900)),
+                ]),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Text('Mon solde', style: TextStyle(color: AppColors.sublabel)),
+                  const Spacer(),
+                  Text(_balance == null ? (ShopApi.loggedIn ? '…' : 'non connecté') : _usd(_balance!),
+                      style: TextStyle(
+                          color: _balance != null && _balance! < Cart.total
+                              ? const Color(0xFFF97066)
+                              : AppColors.sublabel,
+                          fontWeight: FontWeight.w600)),
+                ]),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            _GradButton(
+                label: 'Payer ${_usd(Cart.total)} avec mon solde', busy: _busy, onTap: _formOk ? _pay : null),
+            const SizedBox(height: 8),
+            Text('Livraison en Algérie et douane comprises. Délai indicatif : 2 à 4 semaines.',
+                textAlign: TextAlign.center, style: TextStyle(color: AppColors.hint, fontSize: 12)),
+            const SizedBox(height: 30),
+          ]);
+        },
+      ),
+    );
+  }
+}
+
+// ── Onglet Solde ─────────────────────────────────────────────────────────
+class WalletScreen extends StatefulWidget {
+  const WalletScreen({super.key});
+  @override
+  State<WalletScreen> createState() => _WalletScreenState();
+}
+
+class _WalletScreenState extends State<WalletScreen> {
+  Map<String, dynamic>? _me;
+  String? _err;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!ShopApi.loggedIn) {
+      setState(() => _me = null);
+      return;
+    }
+    setState(() { _loading = true; _err = null; });
+    try {
+      final d = await ShopApi.me();
+      if (mounted) setState(() => _me = d);
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _err = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  static const _kinds = {
+    'agent_credit': ('Recharge par ton agent', Icons.south_west_rounded, Color(0xFF12B76A)),
+    'purchase': ('Achat boutique', Icons.shopping_bag_outlined, Color(0xFFF97066)),
+    'refund': ('Remboursement', Icons.undo_rounded, Color(0xFF12B76A)),
+    'adjust': ('Correction', Icons.tune_rounded, Color(0xFF8B5CF6)),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        bottom: false,
+        child: !ShopApi.loggedIn
+            ? _loginPrompt()
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 120), children: [
+                  Text('Mon solde',
+                      style: TextStyle(color: AppColors.label, fontSize: 28, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(gradient: _kShopGrad, borderRadius: BorderRadius.circular(22)),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('SOLDE DISPONIBLE',
+                          style: TextStyle(color: Colors.white70, fontSize: 12, letterSpacing: 1.2,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 6),
+                      Text(_me == null ? (_loading ? '…' : '—') : _usd(_me!['balanceUsd'] as num),
+                          style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 6),
+                      Text('${_me?['phone'] ?? ''}', style: const TextStyle(color: Colors.white70)),
+                    ]),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
+                    child: Text(
+                        'Pour recharger : paie ton agent Tchipa en dinars (BaridiMob). Il crédite ton solde en dollars, '
+                        'et tu achètes dans la boutique.',
+                        style: TextStyle(color: AppColors.sublabel, fontSize: 13.5)),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => const OrdersScreen())),
+                        icon: const Icon(Icons.local_shipping_outlined),
+                        label: const Text('Mes commandes'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => launchUrl(Uri.parse(kAgentTelegram), mode: LaunchMode.externalApplication),
+                        icon: const Icon(Icons.support_agent_rounded),
+                        label: const Text('Mon agent'),
+                      ),
+                    ),
+                  ]),
+                  if (_err != null)
+                    Padding(padding: const EdgeInsets.only(top: 12),
+                        child: Text(_err!, style: const TextStyle(color: Color(0xFFF97066)))),
+                  const SizedBox(height: 20),
+                  Text('Historique',
+                      style: TextStyle(color: AppColors.label, fontSize: 17, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  if ((_me?['history'] as List? ?? []).isEmpty)
+                    Text('Aucune opération pour le moment.', style: TextStyle(color: AppColors.sublabel)),
+                  for (final h in (_me?['history'] as List? ?? [])) _historyRow(h as Map<String, dynamic>),
+                  const SizedBox(height: 20),
+                  TextButton(
+                    onPressed: () async {
+                      await ShopApi.logout();
+                      if (mounted) setState(() => _me = null);
+                    },
+                    child: Text('Se déconnecter', style: TextStyle(color: AppColors.hint)),
+                  ),
+                ]),
+              ),
+      ),
+    );
+  }
+
+  Widget _historyRow(Map<String, dynamic> h) {
+    final k = _kinds[h['kind']] ?? ('Opération', Icons.swap_horiz_rounded, const Color(0xFF8B5CF6));
+    final amt = (h['amountUsd'] as num).toDouble();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(12)),
+      child: Row(children: [
+        CircleAvatar(radius: 18, backgroundColor: k.$3.withValues(alpha: 0.15), child: Icon(k.$2, color: k.$3, size: 18)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(k.$1, style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w600)),
+          Text('${h['ref'] ?? ''} ${(h['at'] ?? '').toString().replaceFirst('T', ' ')}'.trim(),
+              style: TextStyle(color: AppColors.hint, fontSize: 12)),
+        ])),
+        Text('${amt >= 0 ? '+' : ''}${_usd(amt)}',
+            style: TextStyle(color: amt >= 0 ? const Color(0xFF12B76A) : AppColors.label,
+                fontWeight: FontWeight.w800)),
+      ]),
+    );
+  }
+
+  Widget _loginPrompt() => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+          Icon(Icons.account_balance_wallet_rounded, size: 64, color: AppColors.hint),
+          const SizedBox(height: 16),
+          Text('Mon solde Tchipa', textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.label, fontSize: 24, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          Text('Ton argent en dollars pour acheter dans la boutique. Ton agent le recharge quand tu le paies en dinars.',
+              textAlign: TextAlign.center, style: TextStyle(color: AppColors.sublabel)),
+          const SizedBox(height: 24),
+          _GradButton(
+              label: 'Me connecter avec mon PIN',
+              onTap: () async {
+                if (await showWalletLogin(context)) _load();
+              }),
+        ]),
+      );
+}
+
+// ── Mes commandes ────────────────────────────────────────────────────────
+const Map<String, (String, Color)> kOrderStatus = {
+  'payee': ('Payée — en préparation', Color(0xFF00D4FF)),
+  'achetee': ('Achetée chez le fournisseur', Color(0xFF8B5CF6)),
+  'entrepot': ('À l\'entrepôt en Chine', Color(0xFF8B5CF6)),
+  'expediee': ('Expédiée vers l\'Algérie', Color(0xFFF79009)),
+  'livree': ('Livrée', Color(0xFF12B76A)),
+  'annulee': ('Annulée — remboursée', Color(0xFFF97066)),
+};
+
+class OrdersScreen extends StatefulWidget {
+  const OrdersScreen({super.key});
+  @override
+  State<OrdersScreen> createState() => _OrdersScreenState();
+}
+
+class _OrdersScreenState extends State<OrdersScreen> {
+  List<dynamic>? _orders;
+  String? _err;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final o = await ShopApi.myOrders();
+      if (mounted) setState(() => _orders = o);
+    } on ApiError catch (e) {
+      if (mounted) setState(() => _err = e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+          backgroundColor: AppColors.bg, foregroundColor: AppColors.label, elevation: 0,
+          title: const Text('Mes commandes')),
+      body: _orders == null
+          ? Center(child: _err != null
+              ? Text(_err!, style: TextStyle(color: AppColors.sublabel))
+              : const CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: _orders!.isEmpty
+                  ? ListView(children: [
+                      const SizedBox(height: 120),
+                      Center(child: Text('Pas encore de commande', style: TextStyle(color: AppColors.sublabel))),
+                    ])
+                  : ListView(padding: const EdgeInsets.all(16), children: [
+                      for (final o in _orders!) _order(o as Map<String, dynamic>),
+                    ]),
+            ),
+    );
+  }
+
+  Widget _order(Map<String, dynamic> o) {
+    final st = kOrderStatus[o['status']] ?? ('${o['status']}', AppColors.hint);
+    final items = (o['items'] as List?) ?? [];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('Commande #${o['id']}', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w800)),
+          const Spacer(),
+          Text(_usd(o['totalUsd'] as num), style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w800)),
+        ]),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(color: st.$2.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(8)),
+          child: Text(st.$1, style: TextStyle(color: st.$2, fontWeight: FontWeight.w700, fontSize: 12.5)),
+        ),
+        if (o['tracking'] != null)
+          Padding(padding: const EdgeInsets.only(top: 6),
+              child: Text('Suivi : ${o['tracking']}', style: TextStyle(color: AppColors.sublabel))),
+        const SizedBox(height: 10),
+        for (final it in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(children: [
+              ClipRRect(borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(width: 44, height: 44, child: _netImage(it['image'] as String?))),
+              const SizedBox(width: 10),
+              Expanded(child: Text('${it['qty']} × ${it['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.sublabel, fontSize: 13))),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
+// ── Espace agent : créditer le solde d'un client ─────────────────────────
+// Replaces the shared PIN 1234 for money operations: each agent has a personal
+// code (created by Tarik via POST /admin/agents). What an agent credits, the
+// agent owes Tarik; the server refuses credits past the agent's ceiling.
+class AgentWalletScreen extends StatefulWidget {
+  const AgentWalletScreen({super.key});
+  @override
+  State<AgentWalletScreen> createState() => _AgentWalletScreenState();
+}
+
+class _AgentWalletScreenState extends State<AgentWalletScreen> {
+  final _code = TextEditingController();
+  final _phone = TextEditingController();
+  final _amount = TextEditingController();
+  final _dzd = TextEditingController();
+  final _ref = TextEditingController();
+  Map<String, dynamic>? _me;
+  List<dynamic> _credits = [];
+  bool _busy = false;
+  String? _err;
+  String _idem = _idemKey();
+
+  @override
+  void initState() {
+    super.initState();
+    if (ShopApi.agentToken != null) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final me = await ShopApi.agentMe();
+      final c = await ShopApi.agentCredits();
+      if (mounted) setState(() { _me = me; _credits = c; _err = null; });
+    } on ApiError catch (e) {
+      if (e.status == 401) {
+        await ShopApi.setAgentToken(null);
+        if (mounted) setState(() { _me = null; _err = 'Code agent refusé ou désactivé.'; });
+      } else if (mounted) {
+        setState(() => _err = e.message);
+      }
+    }
+  }
+
+  Future<void> _saveCode() async {
+    final t = _code.text.trim();
+    setState(() { _busy = true; _err = null; });
+    try {
+      await ShopApi.agentMe(t);
+      await ShopApi.setAgentToken(t);
+      _code.clear();
+      await _refresh();
+    } on ApiError catch (e) {
+      setState(() => _err = e.status == 401 ? 'Code agent invalide.' : e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _credit() async {
+    final amount = _amount.text.trim().replaceAll(',', '.');
+    final phone = _phone.text.trim();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Confirmer le crédit', style: TextStyle(color: AppColors.label)),
+        content: Text('Créditer $amount \$ sur le solde du $phone ?\n\nVérifie bien le numéro : '
+            'l\'argent ira sur ce compte.', style: TextStyle(color: AppColors.sublabel)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Créditer')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() { _busy = true; _err = null; });
+    try {
+      await ShopApi.agentCredit(
+          phone: phone,
+          amount: amount,
+          dzd: int.tryParse(_dzd.text.replaceAll(RegExp(r'\s'), '')),
+          ref: _ref.text.trim(),
+          idem: _idem);
+      _idem = _idemKey();
+      _phone.clear(); _amount.clear(); _dzd.clear(); _ref.clear();
+      if (mounted) _toast(context, 'Crédit de $amount \$ envoyé sur $phone');
+      await _refresh();
+    } on ApiError catch (e) {
+      // Same key is kept: retrying after a network error credits once.
+      if (mounted) setState(() => _err = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        backgroundColor: AppColors.bg, foregroundColor: AppColors.label, elevation: 0,
+        title: const Text('Espace agent'),
+        actions: [
+          if (ShopApi.agentToken != null)
+            IconButton(
+              tooltip: 'Oublier mon code',
+              onPressed: () async {
+                await ShopApi.setAgentToken(null);
+                setState(() => _me = null);
+              },
+              icon: const Icon(Icons.logout_rounded),
+            ),
+        ],
+      ),
+      body: ListView(padding: const EdgeInsets.all(20), children: [
+        if (ShopApi.agentToken == null) ...[
+          Text('Entre ton code agent personnel (donné par Tchipa).',
+              style: TextStyle(color: AppColors.sublabel)),
+          const SizedBox(height: 12),
+          TextField(controller: _code, style: TextStyle(color: AppColors.inputFg),
+              decoration: _field('Code agent', hint: 'agt_…', icon: Icons.key_rounded)),
+          const SizedBox(height: 12),
+          _GradButton(label: 'Valider', busy: _busy, onTap: _saveCode),
+        ] else ...[
+          if (_me != null)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${_me!['name']}', style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 6),
+                Text('À reverser à Tchipa : ${_usd(_me!['outstandingUsd'] as num)}',
+                    style: TextStyle(color: AppColors.sublabel)),
+                Text('Tu peux encore créditer : ${_usd(_me!['availableUsd'] as num)}',
+                    style: TextStyle(color: AppColors.sublabel)),
+              ]),
+            ),
+          const SizedBox(height: 18),
+          Text('Créditer un client', style: TextStyle(color: AppColors.label, fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          TextField(controller: _phone, keyboardType: TextInputType.phone, onChanged: (_) => setState(() {}),
+              style: TextStyle(color: AppColors.inputFg), decoration: _field('Téléphone du client', icon: Icons.phone_rounded)),
+          const SizedBox(height: 10),
+          TextField(controller: _amount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => setState(() {}),
+              style: TextStyle(color: AppColors.inputFg), decoration: _field('Montant en dollars', hint: '25.00', icon: Icons.attach_money_rounded)),
+          const SizedBox(height: 10),
+          TextField(controller: _dzd, keyboardType: TextInputType.number,
+              style: TextStyle(color: AppColors.inputFg), decoration: _field('Dinars reçus (facultatif)', icon: Icons.payments_outlined)),
+          const SizedBox(height: 10),
+          TextField(controller: _ref,
+              style: TextStyle(color: AppColors.inputFg), decoration: _field('Référence BaridiMob (facultatif)', icon: Icons.receipt_outlined)),
+          if (_err != null)
+            Padding(padding: const EdgeInsets.only(top: 10),
+                child: Text(_err!, style: const TextStyle(color: Color(0xFFF97066)))),
+          const SizedBox(height: 14),
+          _GradButton(
+              label: 'Créditer',
+              busy: _busy,
+              onTap: _phone.text.trim().length >= 9 && _amount.text.trim().isNotEmpty ? _credit : null),
+          const SizedBox(height: 22),
+          Text('Mes derniers crédits', style: TextStyle(color: AppColors.label, fontSize: 17, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          if (_credits.isEmpty) Text('Aucun crédit pour le moment.', style: TextStyle(color: AppColors.sublabel)),
+          for (final c in _credits)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('${c['phone']}', style: TextStyle(color: AppColors.label)),
+              subtitle: Text('${c['at']}${c['ref'] != null ? ' · ${c['ref']}' : ''}',
+                  style: TextStyle(color: AppColors.hint, fontSize: 12)),
+              trailing: Text('+${_usd(c['amountUsd'] as num)}',
+                  style: const TextStyle(color: Color(0xFF12B76A), fontWeight: FontWeight.w800)),
+            ),
+        ],
+        if (ShopApi.agentToken == null && _err != null)
+          Padding(padding: const EdgeInsets.only(top: 10),
+              child: Text(_err!, style: const TextStyle(color: Color(0xFFF97066)))),
       ]),
     );
   }

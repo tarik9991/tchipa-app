@@ -17,6 +17,22 @@ app.use(cors({
   ],
 }));
 app.use(express.json());
+
+// /admin/* was open to the whole internet (found 2026-09-28): anyone could
+// POST /admin/re-add-order with their own address, then /admin/manual-forward
+// to make the forwarder send the VPS wallet's USDT to it. Every admin route now
+// needs the ADMIN_TOKEN header; without ADMIN_TOKEN in .env they are all closed.
+// The two routes the app itself calls stay open until per-agent accounts exist.
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const ADMIN_APP_ROUTES = [/^\/admin\/client-cards\b/, /^\/admin\/threeds\//];
+app.use('/admin', (req, res, next) => {
+  if (ADMIN_APP_ROUTES.some(r => r.test(req.originalUrl))) return next();
+  const given = String(req.get('x-admin-token') || '');
+  const ok = ADMIN_TOKEN.length >= 24 && given.length === ADMIN_TOKEN.length &&
+             require('crypto').timingSafeEqual(Buffer.from(given), Buffer.from(ADMIN_TOKEN));
+  if (!ok) return res.status(401).json({ error: 'admin token requis' });
+  next();
+});
 forwarder.init().catch(console.error);
 
 // ============================================================
@@ -752,6 +768,57 @@ const PAYGATE_VCC_WALLET = 'https://api.paygate.to/crypto/cards/wallet.php';
 const PAYGATE_VCC_STATUS = 'https://api.paygate.to/crypto/cards/status.php';
 const TCHIPA_MARGIN = 0.10; // 10% majoration sur le prix PayGate
 
+// PayGate answers some failures as PLAIN TEXT with HTTP 200 instead of JSON
+// ("Out of stock!", "Invalid amount!", "Invalid or expired redeem_id"). Feeding
+// that to resp.json() is what produced the useless
+//   Unexpected token 'O', "Out of stock!" is not valid JSON
+// that agents stared at for the whole July-2026 issuer outage — the app looked
+// broken when the upstream was simply out of cards. Parse defensively.
+const PAYGATE_TEXT_ERRORS = [
+  { match: 'out of stock', code: 'CARDS_OUT_OF_STOCK', status: 503,
+    message: "Cartes indisponibles chez le fournisseur. N'encaisse aucun paiement — passe en émission manuelle." },
+  { match: 'invalid amount', code: 'AMOUNT_OUT_OF_RANGE', status: 400,
+    message: 'Montant hors limites du fournisseur (Mastercard 5–499 USD, Visa/PayPal 5–1000 USD).' },
+  { match: 'unsupported provider', code: 'UNSUPPORTED_PROVIDER', status: 400,
+    message: 'Type de carte non supporté par le fournisseur.' },
+  { match: 'invalid or expired', code: 'REDEEM_ID_EXPIRED', status: 410,
+    message: 'Commande expirée chez le fournisseur — elle ne peut plus être payée.' },
+];
+
+class PayGateError extends Error {
+  constructor({ code, status, message, raw }) {
+    super(message);
+    this.name = 'PayGateError';
+    this.code = code; this.status = status; this.raw = raw;
+  }
+}
+
+async function paygateFetchJson(url, timeoutMs = 30_000) {
+  const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  const text = (await resp.text()).trim();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    const low   = text.toLowerCase();
+    const known = PAYGATE_TEXT_ERRORS.find(e => low.includes(e.match));
+    if (known) throw new PayGateError({ ...known, raw: text.slice(0, 200) });
+    throw new PayGateError({
+      code: 'PAYGATE_BAD_RESPONSE', status: 502,
+      message: 'Réponse inattendue du fournisseur de cartes.',
+      raw: text.slice(0, 200),
+    });
+  }
+}
+
+// Uniform body so the app can branch on `error` (code) and show `message`
+// (already French, already agent-facing).
+function sendPayGateError(res, err, fallbackPrefix) {
+  if (err instanceof PayGateError) {
+    return res.status(err.status).json({ error: err.code, message: err.message, detail: err.raw });
+  }
+  return res.status(502).json({ error: fallbackPrefix + err.message });
+}
+
 // POST /paygate/create-vcc
 // Body: { amount, cardType?, holderName?, phone?, paypalEmail?, flow? }
 // cardType: 'mastercard' (5-499 USD) | 'visa' (5-1000 USD) | 'paypal' (5-1000 USD)
@@ -874,8 +941,503 @@ app.post('/paygate/create-vcc', async (req, res) => {
     });
   } catch (err) {
     console.error('[/paygate/create-vcc] error:', err.message);
-    return res.status(502).json({ error: 'Erreur PayGate VCC: ' + err.message });
+    return sendPayGateError(res, err, 'Erreur PayGate VCC: ');
   }
+});
+
+// ---------------------------------------------------------------------------
+// MANUAL ISSUANCE — provider-independent path
+//
+// Written after the July-2026 Swype/PayGate outage killed automated issuance
+// for three weeks. The lesson: Tchipa must never again be unable to sell
+// because one upstream API is down.
+//
+// Here the agent buys a card by hand on ANY provider dashboard (FlexCard,
+// Kripicard, whatever is alive today) and pastes it in. The client sees the
+// exact same flow as before — same phone join key, same PIN gate, same
+// WebView — so nothing changes on their side.
+//
+// Storage rule: prefer a one-time LINK (card_link). Only store PAN/CVV when
+// the provider gives no link, and then encrypted + purged on delivery, so we
+// keep card data out of the database wherever possible.
+// ---------------------------------------------------------------------------
+
+// AES-256-GCM at rest for the rare case where we must hold PAN/CVV.
+// Key comes from the same .env as the wallet key; without it, manual issuance
+// refuses PAN input entirely and only accepts links.
+const { createCipheriv, createDecipheriv } = require('crypto');
+
+const CARD_ENC_KEY = process.env.CARD_ENC_KEY
+  ? createHash('sha256').update(process.env.CARD_ENC_KEY).digest()
+  : null;
+
+function encryptCardBlob(plain) {
+  if (!CARD_ENC_KEY) throw new Error('CARD_ENC_KEY absent: saisie PAN refusee');
+  const iv  = randomBytes(12);
+  const c   = createCipheriv('aes-256-gcm', CARD_ENC_KEY, iv);
+  const enc = Buffer.concat([c.update(JSON.stringify(plain), 'utf8'), c.final()]);
+  return [iv.toString('hex'), c.getAuthTag().toString('hex'), enc.toString('hex')].join(':');
+}
+
+function decryptCardBlob(blob) {
+  if (!CARD_ENC_KEY) throw new Error('CARD_ENC_KEY absent');
+  const [ivHex, tagHex, dataHex] = String(blob).split(':');
+  const d = createDecipheriv('aes-256-gcm', CARD_ENC_KEY, Buffer.from(ivHex, 'hex'));
+  d.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return JSON.parse(Buffer.concat([d.update(Buffer.from(dataHex, 'hex')), d.final()]).toString('utf8'));
+}
+
+// Extra columns on agent_orders for the manual path (idempotent migration).
+try {
+  const cols = db.prepare(`PRAGMA table_info(agent_orders)`).all().map(c => c.name);
+  const add = (name, decl) => {
+    if (!cols.includes(name)) {
+      db.exec(`ALTER TABLE agent_orders ADD COLUMN ${name} ${decl}`);
+      console.log('[migration] agent_orders.' + name + ' added');
+    }
+  };
+  add('provider',         `TEXT`); // 'paygate' | 'flexcard' | 'manual:<name>'
+  add('card_blob',        `TEXT`); // AES-GCM PAN/CVV/exp, purged on delivery
+  add('issued_by',        `TEXT`); // free-text agent marker, for audit
+  // The card's id ON THE PROVIDER's side. Without it the agent cannot find
+  // which upstream card to top up once they have more than a few clients —
+  // and top-ups are where the margin is (issuance fee is paid once, recharges
+  // only cost the deposit %), so this field is what makes the business work.
+  add('provider_card_id', `TEXT`);
+} catch (e) {
+  console.error('[migration] agent_orders:', e.message);
+}
+
+// Recharges are bookkeeping events: the card itself never changes, the client
+// already holds it. We record them separately from the issuance amount so that
+// "how much has this client actually put through" stays answerable.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS manual_recharges (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    redeem_id   TEXT NOT NULL,
+    amount_usd  REAL NOT NULL,
+    issued_by   TEXT,
+    note        TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_recharge_redeem ON manual_recharges(redeem_id);
+`);
+
+// 3DS relay: the OTP lands on the ACCOUNT OWNER's side (agent), never on the
+// client's phone — that is inherent to reselling. Each request is bound to one
+// card so an agent handling several clients at once knows which code goes
+// where. TTL is deliberately short: an OTP that arrives late is worse than
+// none, because the checkout page has already expired.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS threeds_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    redeem_id     TEXT NOT NULL,       -- agent_orders.redeem_id (which card)
+    phone         TEXT NOT NULL,       -- normalizePhone(), who asked
+    merchant      TEXT,                -- 'AliExpress', 'Temu'… client-supplied
+    status        TEXT NOT NULL DEFAULT 'pending', -- pending|answered|expired|cancelled
+    code          TEXT,                -- the OTP, written by the agent
+    requested_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    answered_at   TEXT,
+    expires_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_3ds_status ON threeds_requests(status);
+  CREATE INDEX IF NOT EXISTS idx_3ds_phone  ON threeds_requests(phone);
+`);
+
+const THREEDS_TTL_SEC = 300; // 5 min — matches typical OTP validity
+
+function expireStale3ds() {
+  const info = db.prepare(`
+    UPDATE threeds_requests SET status = 'expired'
+     WHERE status = 'pending' AND expires_at < datetime('now')
+  `).run();
+  return info.changes;
+}
+
+// POST /cards/manual-issue  (agent)
+// Body: { phone, amountUsd, flow?, provider?, cardLink?, pan?, cvv?, exp?, holderName?, issuedBy? }
+// Mirrors the agent branch of /paygate/create-vcc: same agent_orders row shape,
+// same PIN/claim-code gating, so /cards/for-phone and the claim endpoints work
+// unchanged. Difference: status goes straight to 'completed' — the agent has
+// the card in hand, there is no upstream payment to wait for.
+app.post('/cards/manual-issue', (req, res) => {
+  const { phone, amountUsd, flow, provider, cardLink, pan, cvv, exp,
+          holderName, issuedBy, providerCardId } = req.body || {};
+
+  const normPhone = normalizePhone(phone);
+  if (!normPhone) return res.status(400).json({ error: 'phone requis' });
+
+  const amount = parseFloat(amountUsd);
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'amountUsd doit etre > 0' });
+  }
+
+  const link = cardLink ? String(cardLink).trim() : null;
+  if (link && !/^https:\/\//i.test(link)) {
+    return res.status(400).json({ error: 'cardLink doit etre une URL https' });
+  }
+  const hasPan = !!(pan && cvv && exp);
+  if (!link && !hasPan) {
+    return res.status(400).json({
+      error: 'CARD_PAYLOAD_REQUIRED',
+      message: 'Fournis soit cardLink (préférable), soit pan + cvv + exp.',
+    });
+  }
+
+  // Same gate as the automated path: a client with a verified PIN gets the
+  // PIN lock; otherwise fall back to a 4-digit claim code the agent relays.
+  const pinRow = db.prepare(
+    'SELECT verified FROM user_pins WHERE phone = ?'
+  ).get(normPhone);
+  const protectedByPin = pinRow && pinRow.verified ? 1 : 0;
+  const claimCode = protectedByPin ? null : String(Math.floor(1000 + Math.random() * 9000));
+
+  let cardBlob = null;
+  if (!link) {
+    try {
+      cardBlob = encryptCardBlob({ pan: String(pan), cvv: String(cvv), exp: String(exp) });
+    } catch (e) {
+      return res.status(503).json({
+        error: 'CARD_ENC_UNAVAILABLE',
+        message: 'Stockage chiffré indisponible — utilise cardLink, ou configure CARD_ENC_KEY.',
+      });
+    }
+  }
+
+  const redeemId = 'man_' + randomUUID().replace(/-/g, '').slice(0, 22);
+  const token    = randomUUID();
+
+  try {
+    db.prepare(`
+      INSERT INTO agent_orders
+        (redeem_id, phone, holder_name, amount_usd, flow, status, redeem_link,
+         claim_code, agent_order_token, protected_by_pin, provider, card_blob,
+         issued_by, provider_card_id)
+      VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(redeemId, normPhone, holderName || null, amount,
+           flow === 'recharge' ? 'recharge' : 'activation',
+           link, claimCode, token, protectedByPin,
+           provider ? String(provider).slice(0, 40) : 'manual',
+           cardBlob, issuedBy ? String(issuedBy).slice(0, 60) : null,
+           providerCardId ? String(providerCardId).slice(0, 80) : null);
+  } catch (e) {
+    console.error('[/cards/manual-issue] insert error:', e.message);
+    return res.status(500).json({ error: 'Enregistrement impossible: ' + e.message });
+  }
+
+  console.log('[/cards/manual-issue] ' + redeemId + ' phone=' + normPhone +
+    ' $' + amount + ' provider=' + (provider || 'manual') +
+    (link ? ' (link)' : ' (pan, encrypted)') +
+    (protectedByPin ? ' pin-gated' : ' code-gated'));
+
+  // The automated path credits the referrer when PayGate flips the order to
+  // completed. Manual issuance jumps straight to completed, so it has to do it
+  // here or referrers silently stop earning.
+  try { creditReferral(redeemId, normPhone, amount); }
+  catch (e) { console.error('[manual-issue] referral:', e.message); }
+
+  // redeem_id is never returned to the agent — same anti-card-theft rule as
+  // the automated path. The agent tracks the order via the opaque token.
+  return res.json({
+    ok: true,
+    agentOrderToken: token,
+    claimCode,                 // null when PIN-gated
+    protectedByPin: !!protectedByPin,
+    deliveredVia: link ? 'link' : 'card_data',
+  });
+});
+
+// GET /admin/client-cards?phone=  (agent)
+// Everything the agent needs to top a client up: which upstream card, on which
+// provider, how much has already gone through it. Deliberately NOT exposing
+// redeem_link or card data — the agent has no business reading either.
+app.get('/admin/client-cards', (req, res) => {
+  const normPhone = normalizePhone(req.query.phone);
+  if (!normPhone) return res.status(400).json({ error: 'phone requis' });
+
+  const rows = db.prepare(`
+    SELECT a.redeem_id, a.agent_order_token, a.holder_name, a.amount_usd,
+           a.flow, a.provider, a.provider_card_id, a.created_at, a.delivered_at,
+           COALESCE((SELECT SUM(r.amount_usd) FROM manual_recharges r
+                      WHERE r.redeem_id = a.redeem_id), 0) AS recharged_usd,
+           (SELECT COUNT(*) FROM manual_recharges r
+             WHERE r.redeem_id = a.redeem_id)              AS recharge_count
+      FROM agent_orders a
+     WHERE a.phone = ? AND a.status = 'completed'
+     ORDER BY a.created_at DESC
+  `).all(normPhone);
+
+  return res.json({
+    phone: normPhone,
+    count: rows.length,
+    cards: rows.map(r => ({
+      cardToken:      r.agent_order_token,
+      holderName:     r.holder_name,
+      issuedUsd:      r.amount_usd,
+      rechargedUsd:   r.recharged_usd,
+      totalUsd:       r.amount_usd + r.recharged_usd,
+      rechargeCount:  r.recharge_count,
+      provider:       r.provider,
+      providerCardId: r.provider_card_id,   // what the agent types upstream
+      flow:           r.flow,
+      createdAt:      r.created_at,
+      delivered:      !!r.delivered_at,
+    })),
+  });
+});
+
+// POST /cards/manual-recharge  (agent)
+// Body: { cardToken, amountUsd, issuedBy?, note?, providerCardId? }
+// The agent already topped the card up on the provider dashboard; this only
+// records it. The card in the client's hands is unchanged — no new PAN, no
+// re-delivery, which is exactly why recharges are so much cheaper than a new
+// card and why this is the path that actually earns.
+app.post('/cards/manual-recharge', (req, res) => {
+  const { cardToken, amountUsd, issuedBy, note, providerCardId } = req.body || {};
+  if (!cardToken) return res.status(400).json({ error: 'cardToken requis' });
+
+  const amount = parseFloat(amountUsd);
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'amountUsd doit etre > 0' });
+  }
+
+  const card = db.prepare(`
+    SELECT redeem_id, phone, provider_card_id FROM agent_orders
+     WHERE agent_order_token = ? AND status = 'completed'
+  `).get(String(cardToken));
+  if (!card) return res.status(404).json({ error: 'Carte introuvable' });
+
+  // Backfill the upstream id if it was missing when the card was issued.
+  if (providerCardId && !card.provider_card_id) {
+    db.prepare('UPDATE agent_orders SET provider_card_id = ? WHERE redeem_id = ?')
+      .run(String(providerCardId).slice(0, 80), card.redeem_id);
+  }
+
+  const info = db.prepare(`
+    INSERT INTO manual_recharges (redeem_id, amount_usd, issued_by, note)
+    VALUES (?, ?, ?, ?)
+  `).run(card.redeem_id, amount,
+         issuedBy ? String(issuedBy).slice(0, 60) : null,
+         note ? String(note).slice(0, 200) : null);
+
+  db.prepare(`UPDATE agent_orders SET updated_at = datetime('now') WHERE redeem_id = ?`)
+    .run(card.redeem_id);
+
+  console.log('[/cards/manual-recharge] #' + info.lastInsertRowid +
+              ' ' + card.redeem_id + ' +$' + amount + ' phone=' + card.phone);
+
+  // Referral commission applies to recharges too — the referrer earns on the
+  // client's whole lifetime, not just the first card.
+  try { creditReferral(card.redeem_id + ':r' + info.lastInsertRowid, card.phone, amount); }
+  catch (e) { console.error('[manual-recharge] referral:', e.message); }
+
+  return res.json({ ok: true, rechargeId: info.lastInsertRowid });
+});
+
+// GET /cards/recharges/:cardToken  (client app — its own history)
+app.get('/cards/recharges/:cardToken', (req, res) => {
+  const card = db.prepare(
+    'SELECT redeem_id, amount_usd FROM agent_orders WHERE agent_order_token = ?'
+  ).get(String(req.params.cardToken));
+  if (!card) return res.status(404).json({ error: 'Carte introuvable' });
+  const rows = db.prepare(`
+    SELECT amount_usd, created_at FROM manual_recharges
+     WHERE redeem_id = ? ORDER BY created_at DESC
+  `).all(card.redeem_id);
+  const total = rows.reduce((a, r) => a + r.amount_usd, 0);
+  return res.json({
+    issuedUsd: card.amount_usd,
+    rechargedUsd: total,
+    totalUsd: card.amount_usd + total,
+    recharges: rows,
+  });
+});
+
+// POST /threeds/request  (client app)
+// Body: { phone, cardToken, merchant? }
+// The client is mid-checkout and needs the OTP. Creates a pending request
+// bound to that specific card so the agent knows which code to relay.
+app.post('/threeds/request', (req, res) => {
+  expireStale3ds();
+  const { phone, cardToken, merchant } = req.body || {};
+  const normPhone = normalizePhone(phone);
+  if (!normPhone || !cardToken) {
+    return res.status(400).json({ error: 'phone et cardToken requis' });
+  }
+
+  const card = db.prepare(`
+    SELECT redeem_id FROM agent_orders
+     WHERE agent_order_token = ? AND phone = ? AND status = 'completed'
+  `).get(cardToken, normPhone);
+  if (!card) return res.status(404).json({ error: 'Carte introuvable pour ce numéro' });
+
+  // One live request per card: a second checkout attempt supersedes the first.
+  db.prepare(`
+    UPDATE threeds_requests SET status = 'cancelled'
+     WHERE redeem_id = ? AND status = 'pending'
+  `).run(card.redeem_id);
+
+  const info = db.prepare(`
+    INSERT INTO threeds_requests (redeem_id, phone, merchant, expires_at)
+    VALUES (?, ?, ?, datetime('now', '+${THREEDS_TTL_SEC} seconds'))
+  `).run(card.redeem_id, normPhone, merchant ? String(merchant).slice(0, 60) : null);
+
+  console.log('[/threeds/request] #' + info.lastInsertRowid + ' phone=' + normPhone +
+              ' merchant=' + (merchant || '?'));
+  return res.json({ ok: true, requestId: info.lastInsertRowid, ttlSeconds: THREEDS_TTL_SEC });
+});
+
+// GET /threeds/status/:id  (client app, polled)
+app.get('/threeds/status/:id', (req, res) => {
+  expireStale3ds();
+  const row = db.prepare(`
+    SELECT id, status, code, merchant, requested_at, answered_at, expires_at
+      FROM threeds_requests WHERE id = ?
+  `).get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Demande introuvable' });
+  return res.json({
+    requestId: row.id,
+    status:    row.status,
+    code:      row.status === 'answered' ? row.code : null,
+    merchant:  row.merchant,
+    expiresAt: row.expires_at,
+  });
+});
+
+// POST /threeds/ingest  (Telegram bridge — takes the agent out of the loop)
+// Body: { cardRef, code, secret }
+//
+// The provider's own Telegram bot posts 3DS codes into a private group. Our
+// bot sits in that group (privacy mode OFF so it can read messages), parses
+// the code plus the card reference, and calls this endpoint. Attribution works
+// ONLY because the agent names each card with its Tchipa order ref when
+// creating it upstream — that ref comes back inside the 3DS message, so we
+// know which client is waiting without a human reading anything.
+//
+// The manual /admin/threeds/answer path stays as the fallback for when the
+// bridge is down or the provider changes its message format.
+const THREEDS_INGEST_SECRET = process.env.THREEDS_INGEST_SECRET || null;
+
+app.post('/threeds/ingest', (req, res) => {
+  if (!THREEDS_INGEST_SECRET) {
+    return res.status(503).json({ error: 'INGEST_DISABLED', message: 'THREEDS_INGEST_SECRET non configuré.' });
+  }
+  const { cardRef, code, secret } = req.body || {};
+  const given    = Buffer.from(String(secret || ''), 'utf8');
+  const expected = Buffer.from(THREEDS_INGEST_SECRET, 'utf8');
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: 'BAD_SECRET' });
+  }
+  if (!cardRef || !code) return res.status(400).json({ error: 'cardRef et code requis' });
+  const clean = String(code).trim();
+  if (!/^[0-9]{4,10}$/.test(clean)) return res.status(400).json({ error: 'code invalide' });
+
+  expireStale3ds();
+
+  // cardRef is what the agent typed as the card title upstream. We match it
+  // against issued_by/redeem_id so either convention works.
+  const ref  = String(cardRef).trim();
+  const card = db.prepare(`
+    SELECT redeem_id, phone FROM agent_orders
+     WHERE (redeem_id = ? OR issued_by = ?) AND status = 'completed'
+     ORDER BY created_at DESC LIMIT 1
+  `).get(ref, ref);
+  if (!card) {
+    console.warn('[/threeds/ingest] ref inconnue: ' + ref);
+    return res.status(404).json({ error: 'CARD_REF_UNKNOWN', message: 'Aucune carte pour ref ' + ref });
+  }
+
+  const pending = db.prepare(`
+    SELECT id FROM threeds_requests
+     WHERE redeem_id = ? AND status = 'pending'
+     ORDER BY requested_at DESC LIMIT 1
+  `).get(card.redeem_id);
+
+  if (pending) {
+    db.prepare(`
+      UPDATE threeds_requests
+         SET status = 'answered', code = ?, answered_at = datetime('now')
+       WHERE id = ?
+    `).run(clean, pending.id);
+    console.log('[/threeds/ingest] #' + pending.id + ' auto-relayed for ' + ref);
+    return res.json({ ok: true, requestId: pending.id, matched: 'pending_request' });
+  }
+
+  // Code arrived before the client pressed "I need my code" (common — the
+  // provider pushes as soon as the merchant challenges). Park it as an
+  // already-answered row so the client's next poll finds it immediately.
+  const info = db.prepare(`
+    INSERT INTO threeds_requests (redeem_id, phone, merchant, status, code, answered_at, expires_at)
+    VALUES (?, ?, 'auto', 'answered', ?, datetime('now'), datetime('now', '+${THREEDS_TTL_SEC} seconds'))
+  `).run(card.redeem_id, card.phone, clean);
+  console.log('[/threeds/ingest] #' + info.lastInsertRowid + ' pre-delivered for ' + ref);
+  return res.json({ ok: true, requestId: info.lastInsertRowid, matched: 'pre_delivered' });
+});
+
+// GET /threeds/latest?phone=&cardToken=  (client app)
+// Returns the freshest un-expired code for that card, whether it came from the
+// bridge ahead of time or from the agent after a request.
+app.get('/threeds/latest', (req, res) => {
+  expireStale3ds();
+  const normPhone = normalizePhone(req.query.phone);
+  const cardToken = req.query.cardToken;
+  if (!normPhone || !cardToken) return res.status(400).json({ error: 'phone et cardToken requis' });
+
+  const row = db.prepare(`
+    SELECT t.id, t.code, t.answered_at, t.expires_at
+      FROM threeds_requests t
+      JOIN agent_orders a ON a.redeem_id = t.redeem_id
+     WHERE a.agent_order_token = ? AND a.phone = ?
+       AND t.status = 'answered' AND t.expires_at > datetime('now')
+     ORDER BY t.answered_at DESC LIMIT 1
+  `).get(cardToken, normPhone);
+
+  if (!row) return res.json({ available: false });
+  return res.json({ available: true, requestId: row.id, code: row.code, expiresAt: row.expires_at });
+});
+
+// GET /admin/threeds/pending  (agent panel)
+// Shows which client is waiting, on which card, for how long — the attribution
+// the FlexCard Telegram feed cannot give you when several clients buy at once.
+app.get('/admin/threeds/pending', (req, res) => {
+  expireStale3ds();
+  const rows = db.prepare(`
+    SELECT t.id, t.phone, t.merchant, t.requested_at, t.expires_at,
+           a.amount_usd, a.provider, a.holder_name,
+           CAST((julianday(t.expires_at) - julianday('now')) * 86400 AS INTEGER) AS seconds_left
+      FROM threeds_requests t
+      JOIN agent_orders a ON a.redeem_id = t.redeem_id
+     WHERE t.status = 'pending'
+     ORDER BY t.requested_at ASC
+  `).all();
+  return res.json({ count: rows.length, requests: rows });
+});
+
+// POST /admin/threeds/answer  (agent panel)
+// Body: { id, code }
+app.post('/admin/threeds/answer', (req, res) => {
+  expireStale3ds();
+  const { id, code } = req.body || {};
+  if (!id || !code) return res.status(400).json({ error: 'id et code requis' });
+  const clean = String(code).trim();
+  if (!/^[0-9]{4,10}$/.test(clean)) {
+    return res.status(400).json({ error: 'code invalide (4 à 10 chiffres)' });
+  }
+  const row = db.prepare('SELECT status FROM threeds_requests WHERE id = ?').get(id);
+  if (!row) return res.status(404).json({ error: 'Demande introuvable' });
+  if (row.status !== 'pending') {
+    return res.status(409).json({
+      error: 'REQUEST_NOT_PENDING',
+      message: 'Demande déjà ' + row.status + ' — le client doit en relancer une.',
+    });
+  }
+  db.prepare(`
+    UPDATE threeds_requests
+       SET status = 'answered', code = ?, answered_at = datetime('now')
+     WHERE id = ?
+  `).run(clean, id);
+  console.log('[/admin/threeds/answer] #' + id + ' relayed');
+  return res.json({ ok: true });
 });
 
 // Shared helper: hit PayGate status + sync any agent_orders bridge row.
@@ -1131,7 +1693,7 @@ app.post('/cards/claim-with-pin', (req, res) => {
   }
   const row = db.prepare(`
     SELECT redeem_id, phone, redeem_link, claim_attempts, delivered_at,
-           protected_by_pin
+           protected_by_pin, card_blob
       FROM agent_orders
      WHERE agent_order_token = ?
   `).get(String(card_token));
@@ -1141,7 +1703,9 @@ app.post('/cards/claim-with-pin', (req, res) => {
   if (!row.protected_by_pin) {
     return res.status(409).json({ error: 'Cette carte n\'utilise pas le PIN' });
   }
-  if (!row.redeem_link) {
+  // Manually-issued cards carry either a one-time link OR an encrypted
+  // PAN blob — both count as "ready".
+  if (!row.redeem_link && !row.card_blob) {
     return res.status(409).json({ error: 'Carte pas encore prete' });
   }
   if (row.claim_attempts >= CLAIM_MAX_ATTEMPTS) {
@@ -1169,7 +1733,31 @@ app.post('/cards/claim-with-pin', (req, res) => {
        SET protected_by_pin = 0, claim_attempts = 0, updated_at = datetime('now')
      WHERE redeem_id = ?
   `).run(row.redeem_id);
-  return res.json({ redeemLink: row.redeem_link, redeemId: row.redeem_id });
+
+  // PAN path: decrypt once, hand it to the verified device, then WIPE it from
+  // the database. The card lives on the client's phone from here — we keep no
+  // copy, which is what keeps Tchipa out of PCI scope for stored card data.
+  let card = null;
+  if (!row.redeem_link && row.card_blob) {
+    try {
+      card = decryptCardBlob(row.card_blob);
+      db.prepare(`
+        UPDATE agent_orders
+           SET card_blob = NULL, delivered_at = datetime('now'), updated_at = datetime('now')
+         WHERE redeem_id = ?
+      `).run(row.redeem_id);
+      console.log('[/cards/claim-with-pin] card data delivered + purged for ' + row.redeem_id);
+    } catch (e) {
+      console.error('[/cards/claim-with-pin] decrypt failed:', e.message);
+      return res.status(500).json({ error: 'Données de carte illisibles. Contacte le support.' });
+    }
+  }
+
+  return res.json({
+    redeemLink: row.redeem_link,
+    redeemId:   row.redeem_id,
+    card,       // { pan, cvv, exp } — one shot only, never returned twice
+  });
 });
 
 // POST /paygate/request-recharge — alias create-vcc pour compat Flutter
@@ -1555,6 +2143,530 @@ app.get('/rates', async (req, res) => {
     console.error('[/rates]', e.message);
     res.status(502).json({ error: 'Taux indisponibles pour le moment.' });
   }
+});
+
+// ---------------------------------------------------------------------------
+// WALLET — client balance in USD, for the 1688 clothing shop (2026-09-28)
+//
+// PayGate/Swype are gone, so Tchipa sells products instead of cards: the client
+// holds a USD balance and pays for clothes with it. Money comes in through a
+// human agent (dinars via BaridiMob → the agent credits the client in USD).
+//
+// Rules this block enforces:
+// - Amounts are INTEGER CENTS everywhere. No floats touch a balance.
+// - Every change is a wallet_ledger row carrying balance_after; the wallets
+//   row is only a cache of the last balance_after, updated in the SAME
+//   transaction. better-sqlite3 transactions are synchronous, so two debits
+//   can never interleave: a balance can't go negative.
+// - Writes carry an idempotency key: an agent tapping "Créditer" twice on a
+//   bad connection credits once.
+// - Each agent has their own token (only its sha256 is stored). What an agent
+//   credits, the agent owes Tarik; agent_settlements records what was paid
+//   back, and max_outstanding caps how far an agent can run ahead of paying.
+// ---------------------------------------------------------------------------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wallets (
+    phone          TEXT PRIMARY KEY,               -- normalizePhone()
+    balance_cents  INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS wallet_ledger (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone               TEXT NOT NULL,
+    delta_cents         INTEGER NOT NULL,          -- + credit, - debit
+    balance_after_cents INTEGER NOT NULL CHECK (balance_after_cents >= 0),
+    kind                TEXT NOT NULL,             -- agent_credit | purchase | refund | adjust
+    agent_id            INTEGER,                   -- set for agent_credit
+    ref                 TEXT,                      -- order id, BaridiMob ref…
+    note                TEXT,
+    dzd_amount          INTEGER,                   -- dinars the agent received (agent_credit)
+    idem_key            TEXT UNIQUE,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ledger_phone ON wallet_ledger(phone, id);
+  CREATE INDEX IF NOT EXISTS idx_ledger_agent ON wallet_ledger(agent_id, id);
+  CREATE TABLE IF NOT EXISTS agents (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                  TEXT NOT NULL,
+    phone                 TEXT,
+    token_hash            TEXT NOT NULL UNIQUE,    -- sha256(token); the token is shown once
+    active                INTEGER NOT NULL DEFAULT 1,
+    max_outstanding_cents INTEGER NOT NULL DEFAULT 20000,   -- 200 $ credited but not yet paid back
+    created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS agent_settlements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    INTEGER NOT NULL,
+    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    note        TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS wallet_sessions (
+    token_hash  TEXT PRIMARY KEY,                  -- sha256(session token)
+    phone       TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
+const WALLET_SESSION_DAYS = 30;
+const WALLET_PIN_MAX_ATTEMPTS = 5;         // same counter as user_pins.pin_attempts
+const AGENT_CREDIT_MAX_CENTS = 50000;      // 500 $ max per single credit (typo guard)
+
+const sha256 = s => createHash('sha256').update(String(s)).digest('hex');
+
+function toCents(v) {
+  // "12.5", 12.5, "12,50" → 1250. Rejects NaN, <= 0 and more than 2 decimals.
+  const s = String(v ?? '').trim().replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const [u, d = ''] = s.split('.');
+  const c = parseInt(u, 10) * 100 + parseInt((d + '00').slice(0, 2), 10);
+  return c > 0 ? c : null;
+}
+const fromCents = c => Math.round(c) / 100;
+
+function walletBalance(phone) {
+  const r = db.prepare('SELECT balance_cents FROM wallets WHERE phone = ?').get(phone);
+  return r ? r.balance_cents : 0;
+}
+
+// The only function that moves money. Throws on insufficient funds; returns
+// the existing row when the idempotency key was already used.
+const walletApply = db.transaction(({ phone, deltaCents, kind, agentId = null, ref = null,
+                                      note = null, dzd = null, idemKey = null }) => {
+  if (idemKey) {
+    const prev = db.prepare('SELECT * FROM wallet_ledger WHERE idem_key = ?').get(idemKey);
+    if (prev) {
+      if (prev.phone !== phone || prev.delta_cents !== deltaCents) {
+        const e = new Error('idempotency key reused for a different operation'); e.code = 'IDEM_CONFLICT'; throw e;
+      }
+      return { row: prev, replay: true };
+    }
+  }
+  const after = walletBalance(phone) + deltaCents;
+  if (after < 0) { const e = new Error('Solde insuffisant'); e.code = 'INSUFFICIENT_FUNDS'; throw e; }
+  const info = db.prepare(`
+    INSERT INTO wallet_ledger (phone, delta_cents, balance_after_cents, kind, agent_id, ref, note, dzd_amount, idem_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(phone, deltaCents, after, kind, agentId, ref, note, dzd, idemKey);
+  db.prepare(`
+    INSERT INTO wallets (phone, balance_cents, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(phone) DO UPDATE SET balance_cents = excluded.balance_cents, updated_at = excluded.updated_at
+  `).run(phone, after);
+  return { row: db.prepare('SELECT * FROM wallet_ledger WHERE id = ?').get(info.lastInsertRowid), replay: false };
+});
+
+function agentOutstandingCents(agentId) {
+  const credited = db.prepare(`SELECT COALESCE(SUM(delta_cents),0) s FROM wallet_ledger
+                                WHERE agent_id = ? AND kind = 'agent_credit'`).get(agentId).s;
+  const settled  = db.prepare('SELECT COALESCE(SUM(amount_cents),0) s FROM agent_settlements WHERE agent_id = ?')
+                     .get(agentId).s;
+  return credited - settled;
+}
+
+function bearer(req) {
+  const m = /^Bearer\s+(\S+)$/i.exec(req.get('authorization') || '');
+  return m ? m[1] : null;
+}
+
+function requireAgent(req, res, next) {
+  const t = bearer(req);
+  const agent = t && db.prepare('SELECT * FROM agents WHERE token_hash = ? AND active = 1').get(sha256(t));
+  if (!agent) return res.status(401).json({ error: 'Agent non reconnu' });
+  req.agent = agent;
+  next();
+}
+
+function requireClient(req, res, next) {
+  const t = bearer(req);
+  const s = t && db.prepare(`SELECT phone FROM wallet_sessions
+                              WHERE token_hash = ? AND expires_at > datetime('now')`).get(sha256(t));
+  if (!s) return res.status(401).json({ error: 'Session expirée, reconnecte-toi avec ton PIN' });
+  req.clientPhone = s.phone;
+  next();
+}
+
+const ledgerView = r => ({
+  id: r.id, amountUsd: fromCents(r.delta_cents), balanceAfterUsd: fromCents(r.balance_after_cents),
+  kind: r.kind, ref: r.ref, note: r.note, dzd: r.dzd_amount, at: r.created_at,
+});
+
+// POST /wallet/login { phone, pin } → { token, balanceUsd }
+// The client proves ownership of the phone with the PIN set at install time.
+app.post('/wallet/login', (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const pin = String(req.body?.pin ?? '');
+  if (!phone || !/^\d{4,8}$/.test(pin)) return res.status(400).json({ error: 'phone et pin requis' });
+  const u = db.prepare('SELECT pin_hash, pin_salt, verified, pin_attempts FROM user_pins WHERE phone = ?').get(phone);
+  if (!u || !u.verified) return res.status(409).json({ error: 'PIN non configuré pour ce numéro' });
+  if (u.pin_attempts >= WALLET_PIN_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Trop de PIN faux. Contacte ton agent ou le support.' });
+  }
+  if (!verifyPin(pin, u.pin_salt, u.pin_hash)) {
+    db.prepare(`UPDATE user_pins SET pin_attempts = pin_attempts + 1, updated_at = datetime('now') WHERE phone = ?`).run(phone);
+    return res.status(403).json({ error: 'PIN invalide',
+                                  attemptsRemaining: Math.max(0, WALLET_PIN_MAX_ATTEMPTS - u.pin_attempts - 1) });
+  }
+  db.prepare(`UPDATE user_pins SET pin_attempts = 0 WHERE phone = ?`).run(phone);
+  const token = randomBytes(32).toString('hex');
+  db.prepare(`INSERT INTO wallet_sessions (token_hash, phone, expires_at)
+              VALUES (?, ?, datetime('now', ?))`).run(sha256(token), phone, `+${WALLET_SESSION_DAYS} days`);
+  res.json({ token, balanceUsd: fromCents(walletBalance(phone)) });
+});
+
+// GET /wallet/me → balance + last 50 movements (client session)
+app.get('/wallet/me', requireClient, (req, res) => {
+  const rows = db.prepare('SELECT * FROM wallet_ledger WHERE phone = ? ORDER BY id DESC LIMIT 50').all(req.clientPhone);
+  res.json({ phone: req.clientPhone, balanceUsd: fromCents(walletBalance(req.clientPhone)),
+             history: rows.map(ledgerView) });
+});
+
+// POST /wallet/logout (client session)
+app.post('/wallet/logout', requireClient, (req, res) => {
+  db.prepare('DELETE FROM wallet_sessions WHERE token_hash = ?').run(sha256(bearer(req)));
+  res.json({ ok: true });
+});
+
+// GET /agent/me → who am I, how much I owe Tarik, my ceiling
+app.get('/agent/me', requireAgent, (req, res) => {
+  const out = agentOutstandingCents(req.agent.id);
+  res.json({ id: req.agent.id, name: req.agent.name, outstandingUsd: fromCents(out),
+             maxOutstandingUsd: fromCents(req.agent.max_outstanding_cents),
+             availableUsd: fromCents(Math.max(0, req.agent.max_outstanding_cents - out)) });
+});
+
+// POST /agent/wallet/credit { phone, amountUsd, dzd?, ref?, idempotencyKey }
+// The agent received dinars (BaridiMob) and credits the client in USD.
+app.post('/agent/wallet/credit', requireAgent, (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const cents = toCents(req.body?.amountUsd);
+  const idem  = String(req.body?.idempotencyKey || '').trim();
+  const dzd   = req.body?.dzd != null ? parseInt(req.body.dzd, 10) : null;
+  if (!phone) return res.status(400).json({ error: 'phone requis' });
+  if (!cents) return res.status(400).json({ error: 'amountUsd invalide (ex. 25 ou 25.50)' });
+  if (cents > AGENT_CREDIT_MAX_CENTS) {
+    return res.status(400).json({ error: `Maximum ${fromCents(AGENT_CREDIT_MAX_CENTS)} $ par crédit` });
+  }
+  if (idem.length < 8) return res.status(400).json({ error: 'idempotencyKey requis (8 caractères min.)' });
+  // Credit only a phone whose owner can log in: a typo in the number would
+  // otherwise park money on a wallet nobody can open.
+  const u = db.prepare('SELECT verified FROM user_pins WHERE phone = ?').get(phone);
+  if (!u || !u.verified) {
+    return res.status(409).json({ error: "Ce client n'a pas encore activé Tchipa (PIN + email). Crédit refusé." });
+  }
+  // Ceiling check is outside walletApply, so an idempotent replay is let through first.
+  const prev = db.prepare('SELECT * FROM wallet_ledger WHERE idem_key = ?').get(`agent:${req.agent.id}:${idem}`);
+  if (!prev && agentOutstandingCents(req.agent.id) + cents > req.agent.max_outstanding_cents) {
+    return res.status(403).json({ error: 'Plafond atteint : règle ce que tu dois à Tchipa avant de créditer plus.',
+                                  outstandingUsd: fromCents(agentOutstandingCents(req.agent.id)) });
+  }
+  try {
+    const { row, replay } = walletApply({ phone, deltaCents: cents, kind: 'agent_credit', agentId: req.agent.id,
+      ref: req.body?.ref ? String(req.body.ref).slice(0, 80) : null, dzd: Number.isFinite(dzd) ? dzd : null,
+      idemKey: `agent:${req.agent.id}:${idem}` });
+    if (!replay) console.log(`[wallet] agent ${req.agent.id} credite ${fromCents(cents)} $ -> ${phone}`);
+    res.json({ ok: true, replay, entry: ledgerView(row) });
+  } catch (e) {
+    if (e.code === 'IDEM_CONFLICT') return res.status(409).json({ error: 'Clé déjà utilisée pour une autre opération' });
+    console.error('[wallet] credit:', e.message);
+    res.status(500).json({ error: 'Erreur interne' });
+  }
+});
+
+// GET /agent/credits → my last 100 credits
+app.get('/agent/credits', requireAgent, (req, res) => {
+  const rows = db.prepare(`SELECT * FROM wallet_ledger WHERE agent_id = ? AND kind = 'agent_credit'
+                           ORDER BY id DESC LIMIT 100`).all(req.agent.id);
+  res.json({ credits: rows.map(r => ({ ...ledgerView(r), phone: r.phone })) });
+});
+
+// POST /admin/agents { name, phone?, maxOutstandingUsd? } → token (shown ONCE)
+app.post('/admin/agents', (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name requis' });
+  const max = req.body?.maxOutstandingUsd != null ? toCents(req.body.maxOutstandingUsd) : 20000;
+  if (!max) return res.status(400).json({ error: 'maxOutstandingUsd invalide' });
+  const token = 'agt_' + randomBytes(24).toString('hex');
+  const info = db.prepare('INSERT INTO agents (name, phone, token_hash, max_outstanding_cents) VALUES (?, ?, ?, ?)')
+    .run(name, normalizePhone(req.body?.phone) || null, sha256(token), max);
+  res.json({ id: info.lastInsertRowid, name, token, note: "Donne ce code à l'agent : il ne sera plus jamais affiché." });
+});
+
+// GET /admin/agents → every agent with what they owe
+app.get('/admin/agents', (req, res) => {
+  const rows = db.prepare('SELECT id, name, phone, active, max_outstanding_cents, created_at FROM agents').all();
+  res.json({ agents: rows.map(a => ({ id: a.id, name: a.name, phone: a.phone, active: !!a.active,
+    outstandingUsd: fromCents(agentOutstandingCents(a.id)), maxOutstandingUsd: fromCents(a.max_outstanding_cents),
+    createdAt: a.created_at })) });
+});
+
+// POST /admin/agents/:id/settle { amountUsd, note? } → the agent paid Tarik back
+app.post('/admin/agents/:id/settle', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const cents = toCents(req.body?.amountUsd);
+  if (!db.prepare('SELECT 1 FROM agents WHERE id = ?').get(id)) return res.status(404).json({ error: 'Agent introuvable' });
+  if (!cents) return res.status(400).json({ error: 'amountUsd invalide' });
+  db.prepare('INSERT INTO agent_settlements (agent_id, amount_cents, note) VALUES (?, ?, ?)')
+    .run(id, cents, req.body?.note ? String(req.body.note).slice(0, 200) : null);
+  res.json({ ok: true, outstandingUsd: fromCents(agentOutstandingCents(id)) });
+});
+
+// POST /admin/agents/:id/active { active: bool } → block / unblock an agent
+app.post('/admin/agents/:id/active', (req, res) => {
+  const info = db.prepare('UPDATE agents SET active = ? WHERE id = ?').run(req.body?.active ? 1 : 0, parseInt(req.params.id, 10));
+  if (!info.changes) return res.status(404).json({ error: 'Agent introuvable' });
+  res.json({ ok: true });
+});
+
+// GET /admin/wallets → every non-empty wallet
+app.get('/admin/wallets', (req, res) => {
+  const rows = db.prepare('SELECT * FROM wallets WHERE balance_cents > 0 ORDER BY balance_cents DESC').all();
+  const total = rows.reduce((s, r) => s + r.balance_cents, 0);
+  res.json({ totalUsd: fromCents(total), wallets: rows.map(r => ({ phone: r.phone, balanceUsd: fromCents(r.balance_cents),
+                                                                    updatedAt: r.updated_at })) });
+});
+
+// POST /admin/wallet/adjust { phone, amountUsd (+/-), note, idempotencyKey } → manual correction
+app.post('/admin/wallet/adjust', (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const raw = String(req.body?.amountUsd ?? '').trim();
+  const neg = raw.startsWith('-');
+  const cents = toCents(neg ? raw.slice(1) : raw);
+  const note = String(req.body?.note || '').trim();
+  const idem = String(req.body?.idempotencyKey || '').trim();
+  if (!phone || !cents || !note || idem.length < 8) {
+    return res.status(400).json({ error: 'phone, amountUsd, note et idempotencyKey requis' });
+  }
+  try {
+    const { row, replay } = walletApply({ phone, deltaCents: neg ? -cents : cents, kind: 'adjust', note,
+                                          idemKey: `admin:${idem}` });
+    res.json({ ok: true, replay, entry: ledgerView(row) });
+  } catch (e) {
+    if (e.code === 'INSUFFICIENT_FUNDS') return res.status(409).json({ error: 'Solde insuffisant pour ce retrait' });
+    if (e.code === 'IDEM_CONFLICT') return res.status(409).json({ error: 'Clé déjà utilisée pour une autre opération' });
+    res.status(500).json({ error: 'Erreur interne' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SHOP — 1688 clothing catalogue paid with the wallet (2026-09-28)
+//
+// catalogue.db is built offline by ~/tchipa-boutique/import_catalogue.py (TMAPI)
+// and copied next to this file; it is opened READ-ONLY here. Prices shown and
+// charged always come from it: the app sends product + variant, never a price.
+// Each 1688 variant (colour x size) has its own price — vendors hide a cheap
+// accessory among the variants to advertise a bait price, so we never charge
+// "the product price", only the chosen variant's.
+// ---------------------------------------------------------------------------
+const CATALOGUE_PATH = path.join(__dirname, 'catalogue.db');
+let catalogue = null;
+function cat() {
+  if (!catalogue && require('fs').existsSync(CATALOGUE_PATH)) {
+    catalogue = new Database(CATALOGUE_PATH, { readonly: true });
+  }
+  return catalogue;
+}
+const SHOP_CATEGORIES = ['Femme', 'Homme', 'Hijab', 'Abaya', 'Enfants'];
+const SHOP_PAGE = 20;
+const SHOP_MAX_QTY = 10;
+const SHOP_STATUSES = ['payee', 'achetee', 'entrepot', 'expediee', 'livree', 'annulee'];
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shop_orders (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone        TEXT NOT NULL,
+    total_cents  INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'payee',
+    full_name    TEXT NOT NULL,
+    contact_phone TEXT NOT NULL,
+    wilaya       TEXT NOT NULL,
+    commune      TEXT,
+    address      TEXT,
+    tracking     TEXT,
+    admin_note   TEXT,
+    idem_key     TEXT UNIQUE,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shop_orders_phone ON shop_orders(phone, id);
+  CREATE TABLE IF NOT EXISTS shop_order_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id        INTEGER NOT NULL,
+    item_id         INTEGER NOT NULL,          -- 1688 offer id
+    title           TEXT,
+    image           TEXT,
+    variant         TEXT NOT NULL,             -- 1688 props_names, e.g. "Color:Black;Size:L"
+    qty             INTEGER NOT NULL,
+    unit_cents      INTEGER NOT NULL,          -- client price charged
+    cost_cents      INTEGER,                   -- our cost (1688 + agent + freight), for margin
+    url_1688        TEXT
+  );
+`);
+
+function productRow(id) {
+  return cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
+}
+function productTitle(p) { return p.titre_fr || p.titre_en; }
+function parseVariant(name) {
+  // "Color:White leopard print;Size:L" -> { Color: 'White leopard print', Size: 'L' }
+  const o = {};
+  for (const part of String(name || '').split(';')) {
+    const i = part.indexOf(':');
+    if (i > 0) o[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return o;
+}
+const productCard = p => ({
+  id: p.item_id, title: productTitle(p), category: p.categorie,
+  image: (JSON.parse(p.images || '[]')[0]) || null,
+  priceFrom: p.prix_des_usd, priceTo: p.prix_max_usd,
+});
+
+// GET /shop/categories
+app.get('/shop/categories', (req, res) => {
+  if (!cat()) return res.json({ categories: [] });
+  const counts = Object.fromEntries(cat().prepare('SELECT categorie c, COUNT(*) n FROM produits GROUP BY 1').all()
+                                      .map(r => [r.c, r.n]));
+  res.json({ categories: SHOP_CATEGORIES.filter(c => counts[c]).map(c => ({ name: c, count: counts[c] })) });
+});
+
+// GET /shop/products?category=&q=&page=1  → 20 per page, best sellers first (import order)
+app.get('/shop/products', (req, res) => {
+  if (!cat()) return res.json({ items: [], hasMore: false });
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const where = [], args = [];
+  if (req.query.category) { where.push('categorie = ?'); args.push(String(req.query.category)); }
+  const q = String(req.query.q || '').trim().slice(0, 60);
+  if (q) {
+    for (const w of q.split(/\s+/).slice(0, 5)) {
+      where.push('(titre_fr LIKE ? OR titre_en LIKE ?)'); args.push(`%${w}%`, `%${w}%`);
+    }
+  }
+  const rows = cat().prepare(`SELECT * FROM produits ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                              ORDER BY rowid LIMIT ? OFFSET ?`).all(...args, SHOP_PAGE + 1, (page - 1) * SHOP_PAGE);
+  res.json({ items: rows.slice(0, SHOP_PAGE).map(productCard), hasMore: rows.length > SHOP_PAGE, page });
+});
+
+// GET /shop/products/:id → full sheet with every variant and its price
+app.get('/shop/products/:id', (req, res) => {
+  const p = productRow(parseInt(req.params.id, 10));
+  if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+  const variants = JSON.parse(p.variantes_prix || '[]').filter(v => v.stock > 0).map(v => ({
+    name: v.nom, props: parseVariant(v.nom), priceUsd: v.prix_client_usd, stock: v.stock,
+  }));
+  res.json({ ...productCard(p), titleEn: p.titre_en, images: JSON.parse(p.images || '[]'), video: p.video,
+             weightKg: p.poids_kg, options: JSON.parse(p.variantes || '{}'), variants });
+});
+
+function priceVariant(p, variantName) {
+  const v = JSON.parse(p.variantes_prix || '[]').find(x => x.nom === variantName);
+  if (!v || !(v.stock > 0)) return null;
+  return { unitCents: Math.round(v.prix_client_usd * 100), costCents: Math.round(v.revient_usd * 100) };
+}
+
+// POST /shop/orders { items:[{productId, variant, qty}], delivery:{fullName, phone, wilaya, commune?, address?},
+//                     idempotencyKey }  (client session) → pays with the wallet
+app.post('/shop/orders', requireClient, (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 30) : [];
+  const d = req.body?.delivery || {};
+  const idem = String(req.body?.idempotencyKey || '').trim();
+  if (!items.length) return res.status(400).json({ error: 'Panier vide' });
+  if (idem.length < 8) return res.status(400).json({ error: 'idempotencyKey requis' });
+  const fullName = String(d.fullName || '').trim(), wilaya = String(d.wilaya || '').trim();
+  const contact = String(d.phone || '').trim();
+  if (!fullName || !wilaya || !contact) {
+    return res.status(400).json({ error: 'Nom, téléphone et wilaya de livraison requis' });
+  }
+  const lines = [];
+  for (const it of items) {
+    const qty = parseInt(it.qty, 10);
+    if (!(qty >= 1 && qty <= SHOP_MAX_QTY)) return res.status(400).json({ error: `Quantité 1 à ${SHOP_MAX_QTY}` });
+    const p = productRow(parseInt(it.productId, 10));
+    const pr = p && priceVariant(p, String(it.variant || ''));
+    if (!pr) return res.status(409).json({ error: 'Un article n\'est plus disponible', productId: it.productId });
+    lines.push({ p, variant: String(it.variant), qty, ...pr });
+  }
+  const total = lines.reduce((s, l) => s + l.unitCents * l.qty, 0);
+  const already = db.prepare('SELECT id FROM shop_orders WHERE idem_key = ?').get(`order:${req.clientPhone}:${idem}`);
+  if (already) return res.json({ ok: true, replay: true, orderId: already.id });
+  try {
+    const orderId = db.transaction(() => {
+      const info = db.prepare(`INSERT INTO shop_orders (phone, total_cents, full_name, contact_phone, wilaya, commune,
+                                 address, idem_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(req.clientPhone, total, fullName.slice(0, 80), contact.slice(0, 30), wilaya.slice(0, 40),
+             String(d.commune || '').slice(0, 60) || null, String(d.address || '').slice(0, 200) || null,
+             `order:${req.clientPhone}:${idem}`);
+      const oid = info.lastInsertRowid;
+      const ins = db.prepare(`INSERT INTO shop_order_items (order_id, item_id, title, image, variant, qty, unit_cents,
+                                cost_cents, url_1688) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const l of lines) {
+        ins.run(oid, l.p.item_id, productTitle(l.p), JSON.parse(l.p.images || '[]')[0] || null, l.variant, l.qty,
+                l.unitCents, l.costCents * l.qty, l.p.url);
+      }
+      // Throws INSUFFICIENT_FUNDS -> the whole order rolls back.
+      walletApply({ phone: req.clientPhone, deltaCents: -total, kind: 'purchase', ref: `commande #${oid}`,
+                    idemKey: `purchase:${oid}` });
+      return oid;
+    })();
+    console.log(`[shop] commande #${orderId} ${req.clientPhone} ${fromCents(total)} $`);
+    res.json({ ok: true, orderId, totalUsd: fromCents(total), balanceUsd: fromCents(walletBalance(req.clientPhone)) });
+  } catch (e) {
+    if (e.code === 'INSUFFICIENT_FUNDS') {
+      return res.status(402).json({ error: 'Solde insuffisant', totalUsd: fromCents(total),
+                                    balanceUsd: fromCents(walletBalance(req.clientPhone)) });
+    }
+    console.error('[shop] order:', e.message);
+    res.status(500).json({ error: 'Erreur interne' });
+  }
+});
+
+function orderView(o) {
+  const items = db.prepare('SELECT * FROM shop_order_items WHERE order_id = ?').all(o.id);
+  return { id: o.id, status: o.status, totalUsd: fromCents(o.total_cents), createdAt: o.created_at,
+           updatedAt: o.updated_at, tracking: o.tracking, wilaya: o.wilaya,
+           items: items.map(i => ({ productId: i.item_id, title: i.title, image: i.image, variant: i.variant,
+                                    props: parseVariant(i.variant), qty: i.qty, unitUsd: fromCents(i.unit_cents) })) };
+}
+
+// GET /shop/orders (client session) → my orders
+app.get('/shop/orders', requireClient, (req, res) => {
+  const rows = db.prepare('SELECT * FROM shop_orders WHERE phone = ? ORDER BY id DESC LIMIT 50').all(req.clientPhone);
+  res.json({ orders: rows.map(orderView) });
+});
+
+// GET /admin/shop/orders?status= → orders to buy, with 1688 links and our cost
+app.get('/admin/shop/orders', (req, res) => {
+  const st = req.query.status ? String(req.query.status) : null;
+  const rows = db.prepare(`SELECT * FROM shop_orders ${st ? 'WHERE status = ?' : ''} ORDER BY id DESC LIMIT 200`)
+                 .all(...(st ? [st] : []));
+  res.json({ orders: rows.map(o => {
+    const items = db.prepare('SELECT * FROM shop_order_items WHERE order_id = ?').all(o.id);
+    const cost = items.reduce((s, i) => s + (i.cost_cents || 0), 0);
+    return { ...orderView(o), phone: o.phone, fullName: o.full_name, contactPhone: o.contact_phone,
+             commune: o.commune, address: o.address, adminNote: o.admin_note,
+             costUsd: fromCents(cost), marginUsd: fromCents(o.total_cents - cost),
+             links1688: items.map(i => ({ url: i.url_1688, variant: i.variant, qty: i.qty })) };
+  }) });
+});
+
+// POST /admin/shop/orders/:id/status { status, tracking?, note? } — 'annulee' refunds the wallet
+app.post('/admin/shop/orders/:id/status', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const status = String(req.body?.status || '');
+  if (!SHOP_STATUSES.includes(status)) return res.status(400).json({ error: 'status: ' + SHOP_STATUSES.join(' | ') });
+  const o = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(id);
+  if (!o) return res.status(404).json({ error: 'Commande introuvable' });
+  if (o.status === 'annulee') return res.status(409).json({ error: 'Commande déjà annulée et remboursée' });
+  db.transaction(() => {
+    db.prepare(`UPDATE shop_orders SET status = ?, tracking = COALESCE(?, tracking), admin_note = COALESCE(?, admin_note),
+                updated_at = datetime('now') WHERE id = ?`)
+      .run(status, req.body?.tracking ? String(req.body.tracking).slice(0, 80) : null,
+           req.body?.note ? String(req.body.note).slice(0, 200) : null, id);
+    if (status === 'annulee') {
+      walletApply({ phone: o.phone, deltaCents: o.total_cents, kind: 'refund', ref: `commande #${id}`,
+                    idemKey: `refund:${id}` });
+    }
+  })();
+  res.json({ ok: true, order: orderView(db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(id)) });
 });
 
 app.listen(PORT, () => {

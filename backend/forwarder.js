@@ -368,6 +368,33 @@ function buildUniqueClientAmount(baseAmount) {
   return { clientAmount: unique, suffix };
 }
 
+// Unpaid orders EXPIRE upstream — PayGate answers "Invalid or expired
+// redeem_id" for anything old — but our row lived forever. A client paying a
+// months-old address would still be matched here and forwarded into a dead
+// order: money gone, no card. Dropping stale rows makes a late payment land as
+// an 'orphan' instead (recorded, funds stay in the VPS wallet), which is the
+// safe failure mode. Confirmed on 2026-08-08: 51 rows, oldest from May, all
+// expired upstream.
+const ORDER_TTL_DAYS = 7;
+
+function getStaleOrders(days = ORDER_TTL_DAYS) {
+  return db.prepare(`
+    SELECT * FROM pending_orders
+     WHERE created_at < datetime('now', ?)
+     ORDER BY created_at ASC
+  `).all('-' + days + ' days');
+}
+
+function purgeStaleOrders(days = ORDER_TTL_DAYS) {
+  const stale = getStaleOrders(days);
+  if (!stale.length) return { purged: 0, orders: [] };
+  const del = db.prepare('DELETE FROM pending_orders WHERE redeem_id = ?');
+  db.transaction((rows) => { for (const r of rows) del.run(r.redeem_id); })(stale);
+  console.log('[Forwarder] Purge: ' + stale.length + ' commande(s) non payee(s) > ' +
+              days + 'j supprimee(s)');
+  return { purged: stale.length, orders: stale };
+}
+
 function deleteOrder(redeemId) {
   db.prepare('DELETE FROM pending_orders WHERE redeem_id = ?').run(redeemId);
 }
@@ -572,6 +599,11 @@ async function init() {
   walletKey     = key;
   walletAddress = process.env.VPS_WALLET_ADDRESS || ethers.computeAddress(key);
 
+  purgeStaleOrders();
+  setInterval(() => {
+    try { purgeStaleOrders(); } catch (e) { console.error('[Forwarder] purge:', e.message); }
+  }, 24 * 60 * 60 * 1000);
+
   const nPending = db.prepare('SELECT COUNT(*) AS n FROM pending_orders').get().n;
   if (nPending) console.log('[Forwarder] ' + nPending + ' ordre(s) en attente en DB');
 
@@ -644,6 +676,7 @@ function getRecentTxs(limit = 50) {
 module.exports = {
   init, addOrder, getAddress, getBalance,
   manualForward, getPendingOrders, getOrphanPayments, getRecentTxs,
+  purgeStaleOrders, getStaleOrders,
   buildUniqueClientAmount,
   sendPol, getPolBalance, getUsdtBalance,
   PAYOUT_THRESHOLD, PAYOUT_DAILY_CAP,

@@ -2160,9 +2160,12 @@ app.get('/rates', async (req, res) => {
 //   can never interleave: a balance can't go negative.
 // - Writes carry an idempotency key: an agent tapping "Créditer" twice on a
 //   bad connection credits once.
-// - Each agent has their own token (only its sha256 is stored). What an agent
-//   credits, the agent owes Tarik; agent_settlements records what was paid
-//   back, and max_outstanding caps how far an agent can run ahead of paying.
+// - Each agent has their own token (only its sha256 is stored). Agents are
+//   PREPAID (Tarik, 2026-09-28: "l'agent me doit rien et j'avance pas de
+//   l'argent que je ne possède pas"): the agent pays Tarik first, Tarik loads
+//   that amount as the agent's provision (agent_settlements), and every client
+//   credit is taken from it. provision = paid - credited; max_outstanding is
+//   an optional overdraft, 0 by default (only Tarik's own agent account has one).
 // ---------------------------------------------------------------------------
 db.exec(`
   CREATE TABLE IF NOT EXISTS wallets (
@@ -2191,7 +2194,7 @@ db.exec(`
     phone                 TEXT,
     token_hash            TEXT NOT NULL UNIQUE,    -- sha256(token); the token is shown once
     active                INTEGER NOT NULL DEFAULT 1,
-    max_outstanding_cents INTEGER NOT NULL DEFAULT 20000,   -- 200 $ credited but not yet paid back
+    max_outstanding_cents INTEGER NOT NULL DEFAULT 0,       -- overdraft allowed beyond the prepaid provision
     created_at            TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS agent_settlements (
@@ -2326,10 +2329,11 @@ app.post('/wallet/logout', requireClient, (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /agent/me → who am I, how much I owe Tarik, my ceiling
+// GET /agent/me → who am I, my prepaid provision, what I can still credit
 app.get('/agent/me', requireAgent, (req, res) => {
-  const out = agentOutstandingCents(req.agent.id);
-  res.json({ id: req.agent.id, name: req.agent.name, outstandingUsd: fromCents(out),
+  const out = agentOutstandingCents(req.agent.id);            // credited - paid
+  res.json({ id: req.agent.id, name: req.agent.name, provisionUsd: fromCents(-out),
+             outstandingUsd: fromCents(Math.max(0, out)),
              maxOutstandingUsd: fromCents(req.agent.max_outstanding_cents),
              availableUsd: fromCents(Math.max(0, req.agent.max_outstanding_cents - out)) });
 });
@@ -2356,8 +2360,9 @@ app.post('/agent/wallet/credit', requireAgent, (req, res) => {
   // Ceiling check is outside walletApply, so an idempotent replay is let through first.
   const prev = db.prepare('SELECT * FROM wallet_ledger WHERE idem_key = ?').get(`agent:${req.agent.id}:${idem}`);
   if (!prev && agentOutstandingCents(req.agent.id) + cents > req.agent.max_outstanding_cents) {
-    return res.status(403).json({ error: 'Plafond atteint : règle ce que tu dois à Tchipa avant de créditer plus.',
-                                  outstandingUsd: fromCents(agentOutstandingCents(req.agent.id)) });
+    return res.status(403).json({ error: 'Provision insuffisante : recharge ta provision auprès de Tchipa.',
+                                  availableUsd: fromCents(Math.max(0, req.agent.max_outstanding_cents
+                                                                  - agentOutstandingCents(req.agent.id))) });
   }
   try {
     const { row, replay } = walletApply({ phone, deltaCents: cents, kind: 'agent_credit', agentId: req.agent.id,
@@ -2383,8 +2388,8 @@ app.get('/agent/credits', requireAgent, (req, res) => {
 app.post('/admin/agents', (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name requis' });
-  const max = req.body?.maxOutstandingUsd != null ? toCents(req.body.maxOutstandingUsd) : 20000;
-  if (!max) return res.status(400).json({ error: 'maxOutstandingUsd invalide' });
+  const max = req.body?.maxOutstandingUsd != null ? toCents(req.body.maxOutstandingUsd) : 0;
+  if (max === null) return res.status(400).json({ error: 'maxOutstandingUsd invalide' });
   const token = 'agt_' + randomBytes(24).toString('hex');
   const info = db.prepare('INSERT INTO agents (name, phone, token_hash, max_outstanding_cents) VALUES (?, ?, ?, ?)')
     .run(name, normalizePhone(req.body?.phone) || null, sha256(token), max);
@@ -2395,19 +2400,20 @@ app.post('/admin/agents', (req, res) => {
 app.get('/admin/agents', (req, res) => {
   const rows = db.prepare('SELECT id, name, phone, active, max_outstanding_cents, created_at FROM agents').all();
   res.json({ agents: rows.map(a => ({ id: a.id, name: a.name, phone: a.phone, active: !!a.active,
-    outstandingUsd: fromCents(agentOutstandingCents(a.id)), maxOutstandingUsd: fromCents(a.max_outstanding_cents),
+    provisionUsd: fromCents(-agentOutstandingCents(a.id)), maxOutstandingUsd: fromCents(a.max_outstanding_cents),
     createdAt: a.created_at })) });
 });
 
-// POST /admin/agents/:id/settle { amountUsd, note? } → the agent paid Tarik back
-app.post('/admin/agents/:id/settle', (req, res) => {
+// POST /admin/agents/:id/provision { amountUsd, note? } → the agent paid Tarik: load their provision
+// (/settle kept as an alias for the first version of this route)
+app.post(['/admin/agents/:id/provision', '/admin/agents/:id/settle'], (req, res) => {
   const id = parseInt(req.params.id, 10);
   const cents = toCents(req.body?.amountUsd);
   if (!db.prepare('SELECT 1 FROM agents WHERE id = ?').get(id)) return res.status(404).json({ error: 'Agent introuvable' });
   if (!cents) return res.status(400).json({ error: 'amountUsd invalide' });
   db.prepare('INSERT INTO agent_settlements (agent_id, amount_cents, note) VALUES (?, ?, ?)')
     .run(id, cents, req.body?.note ? String(req.body.note).slice(0, 200) : null);
-  res.json({ ok: true, outstandingUsd: fromCents(agentOutstandingCents(id)) });
+  res.json({ ok: true, provisionUsd: fromCents(-agentOutstandingCents(id)) });
 });
 
 // POST /admin/agents/:id/active { active: bool } → block / unblock an agent

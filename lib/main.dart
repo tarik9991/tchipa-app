@@ -9697,8 +9697,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
 // ── Espace agent : créditer le solde d'un client ─────────────────────────
 // Replaces the shared PIN 1234 for money operations: each agent has a personal
-// code (created by Tarik via POST /admin/agents). What an agent credits, the
-// agent owes Tarik; the server refuses credits past the agent's ceiling.
+// code (created by Tarik via POST /admin/agents). Agents are prepaid: they pay
+// Tarik first, Tarik loads their provision, and each client credit is taken
+// from it — the server refuses a credit larger than the remaining provision.
 class AgentWalletScreen extends StatefulWidget {
   const AgentWalletScreen({super.key});
   @override
@@ -9826,10 +9827,10 @@ class _AgentWalletScreenState extends State<AgentWalletScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${_me!['name']}', style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
-                Text('À reverser à Tchipa : ${_usd(_me!['outstandingUsd'] as num)}',
-                    style: TextStyle(color: AppColors.sublabel)),
-                Text('Tu peux encore créditer : ${_usd(_me!['availableUsd'] as num)}',
-                    style: TextStyle(color: AppColors.sublabel)),
+                Text('Ma provision : ${_usd(_me!['availableUsd'] as num)}',
+                    style: const TextStyle(color: Color(0xFF12B76A), fontSize: 16, fontWeight: FontWeight.w700)),
+                Text('Chaque crédit client est pris sur ta provision. Pour la recharger, paie Tchipa.',
+                    style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
               ]),
             ),
           const SizedBox(height: 18),

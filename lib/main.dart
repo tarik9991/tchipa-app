@@ -9376,7 +9376,9 @@ class _CartScreenState extends State<CartScreen> {
                 style: TextStyle(color: AppColors.inputFg), decoration: _field('Téléphone pour le livreur')),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
-              initialValue: _wilaya,
+              // `value`, not `initialValue`: CI's Flutter predates initialValue.
+              // ignore: deprecated_member_use
+              value: _wilaya,
               isExpanded: true,
               dropdownColor: AppColors.surface,
               style: TextStyle(color: AppColors.inputFg),

@@ -2522,33 +2522,61 @@ function parseVariant(name) {
   return o;
 }
 const productCard = p => ({
-  id: p.item_id, title: productTitle(p), category: p.categorie,
+  id: p.item_id, title: productTitle(p), category: p.categorie, sub: p.sous_categorie || null,
   image: (JSON.parse(p.images || '[]')[0]) || null,
-  priceFrom: p.prix_des_usd, priceTo: p.prix_max_usd,
+  priceFrom: p.prix_des_usd, priceTo: p.prix_max_usd, sold: p.ventes_n || 0,
 });
+// Sub-categories (sous_categorie) and 1688 sales (ventes_n) are computed offline by
+// ~/tchipa-boutique/classer.py. Older catalogue files may lack them: checked once.
+let catHasSubs = null;
+function hasSubs() {
+  if (catHasSubs === null && cat()) {
+    catHasSubs = cat().prepare('PRAGMA table_info(produits)').all().some(c => c.name === 'sous_categorie');
+  }
+  return !!catHasSubs;
+}
+const SHOP_MIN_SUB = 12;   // smaller sub-categories stay reachable under "Tout"
+const SHOP_SORTS = {
+  pop: 'ventes_n DESC, rowid', price_asc: 'prix_des_usd ASC, rowid', price_desc: 'prix_des_usd DESC, rowid',
+};
 
-// GET /shop/categories
+// GET /shop/categories → [{name, count, image, subs:[{name, count, image}]}]
 app.get('/shop/categories', (req, res) => {
   if (!cat()) return res.json({ categories: [] });
   const counts = Object.fromEntries(cat().prepare('SELECT categorie c, COUNT(*) n FROM produits GROUP BY 1').all()
                                       .map(r => [r.c, r.n]));
-  res.json({ categories: SHOP_CATEGORIES.filter(c => counts[c]).map(c => ({ name: c, count: counts[c] })) });
+  const cover = (where, args) => {
+    const r = cat().prepare(`SELECT images FROM produits WHERE ${where} ORDER BY ${hasSubs() ? 'ventes_n DESC' : 'rowid'} LIMIT 1`).get(...args);
+    return r ? (JSON.parse(r.images || '[]')[0] || null) : null;
+  };
+  res.json({ categories: SHOP_CATEGORIES.filter(c => counts[c]).map(c => ({
+    name: c, count: counts[c], image: cover('categorie = ?', [c]),
+    subs: hasSubs()
+      ? cat().prepare(`SELECT sous_categorie s, COUNT(*) n FROM produits WHERE categorie = ? AND sous_categorie IS NOT NULL
+                       GROUP BY 1 HAVING n >= ? ORDER BY n DESC`).all(c, SHOP_MIN_SUB)
+          .map(r => ({ name: r.s, count: r.n, image: cover('categorie = ? AND sous_categorie = ?', [c, r.s]) }))
+      : [],
+  })) });
 });
 
-// GET /shop/products?category=&q=&page=1  → 20 per page, best sellers first (import order)
+// GET /shop/products?category=&sub=&q=&sort=pop|price_asc|price_desc&max=&page=1  → 20 per page
 app.get('/shop/products', (req, res) => {
   if (!cat()) return res.json({ items: [], hasMore: false });
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const where = [], args = [];
   if (req.query.category) { where.push('categorie = ?'); args.push(String(req.query.category)); }
+  if (req.query.sub && hasSubs()) { where.push('sous_categorie = ?'); args.push(String(req.query.sub)); }
+  const max = parseFloat(req.query.max);
+  if (max > 0) { where.push('prix_des_usd <= ?'); args.push(max); }
   const q = String(req.query.q || '').trim().slice(0, 60);
   if (q) {
     for (const w of q.split(/\s+/).slice(0, 5)) {
       where.push('(titre_fr LIKE ? OR titre_en LIKE ?)'); args.push(`%${w}%`, `%${w}%`);
     }
   }
+  const order = hasSubs() ? (SHOP_SORTS[req.query.sort] || SHOP_SORTS.pop) : 'rowid';
   const rows = cat().prepare(`SELECT * FROM produits ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-                              ORDER BY rowid LIMIT ? OFFSET ?`).all(...args, SHOP_PAGE + 1, (page - 1) * SHOP_PAGE);
+                              ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, SHOP_PAGE + 1, (page - 1) * SHOP_PAGE);
   res.json({ items: rows.slice(0, SHOP_PAGE).map(productCard), hasMore: rows.length > SHOP_PAGE, page });
 });
 

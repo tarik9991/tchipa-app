@@ -3,306 +3,22 @@ import 'dart:async';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:share_plus/share_plus.dart';
 
 // ============================================
 // CONFIGURATION
 // ============================================
 const String kVpsBase       = 'https://api.tchipa.co.uk';
-const double kExchangeRate  = 242.0;
-const double kActivationFee = 7.0;
 const String kAgentTelegram = 'https://t.me/c/3983752002/1';
+const double kExchangeRate  = 242.0;
 
-// ============================================
-// VCC CARD MODEL
-// ============================================
-class VccCard {
-  final String? cardId;
-  final String? cardNumber;
-  final String? expiry;
-  final String? cvv;
-  final String? holderName;
-  final double balance;
-  final bool isActivated;
-  final String? redeemId;
-  final String? redeemLink;
-
-  const VccCard({
-    this.cardId,
-    this.cardNumber,
-    this.expiry,
-    this.cvv,
-    this.holderName,
-    this.balance = 0.0,
-    this.isActivated = false,
-    this.redeemId,
-    this.redeemLink,
-  });
-
-  bool get hasCard =>
-      (cardNumber != null && cardNumber!.isNotEmpty) || redeemLink != null;
-
-  String get maskedNumber {
-    if (cardNumber == null || cardNumber!.isEmpty) return '•••• •••• •••• ••••';
-    final n = cardNumber!.replaceAll(RegExp(r'[\s\-]'), '');
-    if (n.length != 16) return cardNumber!;
-    return '•••• •••• •••• ${n.substring(12)}';
-  }
-
-  String get formattedNumber {
-    if (cardNumber == null || cardNumber!.isEmpty) return '•••• •••• •••• ••••';
-    final n = cardNumber!.replaceAll(RegExp(r'[\s\-]'), '');
-    if (n.length != 16) return cardNumber!;
-    return '${n.substring(0, 4)} ${n.substring(4, 8)} '
-        '${n.substring(8, 12)} ${n.substring(12)}';
-  }
-
-  Map<String, dynamic> toJson() => {
-        'cardId': cardId,
-        'cardNumber': cardNumber,
-        'expiry': expiry,
-        'cvv': cvv,
-        'holderName': holderName,
-        'balance': balance,
-        'isActivated': isActivated,
-        'redeemId': redeemId,
-        'redeemLink': redeemLink,
-      };
-
-  factory VccCard.fromJson(Map<String, dynamic> j) => VccCard(
-        cardId: j['cardId']?.toString() ??
-            j['card_id']?.toString() ??
-            j['id']?.toString(),
-        cardNumber: j['cardNumber']?.toString() ??
-            j['card_number']?.toString() ??
-            j['number']?.toString(),
-        expiry: j['expiry']?.toString() ??
-            j['expiration']?.toString() ??
-            j['exp']?.toString(),
-        cvv: j['cvv']?.toString() ?? j['cvc']?.toString(),
-        holderName: j['holderName']?.toString() ??
-            j['holder_name']?.toString() ??
-            j['name']?.toString(),
-        balance: (j['balance'] as num?)?.toDouble() ?? 0.0,
-        isActivated: j['isActivated'] as bool? ??
-            j['is_activated'] as bool? ??
-            false,
-        redeemId: j['redeemId']?.toString(),
-        redeemLink: j['redeemLink']?.toString(),
-      );
-
-  VccCard copyWith({
-    String? cardId,
-    String? cardNumber,
-    String? expiry,
-    String? cvv,
-    String? holderName,
-    double? balance,
-    bool? isActivated,
-    String? redeemId,
-    String? redeemLink,
-  }) =>
-      VccCard(
-        cardId: cardId ?? this.cardId,
-        cardNumber: cardNumber ?? this.cardNumber,
-        expiry: expiry ?? this.expiry,
-        cvv: cvv ?? this.cvv,
-        holderName: holderName ?? this.holderName,
-        balance: balance ?? this.balance,
-        isActivated: isActivated ?? this.isActivated,
-        redeemId: redeemId ?? this.redeemId,
-        redeemLink: redeemLink ?? this.redeemLink,
-      );
-
-  static Future<VccCard?> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('vcc_card');
-    if (raw == null) return null;
-    try {
-      return VccCard.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vcc_card', jsonEncode(toJson()));
-  }
-
-  static Future<void> remove() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('vcc_card');
-  }
-}
-
-// ============================================
-// VCC ORDER (pending crypto payment)
-// ============================================
-class VccOrder {
-  // For self-serve: the redeem_id returned by PayGate, used to poll
-  // /paygate/check-status. For agent flow: empty — the agent app must use
-  // agentOrderToken instead (backend deliberately hides the redeem_id from
-  // agents).
-  final String redeemId;
-  final String cryptoAddress;
-  final String amountUsdt;
-  final String? qrCodeBase64;
-  final double cardValue;
-  final String cardType;
-  // Agent-flow only: opaque UUID the agent uses to poll order status without
-  // ever learning the underlying redeem_id.
-  final String? agentOrderToken;
-  // Agent-flow only: 4-digit secret returned by the backend on creation.
-  // Agent must relay it out-of-band (Telegram, SMS, voice) so the user's
-  // app can unlock the redeem link via /cards/claim-with-code.
-  final String? claimCode;
-
-  const VccOrder({
-    required this.redeemId,
-    required this.cryptoAddress,
-    required this.amountUsdt,
-    required this.cardValue,
-    required this.cardType,
-    this.qrCodeBase64,
-    this.agentOrderToken,
-    this.claimCode,
-  });
-
-  factory VccOrder.fromJson(Map<String, dynamic> j) => VccOrder(
-        redeemId:        j['redeemId']?.toString() ?? '',
-        cryptoAddress:   j['cryptoAddress']?.toString() ?? '',
-        amountUsdt:      j['amountUsdt']?.toString() ?? '0',
-        cardValue:       (j['cardValue'] as num?)?.toDouble() ?? 0.0,
-        cardType:        j['cardType']?.toString() ?? 'mastercard',
-        qrCodeBase64:    j['qrCode']?.toString(),
-        agentOrderToken: j['agentOrderToken']?.toString(),
-        claimCode:       j['claimCode']?.toString(),
-      );
-
-  Map<String, dynamic> toJson() => {
-        'redeemId':        redeemId,
-        'cryptoAddress':   cryptoAddress,
-        'amountUsdt':      amountUsdt,
-        'cardValue':       cardValue,
-        'cardType':        cardType,
-        'qrCode':          qrCodeBase64,
-        'agentOrderToken': agentOrderToken,
-        'claimCode':       claimCode,
-      };
-
-  // Pending order persistence — one slot per flow ('activation'|'recharge')
-  // to prevent the duplicate-redeem_id bug: opening the sheet again restores
-  // the existing order instead of creating a new PayGate redeem_id that the
-  // app would then poll while the actual payment lives under the old one.
-  static const _kPendingPrefix    = 'pending_vcc_';
-  static const _kPendingExpiryHrs = 24;
-
-  static String _key(String flow) => '$_kPendingPrefix$flow';
-
-  Future<void> savePending(String flow) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key(flow), jsonEncode({
-      ...toJson(),
-      'createdAt': DateTime.now().toIso8601String(),
-    }));
-  }
-
-  static Future<VccOrder?> loadPending(String flow) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_key(flow));
-    if (raw == null) return null;
-    try {
-      final j = jsonDecode(raw) as Map<String, dynamic>;
-      final created = DateTime.tryParse(j['createdAt']?.toString() ?? '');
-      if (created != null &&
-          DateTime.now().difference(created).inHours > _kPendingExpiryHrs) {
-        await clearPending(flow);
-        return null;
-      }
-      return VccOrder.fromJson(j);
-    } catch (_) {
-      await clearPending(flow);
-      return null;
-    }
-  }
-
-  static Future<void> clearPending(String flow) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_key(flow));
-  }
-}
-
-// ============================================
-// TRANSACTION MODEL
-// ============================================
-class VccTx {
-  final String type;
-  final double amount;
-  final String label;
-  final DateTime date;
-  final bool isDebit;
-
-  const VccTx({
-    required this.type,
-    required this.amount,
-    required this.label,
-    required this.date,
-    this.isDebit = false,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'type': type,
-        'amount': amount,
-        'label': label,
-        'date': date.toIso8601String(),
-        'isDebit': isDebit,
-      };
-
-  factory VccTx.fromJson(Map<String, dynamic> j) => VccTx(
-        type: j['type'] as String? ?? 'payment',
-        amount: (j['amount'] as num?)?.toDouble() ?? 0.0,
-        label: j['label'] as String? ?? '',
-        date: DateTime.tryParse(j['date'] as String? ?? '') ??
-            DateTime.now(),
-        isDebit: j['isDebit'] as bool? ?? false,
-      );
-
-  static Future<List<VccTx>> loadAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    return (prefs.getStringList('vcc_txs') ?? [])
-        .map((s) {
-          try {
-            return VccTx.fromJson(
-                jsonDecode(s) as Map<String, dynamic>);
-          } catch (_) {
-            return null;
-          }
-        })
-        .whereType<VccTx>()
-        .toList();
-  }
-
-  static Future<void> add(VccTx tx) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList('vcc_txs') ?? [];
-    list.insert(0, jsonEncode(tx.toJson()));
-    await prefs.setStringList('vcc_txs', list.take(100).toList());
-  }
-}
-
-// ============================================
-// USER PROFILE
-// ============================================
 class UserProfile {
   static String name = '';
   static String phone = '';
@@ -349,7 +65,7 @@ class PinSetup {
     // Reconcile with backend: maybe this device reinstalled and the PIN
     // is already set on this phone server-side.
     try {
-      final status = await PayGateService.authPinStatus(phone);
+      final status = await PinApi.authPinStatus(phone);
       if (status.exists && status.verified) {
         UserProfile.pinSet = true;
         await UserProfile.save();
@@ -368,7 +84,7 @@ class PinSetup {
 
     if (!context.mounted) return false;
     try {
-      await PayGateService.authSetupPin(phone: phone, email: email, pin: pin);
+      await PinApi.authSetupPin(phone: phone, email: email, pin: pin);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -419,7 +135,7 @@ class PinSetup {
           }
           setDlg(() { busy = true; errorMsg = null; });
           try {
-            await PayGateService.authChangePin(phone: phone, oldPin: oldPin, newPin: newPin);
+            await PinApi.authChangePin(phone: phone, oldPin: oldPin, newPin: newPin);
             if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
           } catch (e) {
             setDlg(() { busy = false; errorMsg = e.toString().replaceFirst('Exception: ', ''); });
@@ -536,7 +252,7 @@ class PinSetup {
         Future<void> checkNow() async {
           setDlg(() { busy = true; errorMsg = null; });
           try {
-            final s = await PayGateService.authPinStatus(phone);
+            final s = await PinApi.authPinStatus(phone);
             if (s.exists && s.verified) {
               verified = true;
               if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
@@ -549,7 +265,7 @@ class PinSetup {
         }
         pollTimer ??= Timer.periodic(const Duration(seconds: 4), (_) async {
           try {
-            final s = await PayGateService.authPinStatus(phone);
+            final s = await PinApi.authPinStatus(phone);
             if (s.exists && s.verified) {
               verified = true;
               pollTimer?.cancel();
@@ -616,174 +332,9 @@ class PinSetup {
 }
 
 // ============================================
-// PAYGATE SERVICE
+// PIN API (/auth/*) — PIN du solde Tchipa
 // ============================================
-class PayGateService {
-  static Future<VccOrder> createVccOrder({
-    required double amount,
-    String cardType = 'mastercard',
-    String? holderName,
-    String? phone,
-    String? flow, // 'activation' | 'recharge' — only meaningful when phone is set (agent flow)
-    String? source, // 'self' (user pays own card) | 'agent' (agent issues for a client)
-    String? clientEmail, // agent flow: must match the client's verified email
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/paygate/create-vcc'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'amount': amount,
-            'cardType': cardType,
-            'holderName': holderName,
-            'phone': phone,
-            if (flow != null) 'flow': flow,
-            if (source != null) 'source': source,
-            if (clientEmail != null) 'clientEmail': clientEmail,
-          }),
-        )
-        .timeout(const Duration(seconds: 35));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200 || resp.statusCode == 201) {
-      return VccOrder.fromJson(body);
-    }
-    // Backend uses `message` for human-readable details (CLIENT_NO_PIN etc.)
-    final err = body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur PayGate (${resp.statusCode})';
-    throw Exception(err);
-  }
-
-  static Future<Map<String, dynamic>> checkVccStatus(String redeemId) async {
-    final resp = await http
-        .get(Uri.parse(
-            '$kVpsBase/paygate/check-status?redeem_id=${Uri.encodeComponent(redeemId)}'))
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) return body;
-    throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
-  }
-
-  // Agent-side: coarse state only, NO redeem_link (anti-card-theft). Uses
-  // an opaque token rather than redeem_id — the agent never learns the
-  // underlying redeem_id, so they can't bypass the gate by hitting
-  // /paygate/check-status directly.
-  // Returns: { state: 'pending'|'paid'|'completed', isPaid, isReady, delivered }
-  static Future<Map<String, dynamic>> checkAgentOrderStatus(String token) async {
-    final resp = await http
-        .get(Uri.parse(
-            '$kVpsBase/agent/order-status?token=${Uri.encodeComponent(token)}'))
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) return body;
-    throw Exception(body['error'] ?? 'Erreur statut (${resp.statusCode})');
-  }
-
-  // Client-side: discover any cards issued for this phone by an agent.
-  static Future<List<Map<String, dynamic>>> fetchCardsForPhone(String phone) async {
-    final resp = await http
-        .get(Uri.parse('$kVpsBase/cards/for-phone/${Uri.encodeComponent(phone)}'))
-        .timeout(const Duration(seconds: 30));
-    if (resp.statusCode != 200) {
-      throw Exception('fetchCardsForPhone failed (${resp.statusCode})');
-    }
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    final list = (body['cards'] as List? ?? [])
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-    return list;
-  }
-
-  // Client-side: unlock the redeem link for a code-gated agent card.
-  // Returns (redeemLink, redeemId) on success — the redeemId is needed so the
-  // client can later mark the card as delivered. Throws on bad code / lockout
-  // / not-ready with a human-readable French error from the backend.
-  static Future<({String redeemLink, String redeemId})> claimCardWithCode({
-    required String phone,
-    required String cardToken,
-    required String code,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/cards/claim-with-code'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'phone': phone,
-            'card_token': cardToken,
-            'code': code,
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) {
-      final link = body['redeemLink']?.toString();
-      final rid  = body['redeemId']?.toString();
-      if (link == null || link.isEmpty || rid == null || rid.isEmpty) {
-        throw Exception('Lien de carte indisponible');
-      }
-      return (redeemLink: link, redeemId: rid);
-    }
-    throw Exception(body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  static Future<void> markCardDelivered(String redeemId) async {
-    try {
-      await http
-          .post(Uri.parse('$kVpsBase/cards/mark-delivered'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'redeem_id': redeemId}))
-          .timeout(const Duration(seconds: 10));
-    } catch (_) {
-      // Non-fatal: a missed mark just means the client may re-fetch the same
-      // card on the next poll. Local dedup by redeemId catches it.
-    }
-  }
-
-  static Future<double> fetchBalance(String cardId) async => 0.0;
-
-  // ----- /referral/* — affiliate program (1% of referred activations) -----
-
-  // My code, my referral count, and my earnings totals + recent rows.
-  static Future<Map<String, dynamic>> referralSummary(String phone) async {
-    final resp = await http
-        .get(Uri.parse('$kVpsBase/referral/summary/${Uri.encodeComponent(phone)}'))
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) return body;
-    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // "I was referred by <code>." Set once, immutable afterwards.
-  static Future<void> referralClaim({required String phone, required String code}) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/referral/claim'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'phone': phone, 'code': code}),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode == 200) return;
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // Register/update the Polygon USDT address where earnings are auto-paid.
-  // PIN-gated server-side (reuses the client's own verified PIN).
-  static Future<void> setPayoutAddress({
-    required String phone,
-    required String pin,
-    required String address,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/referral/set-payout-address'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'phone': phone, 'pin': pin, 'address': address}),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode == 200) return;
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    throw Exception(body['message']?.toString() ?? body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
+class PinApi {
   // ----- /auth/* — PIN setup + email magic-link -----
 
   // Triggers a magic-link email. The backend stores the PIN hash immediately
@@ -843,341 +394,8 @@ class PayGateService {
     if (resp.statusCode == 200) return;
     throw Exception(body['error']?.toString() ?? 'Erreur changement PIN (${resp.statusCode})');
   }
-
-  // Client-side: unlock a PIN-gated card. PIN is the client's own secret,
-  // never seen by the agent.
-  // Returns EITHER a redeemLink (provider-hosted page, the PayGate shape) OR
-  // raw card data (manual issuance when the provider gives no link). The
-  // backend hands card data over exactly once and wipes it, so the caller must
-  // persist it locally on the spot — a second call will not return it again.
-  static Future<({String? redeemLink, String redeemId, Map<String, dynamic>? card})>
-      claimCardWithPin({
-    required String phone,
-    required String cardToken,
-    required String pin,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/cards/claim-with-pin'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'phone': phone, 'card_token': cardToken, 'pin': pin}),
-        )
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) {
-      final link = body['redeemLink']?.toString();
-      final rid  = body['redeemId']?.toString();
-      final card = body['card'] is Map
-          ? Map<String, dynamic>.from(body['card'] as Map)
-          : null;
-      if (rid == null || rid.isEmpty) throw Exception('Réponse incomplète du serveur');
-      if ((link == null || link.isEmpty) && card == null) {
-        throw Exception('Carte indisponible');
-      }
-      return (redeemLink: (link != null && link.isNotEmpty) ? link : null,
-              redeemId: rid, card: card);
-    }
-    throw Exception(body['message']?.toString() ??
-        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // ── Manual issuance (agent) ────────────────────────────────────────────
-  // Used when no provider API is available — the agent buys the card by hand
-  // on whatever dashboard is alive and records it here. Prefer cardLink; only
-  // send pan/cvv/exp when the provider gives no shareable link.
-  static Future<Map<String, dynamic>> manualIssue({
-    required String phone,
-    required double amountUsd,
-    String? flow,
-    String? provider,
-    String? cardLink,
-    String? pan,
-    String? cvv,
-    String? exp,
-    String? holderName,
-    String? issuedBy,
-    String? providerCardId,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/cards/manual-issue'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'phone': phone,
-            'amountUsd': amountUsd,
-            if (flow != null) 'flow': flow,
-            if (provider != null) 'provider': provider,
-            if (providerCardId != null && providerCardId.isNotEmpty)
-              'providerCardId': providerCardId,
-            if (cardLink != null && cardLink.isNotEmpty) 'cardLink': cardLink,
-            if (pan != null && pan.isNotEmpty) 'pan': pan,
-            if (cvv != null && cvv.isNotEmpty) 'cvv': cvv,
-            if (exp != null && exp.isNotEmpty) 'exp': exp,
-            if (holderName != null) 'holderName': holderName,
-            if (issuedBy != null) 'issuedBy': issuedBy,
-          }),
-        )
-        .timeout(const Duration(seconds: 25));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) return body;
-    throw Exception(body['message']?.toString() ??
-        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // Agent: a client's cards plus the upstream id needed to top each one up.
-  // Never returns redeem_link or card data — the agent has no business reading
-  // either, same rule as the automated path.
-  static Future<List<Map<String, dynamic>>> fetchClientCards(String phone) async {
-    final resp = await http
-        .get(Uri.parse('$kVpsBase/admin/client-cards?phone=${Uri.encodeComponent(phone)}'))
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode != 200) {
-      throw Exception(body['message']?.toString() ??
-          body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-    }
-    return (body['cards'] as List? ?? [])
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-  }
-
-  // Records a top-up the agent already performed upstream. The card in the
-  // client's hands is unchanged — this is bookkeeping, which is why a recharge
-  // costs only the deposit fee instead of a fresh issuance fee.
-  static Future<void> manualRecharge({
-    required String cardToken,
-    required double amountUsd,
-    String? providerCardId,
-    String? issuedBy,
-    String? note,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/cards/manual-recharge'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'cardToken': cardToken,
-            'amountUsd': amountUsd,
-            if (providerCardId != null && providerCardId.isNotEmpty)
-              'providerCardId': providerCardId,
-            if (issuedBy != null) 'issuedBy': issuedBy,
-            if (note != null) 'note': note,
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode == 200) return;
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    throw Exception(body['message']?.toString() ??
-        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // ── 3D Secure relay ────────────────────────────────────────────────────
-  // The OTP reaches the account owner, never the client's phone — inherent to
-  // reselling. The client asks here; the code arrives either from the Telegram
-  // bridge automatically or from the agent by hand.
-  static Future<int> request3ds({
-    required String phone,
-    required String cardToken,
-    String? merchant,
-  }) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/threeds/request'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'phone': phone,
-            'cardToken': cardToken,
-            if (merchant != null && merchant.isNotEmpty) 'merchant': merchant,
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    if (resp.statusCode == 200) return (body['requestId'] as num).toInt();
-    throw Exception(body['message']?.toString() ??
-        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
-
-  // Polled while the client waits. Also picks up codes the bridge delivered
-  // before the client even asked — the provider pushes as soon as the merchant
-  // challenges, which is usually first.
-  static Future<String?> fetch3dsCode({
-    required String phone,
-    required String cardToken,
-  }) async {
-    final uri = Uri.parse('$kVpsBase/threeds/latest'
-        '?phone=${Uri.encodeComponent(phone)}'
-        '&cardToken=${Uri.encodeComponent(cardToken)}');
-    final resp = await http.get(uri).timeout(const Duration(seconds: 15));
-    if (resp.statusCode != 200) return null;
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    return body['available'] == true ? body['code']?.toString() : null;
-  }
-
-  // Agent side: who is waiting, on which card, for how long.
-  static Future<List<Map<String, dynamic>>> fetch3dsPending() async {
-    final resp = await http
-        .get(Uri.parse('$kVpsBase/admin/threeds/pending'))
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode != 200) return [];
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    return (body['requests'] as List? ?? [])
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-  }
-
-  static Future<void> answer3ds({required int id, required String code}) async {
-    final resp = await http
-        .post(
-          Uri.parse('$kVpsBase/admin/threeds/answer'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'id': id, 'code': code}),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode == 200) return;
-    final body = jsonDecode(resp.body) as Map<String, dynamic>;
-    throw Exception(body['message']?.toString() ??
-        body['error']?.toString() ?? 'Erreur (${resp.statusCode})');
-  }
 }
 
-// ============================================
-// AGENT PIN (configurable, persisted)
-// ============================================
-class AgentPin {
-  static const _kKey = 'agent_pin';
-  static const _kDefault = '1234';
-
-  static Future<String> get() async {
-    final p = await SharedPreferences.getInstance();
-    return p.getString(_kKey) ?? _kDefault;
-  }
-
-  static Future<bool> isDefault() async => (await get()) == _kDefault;
-
-  static Future<void> set(String pin) async {
-    if (pin.length != 4 || !RegExp(r'^\d{4}$').hasMatch(pin)) {
-      throw Exception('Le PIN doit faire 4 chiffres');
-    }
-    final p = await SharedPreferences.getInstance();
-    await p.setString(_kKey, pin);
-  }
-}
-
-// ============================================
-// AGENT ORDER (in-progress order tracked by agent)
-// ============================================
-enum AgentOrderState { pending, paid, completed }
-
-class AgentOrder {
-  // Opaque token the backend issues. Replaces redeem_id in the agent surface
-  // so the agent cannot bypass /cards/claim-with-code by manually hitting
-  // /paygate/check-status with the redeem_id (which they no longer ever see).
-  final String agentOrderToken;
-  final String phone;
-  final String holderName;
-  final double amountUsd;
-  final String flow; // 'activation' | 'recharge'
-  final String cryptoAddress;
-  final String amountUsdt;
-  final DateTime createdAt;
-  final AgentOrderState state;
-  // 4-digit unlock code the agent must share with the user out-of-band.
-  // Persisted locally so the agent can re-read it after restart.
-  final String? claimCode;
-
-  const AgentOrder({
-    required this.agentOrderToken,
-    required this.phone,
-    required this.holderName,
-    required this.amountUsd,
-    required this.flow,
-    required this.cryptoAddress,
-    required this.amountUsdt,
-    required this.createdAt,
-    this.state = AgentOrderState.pending,
-    this.claimCode,
-  });
-
-  AgentOrder copyWith({AgentOrderState? state}) => AgentOrder(
-        agentOrderToken: agentOrderToken,
-        phone: phone,
-        holderName: holderName,
-        amountUsd: amountUsd,
-        flow: flow,
-        cryptoAddress: cryptoAddress,
-        amountUsdt: amountUsdt,
-        createdAt: createdAt,
-        state: state ?? this.state,
-        claimCode: claimCode,
-      );
-
-  Map<String, dynamic> toJson() => {
-        'agentOrderToken': agentOrderToken,
-        'phone': phone,
-        'holderName': holderName,
-        'amountUsd': amountUsd,
-        'flow': flow,
-        'cryptoAddress': cryptoAddress,
-        'amountUsdt': amountUsdt,
-        'createdAt': createdAt.toIso8601String(),
-        'state': state.name,
-        'claimCode': claimCode,
-      };
-
-  factory AgentOrder.fromJson(Map<String, dynamic> j) => AgentOrder(
-        agentOrderToken: j['agentOrderToken']?.toString() ?? '',
-        phone: j['phone']?.toString() ?? '',
-        holderName: j['holderName']?.toString() ?? '',
-        amountUsd: (j['amountUsd'] as num?)?.toDouble() ?? 0.0,
-        flow: j['flow']?.toString() ?? 'activation',
-        cryptoAddress: j['cryptoAddress']?.toString() ?? '',
-        amountUsdt: j['amountUsdt']?.toString() ?? '0',
-        createdAt: DateTime.tryParse(j['createdAt']?.toString() ?? '') ??
-            DateTime.now(),
-        state: AgentOrderState.values.firstWhere(
-          (e) => e.name == (j['state']?.toString() ?? 'pending'),
-          orElse: () => AgentOrderState.pending,
-        ),
-        claimCode: j['claimCode']?.toString(),
-      );
-
-  static const _kKey = 'agent_current_order';
-  static const _kExpiryHrs = 48;
-
-  Future<void> save() async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString(_kKey, jsonEncode(toJson()));
-  }
-
-  static Future<AgentOrder?> load() async {
-    final p = await SharedPreferences.getInstance();
-    final raw = p.getString(_kKey);
-    if (raw == null) return null;
-    try {
-      final order = AgentOrder.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-      if (DateTime.now().difference(order.createdAt).inHours > _kExpiryHrs) {
-        await clear();
-        return null;
-      }
-      return order;
-    } catch (_) {
-      await clear();
-      return null;
-    }
-  }
-
-  static Future<void> clear() async {
-    final p = await SharedPreferences.getInstance();
-    await p.remove(_kKey);
-  }
-}
-
-// ============================================
-// MAIN
-// ============================================
-// ============================================
-// APP SETTINGS (theme + language)
-// ============================================
 final ValueNotifier<bool>   darkModeNotifier = ValueNotifier(true);
 final ValueNotifier<String> langNotifier     = ValueNotifier('fr');
 
@@ -1883,8 +1101,7 @@ class _MainScreenState extends State<MainScreen> {
   static const _screens = [
     ShopScreen(),
     WalletScreen(),
-    HomeScreen(),
-    TransactionsScreen(),
+    OrdersScreen(),
     ProfileScreen(),
   ];
 
@@ -1893,7 +1110,7 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     if (UserProfile.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        setState(() => _idx = 4);
+        setState(() => _idx = 3);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Row(children: [
             const Icon(Icons.person_outline, color: Color(0xFF00D4FF)),
@@ -1938,11 +1155,10 @@ class _MainScreenState extends State<MainScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _NavPill(icon: Icons.storefront_rounded,   label: 'Boutique',   sel: _idx == 0, onTap: () => setState(() => _idx = 0)),
+                  _NavPill(icon: Icons.storefront_rounded,   label: 'Boutique',  sel: _idx == 0, onTap: () => setState(() => _idx = 0)),
                   _NavPill(icon: Icons.account_balance_wallet_rounded, label: 'Solde', sel: _idx == 1, onTap: () => setState(() => _idx = 1)),
-                  _NavPill(icon: Icons.credit_card_rounded,  label: 'Carte',      sel: _idx == 2, onTap: () => setState(() => _idx = 2)),
-                  _NavPill(icon: Icons.receipt_long_rounded, label: 'Historique', sel: _idx == 3, onTap: () => setState(() => _idx = 3)),
-                  _NavPill(icon: Icons.person_rounded,       label: 'Profil',     sel: _idx == 4, onTap: () => setState(() => _idx = 4)),
+                  _NavPill(icon: Icons.local_shipping_rounded, label: 'Commandes', sel: _idx == 2, onTap: () => setState(() => _idx = 2)),
+                  _NavPill(icon: Icons.person_rounded,       label: 'Profil',    sel: _idx == 3, onTap: () => setState(() => _idx = 3)),
                 ],
               ),
             ),
@@ -1993,3785 +1209,6 @@ class _NavPill extends StatelessWidget {
       ),
     );
   }
-}
-
-// ============================================
-// HOME SCREEN
-// ============================================
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen>
-    with TickerProviderStateMixin {
-  VccCard? _card;
-  bool _loading = true;
-  bool _showFull = false;
-  bool _refreshing = false;
-  // Card surfaced by an agent for this client's phone, ready to be redeemed.
-  // Kept distinct from _card so the user explicitly opts in (we never auto-overwrite
-  // an existing card on the device).
-  Map<String, dynamic>? _pendingAgentCard;
-  bool _pollingAgent = false;
-  List<Map<String, dynamic>> _rates = [];
-  String? _ratesDate;
-
-  late AnimationController _shimmerCtrl;
-  late AnimationController _glowCtrl;
-  late Animation<double> _glowAnim;
-  late AnimationController _bgCtrl;
-  // Subtle continuous spin for the Tchipa "T" mark in the app bar — slow
-  // enough to feel alive without distracting from the UI.
-  late AnimationController _logoSpinCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _shimmerCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 2))
-      ..repeat();
-    _glowCtrl = AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 1400))
-      ..repeat(reverse: true);
-    _glowAnim =
-        CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut);
-    _bgCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 8))
-      ..repeat(reverse: true);
-    _logoSpinCtrl = AnimationController(
-        vsync: this, duration: const Duration(seconds: 16))
-      ..repeat();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _shimmerCtrl.dispose();
-    _glowCtrl.dispose();
-    _bgCtrl.dispose();
-    _logoSpinCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    final card = await VccCard.load();
-    if (mounted) setState(() { _card = card; _loading = false; });
-    _pollAgentCards();
-    _loadRates();
-  }
-
-  // Parallel-market rates scraped by the backend from squareportsaid.com.
-  // Best-effort: a failure just leaves the rates card hidden.
-  Future<void> _loadRates() async {
-    try {
-      final resp = await http
-          .get(Uri.parse('$kVpsBase/rates'))
-          .timeout(const Duration(seconds: 15));
-      if (resp.statusCode != 200) return;
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
-      if (!mounted) return;
-      setState(() {
-        _rates = (j['rates'] as List).cast<Map<String, dynamic>>();
-        _ratesDate = j['date'] as String?;
-      });
-    } catch (_) {/* leave the card hidden */}
-  }
-
-  Future<void> _pollAgentCards() async {
-    if (_pollingAgent) return;
-    final phone = UserProfile.phone.trim();
-    if (phone.isEmpty) return;
-    _pollingAgent = true;
-    try {
-      final cards = await PayGateService.fetchCardsForPhone(phone);
-      // Locked cards come back with redeemId=null + cardToken set; unlocked
-      // rows have redeemId set. Filter out the one we've already locally
-      // claimed (matched by redeemId) and surface the next candidate.
-      final localRedeem = _card?.redeemId;
-      final candidate = cards.firstWhere(
-        (c) {
-          final cRedeem = c['redeemId']?.toString();
-          return !(cRedeem != null && localRedeem != null && cRedeem == localRedeem);
-        },
-        orElse: () => <String, dynamic>{},
-      );
-      if (candidate.isNotEmpty && mounted) {
-        setState(() => _pendingAgentCard = candidate);
-      }
-    } catch (_) {
-      // Silent — non-critical background poll.
-    } finally {
-      _pollingAgent = false;
-    }
-  }
-
-  Widget _buildAgentCardBanner() {
-    final c = _pendingAgentCard!;
-    final amt = (c['cardValue'] as num?)?.toStringAsFixed(0) ?? '?';
-    return GestureDetector(
-      onTap: _redeemAgentCard,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF22D3A1), Color(0xFF0EA47A)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-                color: const Color(0xFF22D3A1).withValues(alpha: 0.35),
-                blurRadius: 18, offset: const Offset(0, 6)),
-          ],
-        ),
-        child: Row(children: [
-          const Icon(Icons.card_giftcard_rounded, color: Colors.white, size: 28),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Une carte de \$$amt vous attend',
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 2),
-              const Text('Émise par un agent. Tapez pour récupérer.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12)),
-            ]),
-          ),
-          const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 26),
-        ]),
-      ),
-    );
-  }
-
-  Future<void> _redeemAgentCard() async {
-    final c = _pendingAgentCard;
-    if (c == null) return;
-    final cardToken    = c['cardToken']?.toString();
-    final holderName   = c['holderName']?.toString() ?? UserProfile.name;
-    final cardValue    = (c['cardValue'] as num?)?.toDouble() ?? 0.0;
-    final requiresPin  = c['requiresPin'] == true;
-    final requiresCode = c['requiresCode'] == true;
-
-    // Locked path: backend hid both redeemLink and redeemId. Two unlock paths:
-    //  - PIN flow (new): /cards/claim-with-pin with the user's own PIN.
-    //  - Code flow (legacy): /cards/claim-with-code with a 4-digit code the
-    //    agent shared out-of-band.
-    String? link     = c['redeemLink']?.toString();
-    String? redeemId = c['redeemId']?.toString();
-
-    if (requiresPin || requiresCode ||
-        link == null || link.isEmpty || redeemId == null || redeemId.isEmpty) {
-      final phone = UserProfile.phone.trim();
-      if (phone.isEmpty || cardToken == null || cardToken.isEmpty) return;
-      Map<String, dynamic>? manualCard;
-      if (requiresPin) {
-        final unlocked = await _promptPinAndFetch(
-            phone: phone, cardToken: cardToken, cardValue: cardValue);
-        if (unlocked == null) return; // cancelled or kept failing
-        link = unlocked.redeemLink;
-        redeemId = unlocked.redeemId;
-        manualCard = unlocked.card;
-      } else {
-        final unlocked = await _promptClaimCodeAndFetch(
-            phone: phone, cardToken: cardToken, cardValue: cardValue);
-        if (unlocked == null) return;
-        link = unlocked.redeemLink;
-        redeemId = unlocked.redeemId;
-      }
-
-      // Manually-issued card with no provider page: the data came back once
-      // and is now gone server-side, so persist and show it immediately.
-      if (manualCard != null) {
-        final card = VccCard(
-          cardId: redeemId,
-          redeemId: redeemId,
-          redeemLink: '',
-          balance: cardValue,
-          isActivated: true,
-          holderName: holderName,
-        );
-        await card.save();
-        if (mounted) setState(() { _card = card; _pendingAgentCard = null; });
-        try { await PayGateService.markCardDelivered(redeemId); } catch (_) {}
-        if (!mounted) return;
-        await showModalBottomSheet<void>(
-          context: context,
-          backgroundColor: Colors.transparent,
-          isScrollControlled: true,
-          builder: (_) => ManualCardSheet(
-            pan: manualCard!['pan']?.toString() ?? '',
-            cvv: manualCard['cvv']?.toString() ?? '',
-            exp: manualCard['exp']?.toString() ?? '',
-            holderName: holderName,
-            amount: cardValue,
-            phone: phone,
-            cardToken: cardToken,
-          ),
-        );
-        return;
-      }
-    }
-    if (link == null || link.isEmpty) return;
-
-    final base = VccCard(
-      cardId: redeemId,
-      redeemId: redeemId,
-      redeemLink: link,
-      balance: cardValue,
-      isActivated: true,
-      holderName: holderName,
-    );
-    await base.save();
-    if (mounted) setState(() { _card = base; _pendingAgentCard = null; });
-
-    if (!mounted) return;
-    final unlockedLink = link;
-    final unlockedRedeem = redeemId;
-    Navigator.push<void>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CardWebViewScreen(
-          url: unlockedLink,
-          title: 'Récupération carte…',
-          onCardData: (number, cvv, expiry) async {
-            final updated = base.copyWith(
-                cardNumber: number, cvv: cvv, expiry: expiry);
-            await updated.save();
-            await PayGateService.markCardDelivered(unlockedRedeem);
-            if (mounted) {
-              Navigator.of(context).pop();
-              setState(() => _card = updated);
-            }
-          },
-        ),
-      ),
-    );
-  }
-
-  // Prompts the user for their own Tchipa PIN (set at install via PinSetup),
-  // exchanges it via /cards/claim-with-pin. PIN is never shared with the
-  // agent, so even a malicious agent who has phone+card_token can't claim.
-  Future<({String? redeemLink, String redeemId, Map<String, dynamic>? card})?>
-      _promptPinAndFetch({
-    required String phone,
-    required String cardToken,
-    required double cardValue,
-  }) async {
-    final ctrl = TextEditingController();
-    String? errorMsg;
-    bool busy = false;
-    ({String? redeemLink, String redeemId, Map<String, dynamic>? card})? result;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
-        Future<void> submit() async {
-          final pin = ctrl.text.trim();
-          if (!RegExp(r'^\d{4,6}$').hasMatch(pin)) {
-            setDlg(() => errorMsg = 'PIN: 4 à 6 chiffres');
-            return;
-          }
-          setDlg(() { busy = true; errorMsg = null; });
-          try {
-            final unlocked = await PayGateService.claimCardWithPin(
-                phone: phone, cardToken: cardToken, pin: pin);
-            result = unlocked;
-            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-          } catch (e) {
-            final msg = e.toString().replaceFirst('Exception: ', '');
-            setDlg(() { busy = false; errorMsg = msg; });
-            if (msg.toLowerCase().contains('trop de tentatives')) {
-              await Future<void>.delayed(const Duration(seconds: 2));
-              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-            }
-          }
-        }
-        return AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: Text('Récupérer ta carte',
-              style: TextStyle(color: AppColors.label)),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(
-              'Une carte de \$${cardValue.toStringAsFixed(0)} t\'attend. '
-              'Entre ton PIN Tchipa pour la déverrouiller.',
-              style: TextStyle(color: AppColors.sublabel, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              enabled: !busy,
-              keyboardType: TextInputType.number,
-              obscureText: true,
-              textAlign: TextAlign.center,
-              maxLength: 6,
-              style: TextStyle(
-                  color: AppColors.inputFg,
-                  fontSize: 22,
-                  letterSpacing: 8,
-                  fontWeight: FontWeight.bold),
-              decoration: const InputDecoration(
-                counterText: '',
-                hintText: '••••',
-              ),
-              onSubmitted: (_) => submit(),
-            ),
-            if (errorMsg != null) ...[
-              const SizedBox(height: 8),
-              Text(errorMsg!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-            ],
-          ]),
-          actions: [
-            TextButton(
-              onPressed: busy ? null : () => Navigator.of(dialogCtx).pop(),
-              child: const Text('Annuler'),
-            ),
-            ElevatedButton(
-              onPressed: busy ? null : submit,
-              child: busy
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Valider'),
-            ),
-          ],
-        );
-      }),
-    );
-    return result;
-  }
-
-  // Prompts the user for the 4-digit unlock code the agent shared
-  // (Telegram/SMS), exchanges it via /cards/claim-with-code, and returns the
-  // redeem link. Returns null if the user cancels. Loops on wrong code until
-  // backend lockout (then closes with the lockout error).
-  Future<({String redeemLink, String redeemId})?> _promptClaimCodeAndFetch({
-    required String phone,
-    required String cardToken,
-    required double cardValue,
-  }) async {
-    final ctrl = TextEditingController();
-    String? errorMsg;
-    bool busy = false;
-    ({String redeemLink, String redeemId})? result;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogCtx) => StatefulBuilder(builder: (dialogCtx, setDlg) {
-        Future<void> submit() async {
-          final code = ctrl.text.trim();
-          if (code.length != 4 || int.tryParse(code) == null) {
-            setDlg(() => errorMsg = 'Code à 4 chiffres requis');
-            return;
-          }
-          setDlg(() { busy = true; errorMsg = null; });
-          try {
-            final unlocked = await PayGateService.claimCardWithCode(
-                phone: phone, cardToken: cardToken, code: code);
-            result = unlocked;
-            if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-          } catch (e) {
-            final msg = e.toString().replaceFirst('Exception: ', '');
-            setDlg(() { busy = false; errorMsg = msg; });
-            // Backend lockout — no point letting them retry.
-            if (msg.toLowerCase().contains('trop de tentatives')) {
-              await Future<void>.delayed(const Duration(seconds: 2));
-              if (dialogCtx.mounted) Navigator.of(dialogCtx).pop();
-            }
-          }
-        }
-        return AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: Text('Déverrouiller la carte',
-              style: TextStyle(color: AppColors.label)),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(
-              'Une carte de \$${cardValue.toStringAsFixed(0)} vous attend. '
-              'Entrez le code à 4 chiffres communiqué par votre agent.',
-              style: TextStyle(color: AppColors.sublabel, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              enabled: !busy,
-              keyboardType: TextInputType.number,
-              textAlign: TextAlign.center,
-              maxLength: 4,
-              style: TextStyle(
-                  color: AppColors.inputFg,
-                  fontSize: 22,
-                  letterSpacing: 8,
-                  fontWeight: FontWeight.bold),
-              decoration: const InputDecoration(
-                counterText: '',
-                hintText: '••••',
-              ),
-              onSubmitted: (_) => submit(),
-            ),
-            if (errorMsg != null) ...[
-              const SizedBox(height: 8),
-              Text(errorMsg!,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-            ],
-          ]),
-          actions: [
-            TextButton(
-              onPressed: busy ? null : () => Navigator.of(dialogCtx).pop(),
-              child: const Text('Annuler'),
-            ),
-            ElevatedButton(
-              onPressed: busy ? null : submit,
-              child: busy
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Valider'),
-            ),
-          ],
-        );
-      }),
-    );
-    return result;
-  }
-
-  Future<void> _refreshBalance() async {
-    // PayGate has no balance API for VCCs — their own response says
-    // "Consultez votre lien de carte PayGate pour le solde". The previous
-    // implementation called fetchBalance (hardcoded to 0.0) and wrote 0
-    // back to local storage, wiping the funded amount. We now just point
-    // the user to Swype.
-    _loadRates();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Text('Solde temps réel non disponible. Ouvre le lien Swype pour voir le solde actuel.'),
-      backgroundColor: AppColors.surface,
-      duration: const Duration(seconds: 4),
-    ));
-  }
-
-  void _showErr(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: Colors.redAccent,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12)),
-    ));
-  }
-
-  void _onActivated(VccCard card) {
-    setState(() => _card = card);
-    VccTx.add(VccTx(
-      type: 'activation',
-      amount: kActivationFee,
-      label: 'Activation carte VCC',
-      date: DateTime.now(),
-      isDebit: true,
-    ));
-  }
-
-  void _onRechargeDone(double amount) {
-    _load();
-    VccTx.add(VccTx(
-      type: 'recharge',
-      amount: amount,
-      label: 'Rechargement carte',
-      date: DateTime.now(),
-    ));
-  }
-
-  void _openActivation() {
-    if (UserProfile.isEmpty) {
-      _showErr('Complétez votre profil avant d\'activer');
-      return;
-    }
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ActivationSheet(
-        onActivated: (card) { Navigator.pop(context); _onActivated(card); },
-      ),
-    );
-  }
-
-  void _openRecharge() {
-    final card = _card;
-    if (card?.isActivated != true) return;
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _RechargeSheet(
-        card: card!,
-        onSuccess: (amt) { Navigator.pop(context); _onRechargeDone(amt); },
-      ),
-    );
-  }
-
-  void _openDetails() {
-    final card = _card;
-    if (card?.isActivated != true) return;
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _CardDetailsSheet(card: card!),
-    );
-  }
-
-  void _openCardLink() {
-    final card = _card;
-    final link = card?.redeemLink;
-    if (link == null) return;
-    bool extracted = false;
-    Navigator.push<void>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CardWebViewScreen(
-          url: link,
-          title: 'Récupération carte…',
-          onCardData: (number, cvv, expiry) async {
-            extracted = true;
-            final updated = card!.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
-            await updated.save();
-            if (mounted) Navigator.of(context).pop();
-          },
-        ),
-      ),
-    ).then((_) async {
-      if (!extracted || !mounted) return;
-      final latest = await VccCard.load();
-      if (!mounted) return;
-      if (latest != null) setState(() => _card = latest);
-      if (latest?.cardNumber != null) {
-        showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.transparent,
-          builder: (_) => _CardDetailsSheet(card: latest!),
-        );
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      body: Stack(children: [
-        // Animated mesh gradient background
-        AnimatedBuilder(
-          animation: _bgCtrl,
-          builder: (_, __) {
-            final t = _bgCtrl.value;
-            return Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment(-1 + t * 0.6, -1),
-                  end: Alignment(1 - t * 0.4, 1),
-                  colors: AppColors.isDark
-                      ? [
-                          Color.lerp(const Color(0xFF0D1117), const Color(0xFF0A1628), t)!,
-                          Color.lerp(const Color(0xFF0F1923), const Color(0xFF120820), t)!,
-                          Color.lerp(const Color(0xFF0D1117), const Color(0xFF0A1020), t)!,
-                        ]
-                      : [
-                          Color.lerp(const Color(0xFFEEF4FF), const Color(0xFFF5F0FF), t)!,
-                          Color.lerp(const Color(0xFFF0F5FF), const Color(0xFFEFF8FF), t)!,
-                          Color.lerp(const Color(0xFFF5F0FF), const Color(0xFFEEF4FF), t)!,
-                        ],
-                ),
-              ),
-            );
-          },
-        ),
-        // Cyan blob top-right
-        Positioned(
-          top: -80, right: -60,
-          child: AnimatedBuilder(
-            animation: _bgCtrl,
-            builder: (_, __) => Container(
-              width: 320, height: 320,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(colors: [
-                  const Color(0xFF00D4FF).withValues(alpha: (AppColors.isDark ? 0.10 : 0.18) + _bgCtrl.value * 0.06),
-                  Colors.transparent,
-                ]),
-              ),
-            ),
-          ),
-        ),
-        // Purple blob bottom-left
-        Positioned(
-          bottom: 80, left: -80,
-          child: AnimatedBuilder(
-            animation: _bgCtrl,
-            builder: (_, __) => Container(
-              width: 300, height: 300,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(colors: [
-                  const Color(0xFF8B5CF6).withValues(alpha: (AppColors.isDark ? 0.08 : 0.12) + (1 - _bgCtrl.value) * 0.05),
-                  Colors.transparent,
-                ]),
-              ),
-            ),
-          ),
-        ),
-        CustomScrollView(slivers: [
-        SliverAppBar(
-          floating: true,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          titleSpacing: 16,
-          title: Row(children: [
-            RotationTransition(
-              turns: _logoSpinCtrl,
-              child: Container(
-                width: 44, height: 44,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color(0x7300D4FF),
-                      blurRadius: 16,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: Image.asset('assets/tchipa_logo.png', fit: BoxFit.contain),
-              ),
-            ),
-            const SizedBox(width: 12),
-            ShaderMask(
-              shaderCallback: (b) => const LinearGradient(
-                colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-              ).createShader(b),
-              child: const Text('tchipa',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: 4,
-                  )),
-            ),
-          ]),
-          actions: [
-            if (_card?.isActivated == true)
-              IconButton(
-                tooltip: 'Actualiser le solde',
-                onPressed: _refreshing ? null : _refreshBalance,
-                icon: _refreshing
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFF00D4FF)))
-                    : const Icon(Icons.refresh_rounded,
-                        color: Color(0xFF00D4FF)),
-              ),
-            const SizedBox(width: 8),
-          ],
-        ),
-        SliverToBoxAdapter(
-          child: _loading
-              ? const _LoadingCard()
-              : Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildSubtitle(),
-                      const SizedBox(height: 16),
-                      if (_pendingAgentCard != null) ...[
-                        _buildAgentCardBanner(),
-                        const SizedBox(height: 14),
-                      ],
-                      _buildCardWidget(),
-                      const SizedBox(height: 24),
-                      _buildActions(),
-                      if (_rates.isNotEmpty) ...[
-                        const SizedBox(height: 32),
-                        _buildRates(),
-                      ],
-                      if (_card?.isActivated == true) ...[
-                        const SizedBox(height: 32),
-                        _buildRecentActivity(),
-                      ],
-                    ],
-                  ),
-                ),
-        ),
-      ]),
-      ]), // close Stack
-    );
-  }
-
-  Widget _buildSubtitle() {
-    final active = _card?.isActivated == true;
-    final name = UserProfile.name.isNotEmpty ? UserProfile.name.split(' ').first : null;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text(name != null ? 'Bonjour, $name' : 'Bonjour',
-            style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: active
-                ? const Color(0xFF00D4FF).withValues(alpha: 0.12)
-                : AppColors.card.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: active
-                  ? const Color(0xFF00D4FF).withValues(alpha: 0.35)
-                  : AppColors.border,
-            ),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 6, height: 6,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: active ? const Color(0xFF00D4FF) : AppColors.textDim,
-                boxShadow: active ? [BoxShadow(color: const Color(0xFF00D4FF).withValues(alpha: 0.6), blurRadius: 4)] : null,
-              ),
-            ),
-            const SizedBox(width: 5),
-            Text(active ? 'Active' : 'Inactive',
-                style: TextStyle(
-                    color: active ? const Color(0xFF00D4FF) : AppColors.textDim,
-                    fontSize: 11, fontWeight: FontWeight.w700)),
-          ]),
-        ),
-      ]),
-      const SizedBox(height: 14),
-      if (active) ...[
-        Text('SOLDE DISPONIBLE',
-            style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 2.5, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('\$', style: TextStyle(color: AppColors.textSub, fontSize: 22, fontWeight: FontWeight.w300, height: 1.6)),
-          const SizedBox(width: 2),
-          Text(_card!.balance.toStringAsFixed(2),
-              style: TextStyle(
-                  color: AppColors.label,
-                  fontSize: 48,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -2,
-                  height: 1)),
-          const SizedBox(width: 8),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00D4FF).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
-              ),
-              child: const Text('USD', style: TextStyle(color: Color(0xFF00D4FF), fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
-            ),
-          ),
-        ]),
-      ] else
-        Text('Activez votre carte pour commencer',
-            style: TextStyle(color: AppColors.textSub, fontSize: 13)),
-    ]);
-  }
-
-  Widget _buildCardWidget() {
-    return GestureDetector(
-      onTap: () {
-        if (_card?.isActivated == true) {
-          setState(() => _showFull = !_showFull);
-          HapticFeedback.lightImpact();
-        }
-      },
-      child: AnimatedBuilder(
-        animation: _shimmerCtrl,
-        builder: (_, __) => _VccCardVisual(
-          card: _card,
-          showFull: _showFull,
-          shimmerPhase: _shimmerCtrl.value,
-          onCardCaptured: () async {
-            final latest = await VccCard.load();
-            if (!mounted) return;
-            if (latest != null) setState(() => _card = latest);
-          },
-        ),
-      ),
-    );
-  }
-
-  static String _fmtRate(dynamic n) {
-    final d = (n as num).toDouble();
-    return d == d.roundToDouble() ? d.toStringAsFixed(0) : d.toString();
-  }
-
-  Widget _buildRates() {
-    final usdt = _rates.firstWhere((r) => r['code'] == 'USDT',
-        orElse: () => const {});
-    final others = _rates.where((r) => r['code'] != 'USDT').toList();
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface.withValues(alpha: AppColors.isDark ? 0.7 : 1),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Text('Taux du Square',
-                style: TextStyle(
-                    color: AppColors.label,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700)),
-            const Spacer(),
-            if (_ratesDate != null)
-              Text(_ratesDate!,
-                  style: TextStyle(color: AppColors.textDim, fontSize: 11)),
-          ]),
-          const SizedBox(height: 14),
-          if (usdt.isNotEmpty) _usdtRateFeature(usdt),
-          if (others.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: others.map(_rateChip).toList(),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Text('Marché parallèle · squareportsaid.com',
-              style: TextStyle(color: AppColors.textDim, fontSize: 10.5)),
-        ],
-      ),
-    );
-  }
-
-  // USDT first and biggest — the currency the wallet pipeline runs on.
-  Widget _usdtRateFeature(Map<String, dynamic> r) {
-    const tether = Color(0xFF26A17B);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [
-          tether.withValues(alpha: 0.16),
-          tether.withValues(alpha: 0.04),
-        ]),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: tether.withValues(alpha: 0.35)),
-      ),
-      child: Row(children: [
-        Container(
-          width: 46,
-          height: 46,
-          alignment: Alignment.center,
-          decoration: const BoxDecoration(color: tether, shape: BoxShape.circle),
-          child: const Text('₮',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800)),
-        ),
-        const SizedBox(width: 14),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('USDT',
-              style: TextStyle(
-                  color: AppColors.label,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800)),
-          Text('Tether · DZD',
-              style: TextStyle(color: AppColors.textSub, fontSize: 12)),
-        ]),
-        const Spacer(),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(_fmtRate(r['buy']),
-              style: TextStyle(
-                  color: AppColors.label,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w900,
-                  height: 1)),
-          const SizedBox(height: 2),
-          Text('Achat · Vente ${_fmtRate(r['sell'])}',
-              style: TextStyle(color: AppColors.textSub, fontSize: 11.5)),
-        ]),
-      ]),
-    );
-  }
-
-  Widget _rateChip(Map<String, dynamic> r) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.bg.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(r['code'] as String,
-            style: TextStyle(
-                color: AppColors.label,
-                fontSize: 13,
-                fontWeight: FontWeight.w700)),
-        const SizedBox(width: 8),
-        Text('${_fmtRate(r['buy'])} / ${_fmtRate(r['sell'])}',
-            style: TextStyle(color: AppColors.textSub, fontSize: 12.5)),
-      ]),
-    );
-  }
-
-  Widget _buildActions() {
-    final active = _card?.isActivated == true;
-
-    if (!active) {
-      return Column(children: [
-        AnimatedBuilder(
-          animation: _glowAnim,
-          builder: (_, child) {
-            final g = _glowAnim.value;
-            return Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF00D4FF)
-                        .withValues(alpha: 0.25 + g * 0.35),
-                    blurRadius: 18 + g * 20,
-                    spreadRadius: g * 4,
-                  ),
-                  BoxShadow(
-                    color: const Color(0xFF8B5CF6)
-                        .withValues(alpha: 0.2 + g * 0.25),
-                    blurRadius: 28 + g * 16,
-                  ),
-                ],
-              ),
-              child: child,
-            );
-          },
-          child: _ActionButton(
-            label: 'Activer ma carte',
-            sublabel: 'Paiement direct USDT · Réseau Polygon',
-            icon: Icons.credit_card_rounded,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _openActivation,
-          ),
-        ),
-        const SizedBox(height: 16),
-        _TelegramButton(),
-      ]).animate().fadeIn(duration: 400.ms).slideY(begin: 0.08, end: 0);
-    }
-
-    return Column(children: [
-      _ActionButton(
-        label: 'Recharger',
-        sublabel: 'Créer une nouvelle carte',
-        icon: Icons.add_card_rounded,
-        colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-        onTap: _openRecharge,
-      ),
-      const SizedBox(height: 12),
-      if (_card?.cardNumber == null && _card?.redeemLink != null)
-        _ActionButton(
-          label: 'Récupérer ma carte',
-          sublabel: 'Extraction automatique des détails',
-          icon: Icons.credit_card_rounded,
-          colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
-          onTap: _openCardLink,
-        )
-      else
-        _ActionButton(
-          label: 'Voir les détails',
-          sublabel: 'Numéro · CVV · Expiration',
-          icon: Icons.visibility_rounded,
-          colors: const [Color(0xFF8B5CF6), Color(0xFFEC4899)],
-          onTap: _openDetails,
-        ),
-      const SizedBox(height: 12),
-      _TelegramButton(),
-    ]).animate().fadeIn(duration: 400.ms);
-  }
-
-  Widget _buildRecentActivity() {
-    return FutureBuilder<List<VccTx>>(
-      future: VccTx.loadAll(),
-      builder: (ctx, snap) {
-        final txs = (snap.data ?? []).take(3).toList();
-        if (txs.isEmpty) return const SizedBox.shrink();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('ACTIVITÉ RÉCENTE',
-                style: TextStyle(
-                    color: AppColors.textDim,
-                    fontSize: 11,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            ...txs.map((tx) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _TxRow(tx: tx),
-                )),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ============================================
-// VCC CARD VISUAL
-// ============================================
-class _VccCardVisual extends StatelessWidget {
-  final VccCard? card;
-  final bool showFull;
-  final double shimmerPhase;
-  // Called after the user captures card data from the embedded WebView
-  // (auto-extracted or via manual entry). The parent uses this to reload
-  // the persisted card and trigger setState.
-  final Future<void> Function()? onCardCaptured;
-
-  const _VccCardVisual({
-    required this.card,
-    required this.showFull,
-    required this.shimmerPhase,
-    this.onCardCaptured,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final active = card?.isActivated == true;
-    String _rawName = card?.holderName?.isNotEmpty == true
-        ? card!.holderName!
-        : UserProfile.name.isNotEmpty
-            ? UserProfile.name
-            : 'NOM COMPLET';
-    // strip email address if accidentally included
-    if (_rawName.contains('@')) _rawName = _rawName.split(RegExp(r'[\s<@]')).first;
-    final holderName = _rawName.toUpperCase();
-
-    return Container(
-      height: 216,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: active
-              ? const [
-                  Color(0xFF1B0B3A),
-                  Color(0xFF0A1F6E),
-                  Color(0xFF003D5C),
-                ]
-              : const [
-                  Color(0xFF1A1A2E),
-                  Color(0xFF16213E),
-                  Color(0xFF0F3460),
-                ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: active
-                ? const Color(0xFF00D4FF).withValues(alpha: 0.30)
-                : const Color(0xFF0F3460).withValues(alpha: 0.45),
-            blurRadius: 32, offset: const Offset(0, 12),
-          ),
-          BoxShadow(
-            color: const Color(0xFF8B5CF6).withValues(alpha: 0.18),
-            blurRadius: 48, offset: const Offset(0, 18),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: Stack(children: [
-          // Subtle grid lines
-          Positioned.fill(
-              child: CustomPaint(
-                  painter: _CardGridPainter(active))),
-          // Moving shine (active only)
-          if (active)
-            Positioned.fill(
-                child: CustomPaint(
-                    painter: _ShimmerPainter(shimmerPhase))),
-          // Card content
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 22, 24, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildChip(active),
-                    _buildBalance(active),
-                  ],
-                ),
-                const Spacer(),
-                _buildNumberRow(active, context),
-                const SizedBox(height: 16),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                        child: _buildNameExpiry(
-                            active, holderName)),
-                    _buildLogo(active),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Tap hint
-          if (active)
-            Positioned(
-              bottom: 6, left: 0, right: 0,
-              child: Center(
-                child: Text(
-                  showFull
-                      ? 'Appuyer pour masquer'
-                      : 'Appuyer pour révéler le numéro',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.25),
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildChip(bool active) {
-    return Container(
-      width: 46, height: 34,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(7),
-        gradient: active
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFFFFD700), Color(0xFFB8860B)])
-            : LinearGradient(colors: [
-                Colors.grey.shade700,
-                Colors.grey.shade900,
-              ]),
-      ),
-      child: active
-          ? null
-          : const Center(
-              child: Icon(Icons.lock_outline_rounded,
-                  color: Colors.white30, size: 16)),
-    );
-  }
-
-  Widget _buildBalance(bool active) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-      Text(
-        active ? 'SOLDE DISPONIBLE' : 'NON ACTIVÉE',
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.45),
-          fontSize: 9, letterSpacing: 1.5,
-        ),
-      ),
-      const SizedBox(height: 2),
-      Text(
-        active ? '\$${card!.balance.toStringAsFixed(2)}' : '——',
-        style: TextStyle(
-          color: active ? Colors.white : Colors.white38,
-          fontSize: active ? 24 : 18,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      if (active)
-        Text('USD',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.4),
-                fontSize: 10,
-                letterSpacing: 1)),
-    ]);
-  }
-
-  Widget _buildNumberRow(bool active, BuildContext context) {
-    if (!active) {
-      // blurred placeholder — BackdropFilter blurs everything behind it
-      return ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-                vertical: 4, horizontal: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '•••• •••• •••• ••••',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.3),
-                fontSize: 20,
-                letterSpacing: 3.5,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-    final hasNumber = card!.cardNumber != null && card!.cardNumber!.isNotEmpty;
-    if (!hasNumber) {
-      final link = card!.redeemLink;
-      return GestureDetector(
-        onTap: link != null
-            ? () async {
-                await Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => CardWebViewScreen(
-                    url: link,
-                    title: 'Récupération carte…',
-                    onCardData: (number, cvv, expiry) async {
-                      final updated = card!.copyWith(
-                          cardNumber: number, cvv: cvv, expiry: expiry);
-                      await updated.save();
-                      final rid = card!.redeemId ?? card!.cardId;
-                      if (rid != null && rid.isNotEmpty) {
-                        try { await PayGateService.markCardDelivered(rid); }
-                        catch (_) {}
-                      }
-                      if (context.mounted) Navigator.of(context).pop();
-                    },
-                  ),
-                ));
-                if (onCardCaptured != null) await onCardCaptured!();
-              }
-            : null,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Voir ma carte',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.75),
-                fontSize: 13,
-                letterSpacing: 0.5,
-                fontStyle: FontStyle.italic,
-                decoration: link != null ? TextDecoration.underline : null,
-                decorationColor: Colors.white54,
-              ),
-            ),
-            if (link != null) ...[
-              const SizedBox(width: 4),
-              Icon(Icons.open_in_new_rounded,
-                  size: 13, color: Colors.white.withValues(alpha: 0.55)),
-            ],
-          ],
-        ),
-      );
-    }
-    return Text(
-      showFull ? card!.formattedNumber : card!.maskedNumber,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 20,
-        letterSpacing: 3.5,
-        fontFamily: 'monospace',
-        fontWeight: FontWeight.w500,
-      ),
-    );
-  }
-
-  Widget _buildNameExpiry(bool active, String holderName) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('TITULAIRE',
-          style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.35),
-              fontSize: 8,
-              letterSpacing: 1.5)),
-      const SizedBox(height: 2),
-      Text(
-        holderName,
-        style: TextStyle(
-          color: active
-              ? Colors.white
-              : Colors.white.withValues(alpha: 0.5),
-          fontSize: 12,
-          letterSpacing: 0.8,
-        ),
-      ),
-      const SizedBox(height: 6),
-      Row(children: [
-        Text('EXP  ',
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.35),
-                fontSize: 8,
-                letterSpacing: 1.5)),
-        if (!active)
-          ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-              child: Text('••/••',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.3),
-                    fontSize: 12,
-                    letterSpacing: 1.5,
-                  )),
-            ),
-          )
-        else
-          Text(card!.expiry ?? '——',
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  letterSpacing: 1.5)),
-      ]),
-    ]);
-  }
-
-  Widget _buildLogo(bool active) {
-    return SizedBox(
-      width: 46, height: 28,
-      child: Stack(children: [
-        Positioned(
-          left: 0,
-          child: Container(
-            width: 28, height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active
-                  ? const Color(0xFFEB001B).withValues(alpha: 0.85)
-                  : Colors.grey.shade800.withValues(alpha: 0.4),
-            ),
-          ),
-        ),
-        Positioned(
-          right: 0,
-          child: Container(
-            width: 28, height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: active
-                  ? const Color(0xFFF79E1B).withValues(alpha: 0.85)
-                  : Colors.grey.shade700.withValues(alpha: 0.4),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-}
-
-class _ShimmerPainter extends CustomPainter {
-  final double phase;
-  _ShimmerPainter(this.phase);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final x = phase * (size.width + 240) - 120;
-    final paint = Paint()
-      ..shader = LinearGradient(
-        colors: [
-          Colors.white.withValues(alpha: 0.0),
-          Colors.white.withValues(alpha: 0.05),
-          Colors.white.withValues(alpha: 0.13),
-          Colors.white.withValues(alpha: 0.05),
-          Colors.white.withValues(alpha: 0.0),
-        ],
-        stops: const [0, 0.3, 0.5, 0.7, 1],
-        begin: Alignment.centerLeft,
-        end: Alignment.centerRight,
-      ).createShader(Rect.fromLTWH(x - 120, 0, 240, size.height));
-    canvas.drawRect(
-        Rect.fromLTWH(0, 0, size.width, size.height), paint);
-  }
-
-  @override
-  bool shouldRepaint(_ShimmerPainter old) => phase != old.phase;
-}
-
-class _CardGridPainter extends CustomPainter {
-  final bool active;
-  _CardGridPainter(this.active);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: active ? 0.04 : 0.02)
-      ..strokeWidth = 0.5;
-    for (var i = 1; i < 8; i++) {
-      canvas.drawLine(Offset(size.width * i / 8, 0),
-          Offset(size.width * i / 8, size.height), paint);
-    }
-    for (var i = 1; i < 5; i++) {
-      canvas.drawLine(Offset(0, size.height * i / 5),
-          Offset(size.width, size.height * i / 5), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_CardGridPainter old) => false;
-}
-
-// ============================================
-// ACTION BUTTON
-// ============================================
-class _ActionButton extends StatefulWidget {
-  final String label;
-  final String sublabel;
-  final IconData icon;
-  final List<Color> colors;
-  final VoidCallback onTap;
-
-  const _ActionButton({
-    required this.label,
-    required this.sublabel,
-    required this.icon,
-    required this.colors,
-    required this.onTap,
-  });
-
-  @override
-  State<_ActionButton> createState() => _ActionButtonState();
-}
-
-class _ActionButtonState extends State<_ActionButton>
-    with SingleTickerProviderStateMixin {
-  double _scale = 1.0;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _scale = 0.97),
-      onTapUp: (_) { setState(() => _scale = 1.0); widget.onTap(); },
-      onTapCancel: () => setState(() => _scale = 1.0),
-      child: AnimatedScale(
-        scale: _scale,
-        duration: const Duration(milliseconds: 120),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 17, horizontal: 22),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: widget.colors,
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: widget.colors.first.withValues(alpha: 0.35),
-                blurRadius: 18, offset: const Offset(0, 6),
-              ),
-              BoxShadow(
-                color: widget.colors.last.withValues(alpha: 0.20),
-                blurRadius: 28, offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 38, height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(widget.icon, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 14),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(widget.label,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15)),
-                  const SizedBox(height: 2),
-                  Text(widget.sublabel,
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.70),
-                          fontSize: 11)),
-                ],
-              ),
-              const Spacer(),
-              Icon(Icons.arrow_forward_ios_rounded,
-                  color: Colors.white.withValues(alpha: 0.5), size: 14),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TelegramButton extends StatelessWidget {
-  const _TelegramButton();
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () async {
-        try {
-          await launchUrl(Uri.parse(kAgentTelegram),
-              mode: LaunchMode.externalApplication);
-        } catch (_) {}
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF0088CC), Color(0xFF229ED9)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFF0088CC).withValues(alpha: 0.5),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 40, height: 40,
-              decoration: const BoxDecoration(
-                color: Colors.white24,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.telegram_rounded,
-                  color: Colors.white, size: 24),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('Commander via Telegram',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold)),
-                  SizedBox(height: 3),
-                  Text('Un agent traite ta commande rapidement',
-                      style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11.5)),
-                ],
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios_rounded,
-                color: Colors.white54, size: 16),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LoadingCard extends StatelessWidget {
-  const _LoadingCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-      child: Container(
-        height: 216,
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: const Center(
-            child: CircularProgressIndicator(
-                color: Color(0xFF00D4FF), strokeWidth: 2)),
-      ),
-    );
-  }
-}
-
-// ============================================
-// TRANSACTION ROW
-// ============================================
-class _TxRow extends StatelessWidget {
-  final VccTx tx;
-  const _TxRow({required this.tx});
-
-  @override
-  Widget build(BuildContext context) {
-    final color =
-        tx.isDebit ? Colors.redAccent : const Color(0xFF00D4FF);
-    final sign = tx.isDebit ? '-' : '+';
-    final IconData ico;
-    switch (tx.type) {
-      case 'activation':
-        ico = Icons.credit_card_rounded;
-        break;
-      case 'recharge':
-        ico = Icons.add_card_rounded;
-        break;
-      default:
-        ico = Icons.shopping_bag_rounded;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: 16, vertical: 13),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: AppColors.isDark ? null : [
-          BoxShadow(
-            color: const Color(0xFF6B8EF2).withValues(alpha: 0.07),
-            blurRadius: 12, offset: const Offset(0, 3)),
-        ],
-      ),
-      child: Row(children: [
-        Container(
-          width: 42, height: 42,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: Icon(ico, color: color, size: 20),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(tx.label,
-                  style: TextStyle(
-                      color: AppColors.label, fontSize: 14,
-                      fontWeight: FontWeight.w500)),
-              const SizedBox(height: 3),
-              Text(
-                '${tx.date.day.toString().padLeft(2, '0')}/'
-                '${tx.date.month.toString().padLeft(2, '0')}/'
-                '${tx.date.year}  '
-                '${tx.date.hour.toString().padLeft(2, '0')}:'
-                '${tx.date.minute.toString().padLeft(2, '0')}',
-                style: TextStyle(
-                    color: AppColors.textDim,
-                    fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        Text('$sign\$${tx.amount.toStringAsFixed(2)}',
-            style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.bold,
-                fontSize: 15)),
-      ]),
-    );
-  }
-}
-
-// ============================================
-// ACTIVATION SHEET
-// ============================================
-enum _ActStep { pick, paying, checking, done }
-
-class _ActivationSheet extends StatefulWidget {
-  final void Function(VccCard) onActivated;
-  const _ActivationSheet({required this.onActivated});
-  @override
-  State<_ActivationSheet> createState() => _ActivationSheetState();
-}
-
-class _ActivationSheetState extends State<_ActivationSheet> {
-  static const _kFlow = 'activation';
-  _ActStep _step = _ActStep.pick;
-  double _amount = 10.0;
-  static const _presets = [10.0, 20.0, 50.0, 100.0];
-  static const _kMargin = 0.10;
-  bool _customMode = false;
-  final _customCtrl = TextEditingController();
-  static double _estimatedUsdt(double cardValue) =>
-      double.parse((cardValue * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
-  VccOrder? _order;
-  String? _redeemLink;
-  VccCard? _activatedCard;
-  String? _error;
-  Timer? _autoPoll;
-
-  @override
-  void initState() {
-    super.initState();
-    _restorePending();
-  }
-
-  @override
-  void dispose() {
-    _autoPoll?.cancel();
-    _customCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _restorePending() async {
-    final pending = await VccOrder.loadPending(_kFlow);
-    if (pending != null && mounted) {
-      setState(() {
-        _order = pending;
-        _amount = pending.cardValue;
-        _step = _ActStep.paying;
-      });
-      _startAutoPoll();
-    }
-  }
-
-  void _startAutoPoll() {
-    _autoPoll?.cancel();
-    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (_step == _ActStep.paying && _order != null) {
-        _checkStatus(silent: true);
-      }
-    });
-  }
-
-  Future<void> _cancelPending() async {
-    _autoPoll?.cancel();
-    await VccOrder.clearPending(_kFlow);
-    if (mounted) {
-      setState(() {
-        _order = null;
-        _error = null;
-        _step = _ActStep.pick;
-      });
-    }
-  }
-
-  Future<void> _createOrder() async {
-    setState(() { _step = _ActStep.paying; _error = null; _order = null; });
-    try {
-      final order = await PayGateService.createVccOrder(
-        amount: _amount,
-        holderName: UserProfile.name,
-        phone: UserProfile.phone,
-        source: 'self',
-      );
-      await order.savePending(_kFlow);
-      if (!mounted) return;
-      setState(() => _order = order);
-      _startAutoPoll();
-    } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _step = _ActStep.pick;
-      });
-    }
-  }
-
-  Future<void> _checkStatus({bool silent = false}) async {
-    final id = _order?.redeemId;
-    if (id == null) return;
-    if (!silent) setState(() { _step = _ActStep.checking; _error = null; });
-    try {
-      final status = await PayGateService.checkVccStatus(id);
-      if (status['isReady'] == true) {
-        _autoPoll?.cancel();
-        await VccOrder.clearPending(_kFlow);
-        final link = status['redeemLink'] as String?;
-        final card = VccCard(
-          cardId: id,
-          redeemId: id,
-          redeemLink: link,
-          balance: _order!.cardValue,
-          isActivated: true,
-          holderName: UserProfile.name,
-        );
-        await card.save();
-        await PayGateService.markCardDelivered(id);
-        _activatedCard = card;
-        if (mounted) setState(() { _redeemLink = link; _step = _ActStep.done; });
-        widget.onActivated(card);
-      } else if (status['isPaid'] == true) {
-        if (silent) return; // auto-poll: keep waiting silently
-        setState(() {
-          _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
-          _step = _ActStep.paying;
-        });
-      } else {
-        if (silent) return; // auto-poll: stay on payment screen without nagging
-        setState(() {
-          _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
-          _step = _ActStep.paying;
-        });
-      }
-    } catch (e) {
-      if (silent) return; // auto-poll: ignore transient network errors
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _step = _ActStep.paying;
-      });
-    }
-  }
-
-  void _openLink() {
-    final link = _redeemLink;
-    final card = _activatedCard;
-    if (link == null) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CardWebViewScreen(
-        url: link,
-        title: 'Récupération carte…',
-        onCardData: card == null ? null : (number, cvv, expiry) async {
-          final updated = card.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
-          await updated.save();
-          widget.onActivated(updated);
-          if (mounted) {
-            Navigator.of(context).pop(); // ferme WebView
-            Navigator.of(context).pop(); // ferme bottom sheet
-          }
-        },
-      ),
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
-          colors: AppColors.isDark
-              ? [const Color(0xFF111827), const Color(0xFF0D1117)]
-              : [Colors.white, const Color(0xFFF0F5FF)],
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
-            child: Column(children: [
-              Center(child: Container(
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(2)),
-              )),
-              const SizedBox(height: 8),
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.credit_card_rounded, color: Colors.white, size: 16),
-                const SizedBox(width: 8),
-                Text(_step == _ActStep.done ? 'Carte activée !' : 'Activer ma carte',
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-              ]),
-            ]),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 28),
-            child: switch (_step) {
-              _ActStep.pick     => _buildPicker(),
-              _ActStep.paying   => _buildPayment(),
-              _ActStep.checking => _buildChecking(),
-              _ActStep.done     => _buildDone(),
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPicker() {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(L.chooseAmount,
-              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(L.payDirectly,
-              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
-          const SizedBox(height: 20),
-          // Presets + bouton Autre
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              ..._presets.map((amt) {
-                final sel = !_customMode && _amount == amt;
-                return GestureDetector(
-                  onTap: () => setState(() { _customMode = false; _amount = amt; }),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    decoration: BoxDecoration(
-                      gradient: sel ? const LinearGradient(
-                          colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]) : null,
-                      color: sel ? null : AppColors.card,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: sel ? Colors.transparent
-                              : Colors.white.withValues(alpha: 0.08)),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text('\$${amt.toStringAsFixed(0)}',
-                          style: TextStyle(
-                              color: sel ? Colors.black : Colors.white,
-                              fontWeight: FontWeight.bold, fontSize: 15)),
-                      Text('${(_estimatedUsdt(amt) * kExchangeRate).toStringAsFixed(0)} DA',
-                          style: TextStyle(
-                              color: sel ? Colors.black54 : Colors.white38,
-                              fontSize: 10)),
-                    ]),
-                  ),
-                );
-              }),
-              // Bouton Autre
-              GestureDetector(
-                onTap: () => setState(() { _customMode = true; }),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: _customMode ? const Color(0xFF8B5CF6) : AppColors.card,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: _customMode ? Colors.transparent
-                            : Colors.white.withValues(alpha: 0.08)),
-                  ),
-                  child: Text('Autre',
-                      style: TextStyle(
-                          color: _customMode ? Colors.white : AppColors.textSub,
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                ),
-              ),
-            ],
-          ),
-          // Champ montant libre
-          if (_customMode) ...[
-            const SizedBox(height: 14),
-            TextField(
-              controller: _customCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: TextStyle(color: AppColors.text, fontWeight: FontWeight.bold),
-              decoration: InputDecoration(
-                prefixText: '\$ ',
-                prefixStyle: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold),
-                hintText: 'Montant en USD (min \$5)',
-                hintStyle: TextStyle(color: AppColors.textDim),
-                filled: true,
-                fillColor: AppColors.card,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF8B5CF6), width: 2)),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
-              ),
-              onChanged: (v) {
-                final parsed = double.tryParse(v);
-                if (parsed != null && parsed >= 5) setState(() => _amount = parsed);
-              },
-            ),
-          ],
-          const SizedBox(height: 16),
-          // Récap estimé
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('Carte Mastercard',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7))),
-              Text('≈ ${_estimatedUsdt(_amount)} USDT',
-                  style: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold)),
-            ]),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(_error!, textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
-          ],
-          const SizedBox(height: 20),
-          _gradientBtn(
-            label: L.createOrder,
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: () {
-              if (_customMode) {
-                final v = double.tryParse(_customCtrl.text);
-                if (v == null || v < 5) {
-                  setState(() => _error = 'Montant minimum : \$5');
-                  return;
-                }
-                _amount = v;
-              }
-              _createOrder();
-            },
-          ),
-          const SizedBox(height: 16),
-          // Option agent Telegram
-          GestureDetector(
-            onTap: () async {
-              try {
-                await launchUrl(Uri.parse(kAgentTelegram),
-                    mode: LaunchMode.externalApplication);
-              } catch (_) {}
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0088CC), Color(0xFF229ED9)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF0088CC).withValues(alpha: 0.45),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(children: [
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const Icon(Icons.telegram_rounded, color: Colors.white, size: 22),
-                  const SizedBox(width: 8),
-                  const Text('Passer commande via un Agent',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold)),
-                ]),
-                const SizedBox(height: 6),
-                Text('Rejoins le groupe Telegram · envoi ton nom + montant',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontSize: 11.5)),
-              ]),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String _paymentUri(String toAddress, String amountUsdt) {
-    const usdtPolygon = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
-    final micro = (double.tryParse(amountUsdt) ?? 0) * 1e6;
-    return 'ethereum:$usdtPolygon@137/transfer?address=$toAddress&uint256=${micro.toStringAsFixed(0)}';
-  }
-
-  Widget _buildPayment() {
-    final order = _order;
-    if (order == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 60),
-        child: Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF))),
-      );
-    }
-    final addr = order.cryptoAddress;
-    final qrData = _paymentUri(addr, order.amountUsdt);
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(L.sendExactly,
-              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(L.usdtPolygonOnly,
-              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
-            ),
-            child: Column(children: [
-              Text(L.exactAmount,
-                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 8),
-              Text('${order.amountUsdt} USDT',
-                  style: const TextStyle(color: Color(0xFF00D4FF),
-                      fontSize: 32, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 12)),
-            ]),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Column(children: [
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  color: Colors.white,
-                  child: QrImageView(data: qrData, size: 150, version: QrVersions.auto),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text('ADRESSE USDT (POLYGON)',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 6),
-              Row(children: [
-                Expanded(
-                  child: Text(addr,
-                      style: TextStyle(color: AppColors.textSub, fontSize: 11,
-                          fontFamily: 'monospace'),
-                      maxLines: 2),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: addr));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Adresse copiée'),
-                      duration: Duration(seconds: 2),
-                    ));
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00D4FF).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.copy_rounded, color: Color(0xFF00D4FF), size: 18),
-                  ),
-                ),
-              ]),
-            ]),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
-            ),
-            child: Text(
-              '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
-              style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(_error!, textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.orange, fontSize: 13)),
-          ],
-          const SizedBox(height: 20),
-          _gradientBtn(
-            label: 'J\'ai payé — Vérifier',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: () => _checkStatus(),
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: Text('ID: ${order.redeemId}',
-                style: TextStyle(color: AppColors.textDim, fontSize: 10,
-                    fontFamily: 'monospace')),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton(
-                onPressed: _cancelPending,
-                child: const Text('Nouvelle commande',
-                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Fermer',
-                    style: TextStyle(color: Colors.white38, fontSize: 12)),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChecking() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 60),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const CircularProgressIndicator(color: Color(0xFF00D4FF)),
-        const SizedBox(height: 20),
-        const Text('Vérification du paiement…',
-            style: TextStyle(color: Colors.white70)),
-        const SizedBox(height: 24),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Retour', style: TextStyle(color: Colors.white38)),
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildDone() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Center(
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Icon(Icons.check_rounded, color: Colors.black, size: 36),
-          ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
-        ),
-        const SizedBox(height: 20),
-        const Text('Carte activée !',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontSize: 22,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text('Votre carte VCC Mastercard est prête.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
-        const SizedBox(height: 24),
-        if (_redeemLink != null)
-          _gradientBtn(
-            label: 'Voir ma carte',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _openLink,
-          ),
-        const SizedBox(height: 12),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
-        ),
-      ],
-    );
-  }
-}
-
-class _Feature extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  const _Feature({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(children: [
-        Icon(icon, color: const Color(0xFF00D4FF), size: 18),
-        const SizedBox(width: 12),
-        Text(text,
-            style: const TextStyle(
-                color: Colors.white70, fontSize: 14)),
-      ]),
-    );
-  }
-}
-
-// ============================================
-// RECHARGE SHEET
-// ============================================
-enum _RechStep { pick, paying, checking, done }
-
-class _RechargeSheet extends StatefulWidget {
-  final VccCard card;
-  final void Function(double) onSuccess;
-  const _RechargeSheet({required this.card, required this.onSuccess});
-  @override
-  State<_RechargeSheet> createState() => _RechargeSheetState();
-}
-
-class _RechargeSheetState extends State<_RechargeSheet> {
-  static const _kFlow = 'recharge';
-  _RechStep _step = _RechStep.pick;
-  double _amount = 20.0;
-  static const _presets = [10.0, 20.0, 50.0, 100.0];
-  static const _kMargin = 0.10;
-  static double _estimatedUsdt(double v) =>
-      double.parse((v * 1.0664 * (1 + _kMargin)).toStringAsFixed(2));
-  VccOrder? _order;
-  String? _error;
-  String? _redeemLink;
-  VccCard? _rechargedCard;
-  Timer? _autoPoll;
-
-  @override
-  void initState() {
-    super.initState();
-    _restorePending();
-  }
-
-  @override
-  void dispose() {
-    _autoPoll?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _restorePending() async {
-    final pending = await VccOrder.loadPending(_kFlow);
-    if (pending != null && mounted) {
-      setState(() {
-        _order = pending;
-        _amount = pending.cardValue;
-        _step = _RechStep.paying;
-      });
-      _startAutoPoll();
-    }
-  }
-
-  void _startAutoPoll() {
-    _autoPoll?.cancel();
-    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (_step == _RechStep.paying && _order != null) {
-        _checkStatus(silent: true);
-      }
-    });
-  }
-
-  Future<void> _cancelPending() async {
-    _autoPoll?.cancel();
-    await VccOrder.clearPending(_kFlow);
-    if (mounted) {
-      setState(() {
-        _order = null;
-        _error = null;
-        _step = _RechStep.pick;
-      });
-    }
-  }
-
-  Future<void> _createOrder() async {
-    setState(() { _step = _RechStep.paying; _error = null; _order = null; });
-    try {
-      final order = await PayGateService.createVccOrder(
-        amount: _amount,
-        holderName: UserProfile.name,
-        phone: UserProfile.phone,
-        source: 'self',
-      );
-      await order.savePending(_kFlow);
-      if (!mounted) return;
-      setState(() => _order = order);
-      _startAutoPoll();
-    } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _step = _RechStep.pick;
-      });
-    }
-  }
-
-  Future<void> _checkStatus({bool silent = false}) async {
-    final id = _order?.redeemId;
-    if (id == null) return;
-    if (!silent) setState(() { _step = _RechStep.checking; _error = null; });
-    try {
-      final status = await PayGateService.checkVccStatus(id);
-      if (status['isReady'] == true) {
-        _autoPoll?.cancel();
-        await VccOrder.clearPending(_kFlow);
-        final link = status['redeemLink'] as String?;
-        final card = VccCard(
-          cardId: id,
-          redeemId: id,
-          redeemLink: link,
-          balance: _order!.cardValue,
-          isActivated: true,
-          holderName: UserProfile.name,
-        );
-        await card.save();
-        await PayGateService.markCardDelivered(id);
-        _rechargedCard = card;
-        if (mounted) setState(() { _redeemLink = link; _step = _RechStep.done; });
-        widget.onSuccess(_order!.cardValue);
-      } else if (status['isPaid'] == true) {
-        if (silent) return;
-        setState(() {
-          _error = 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.';
-          _step = _RechStep.paying;
-        });
-      } else {
-        if (silent) return;
-        setState(() {
-          _error = 'Paiement non reçu. Vérifiez que vous avez envoyé exactement ${_order!.amountUsdt} USDT sur Polygon.';
-          _step = _RechStep.paying;
-        });
-      }
-    } catch (e) {
-      if (silent) return;
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _step = _RechStep.paying;
-      });
-    }
-  }
-
-  void _openLink() {
-    final link = _redeemLink;
-    final card = _rechargedCard;
-    if (link == null) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => CardWebViewScreen(
-        url: link,
-        title: 'Récupération carte…',
-        onCardData: card == null ? null : (number, cvv, expiry) async {
-          final updated = card.copyWith(cardNumber: number, cvv: cvv, expiry: expiry);
-          await updated.save();
-          if (mounted) {
-            Navigator.of(context).pop(); // ferme WebView
-            Navigator.of(context).pop(); // ferme bottom sheet
-          }
-        },
-      ),
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft, end: Alignment.bottomRight,
-        colors: AppColors.isDark
-            ? [const Color(0xFF111827), const Color(0xFF0D1117)]
-            : [Colors.white, const Color(0xFFF0F5FF)],
-      ),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)]),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
-          child: Column(children: [
-            Center(child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(2)),
-            )),
-            const SizedBox(height: 8),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              const Icon(Icons.add_card_rounded, color: Colors.white, size: 16),
-              const SizedBox(width: 8),
-              Text(_step == _RechStep.done ? 'Carte créée !' : 'Nouvelle carte VCC',
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-            ]),
-          ]),
-        ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(24, 20, 24, MediaQuery.of(context).viewInsets.bottom + 28),
-          child: switch (_step) {
-            _RechStep.pick     => _buildSelector(),
-            _RechStep.paying   => _buildPayment(),
-            _RechStep.checking => _buildChecking(),
-            _RechStep.done     => _buildDone(),
-          },
-        ),
-      ],
-    ),
-  );
-
-  Widget _buildSelector() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Nouvelle carte VCC',
-            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Text('Payez directement en USDT sur le réseau Polygon',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13)),
-        const SizedBox(height: 22),
-        GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 4,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-          childAspectRatio: 1.3,
-          children: _presets.map((amt) {
-            final sel = _amount == amt;
-            return GestureDetector(
-              onTap: () => setState(() => _amount = amt),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                decoration: BoxDecoration(
-                  gradient: sel
-                      ? const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)])
-                      : null,
-                  color: sel ? null : AppColors.card,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: sel ? Colors.transparent : Colors.white.withValues(alpha: 0.08)),
-                  boxShadow: sel
-                      ? [BoxShadow(color: const Color(0xFF00D4FF).withValues(alpha: 0.3), blurRadius: 10)]
-                      : [],
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('\$$amt',
-                        style: TextStyle(
-                            color: sel ? Colors.black : Colors.white,
-                            fontWeight: FontWeight.bold, fontSize: 16)),
-                    Text('${_estimatedUsdt(amt)} USDT',
-                        style: TextStyle(
-                            color: sel ? Colors.black54 : Colors.white38, fontSize: 10)),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Total à payer',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
-              Text('${_estimatedUsdt(_amount)} USDT',
-                  style: const TextStyle(
-                      color: Color(0xFF00D4FF),
-                      fontWeight: FontWeight.bold, fontSize: 16)),
-            ],
-          ),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 10),
-          Text(_error!, textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
-        ],
-        const SizedBox(height: 20),
-        _gradientBtn(
-          label: 'Créer ma commande',
-          loading: false,
-          colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-          onTap: _createOrder,
-        ),
-      ],
-    );
-  }
-
-  static String _paymentUri(String toAddress, String amountUsdt) {
-    const usdtPolygon = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
-    final micro = (double.tryParse(amountUsdt) ?? 0) * 1e6;
-    return 'ethereum:$usdtPolygon@137/transfer?address=$toAddress&uint256=${micro.toStringAsFixed(0)}';
-  }
-
-  Widget _buildPayment() {
-    final order = _order;
-    if (order == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 60),
-        child: Center(child: CircularProgressIndicator(color: Color(0xFF00D4FF))),
-      );
-    }
-    final addr = order.cryptoAddress;
-    final qrData = _paymentUri(addr, order.amountUsdt);
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(L.sendExactly,
-              style: TextStyle(color: AppColors.text, fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text(L.usdtPolygonOnly,
-              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
-            ),
-            child: Column(children: [
-              Text(L.exactAmount,
-                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 8),
-              Text('${order.amountUsdt} USDT',
-                  style: const TextStyle(color: Color(0xFF00D4FF),
-                      fontSize: 32, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('carte \$${order.cardValue.toStringAsFixed(0)} · réseau Polygon',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 12)),
-            ]),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Column(children: [
-              Center(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  color: Colors.white,
-                  child: QrImageView(data: qrData, size: 150, version: QrVersions.auto),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text('ADRESSE USDT (POLYGON)',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 10, letterSpacing: 1.5)),
-              const SizedBox(height: 6),
-              Row(children: [
-                Expanded(
-                  child: Text(addr,
-                      style: TextStyle(color: AppColors.textSub, fontSize: 11,
-                          fontFamily: 'monospace'),
-                      maxLines: 2),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: addr));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Adresse copiée'),
-                      duration: Duration(seconds: 2),
-                    ));
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00D4FF).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(Icons.copy_rounded, color: Color(0xFF00D4FF), size: 18),
-                  ),
-                ),
-              ]),
-            ]),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
-            ),
-            child: Text(
-              '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
-              style: TextStyle(color: Colors.amber.withValues(alpha: 0.9), fontSize: 12),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(_error!, textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.orange, fontSize: 13)),
-          ],
-          const SizedBox(height: 20),
-          _gradientBtn(
-            label: 'J\'ai payé — Vérifier',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: () => _checkStatus(),
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: Text('ID: ${order.redeemId}',
-                style: TextStyle(color: AppColors.textDim, fontSize: 10, fontFamily: 'monospace')),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton(
-                onPressed: _cancelPending,
-                child: const Text('Nouvelle commande',
-                    style: TextStyle(color: Colors.orangeAccent, fontSize: 12)),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Fermer',
-                    style: TextStyle(color: Colors.white38, fontSize: 12)),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChecking() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 60),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        CircularProgressIndicator(color: Color(0xFF00D4FF)),
-        SizedBox(height: 20),
-        Text('Vérification du paiement…', style: TextStyle(color: Colors.white70)),
-      ]),
-    );
-  }
-
-  Widget _buildDone() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Center(
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF0096FF)]),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Icon(Icons.check_rounded, color: Colors.black, size: 36),
-          ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
-        ),
-        const SizedBox(height: 20),
-        const Text('Carte prête !',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text('Votre nouvelle carte VCC Mastercard est activée.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
-        const SizedBox(height: 24),
-        if (_redeemLink != null)
-          _gradientBtn(
-            label: 'Voir ma carte',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-            onTap: _openLink,
-          ),
-        const SizedBox(height: 12),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Fermer', style: TextStyle(color: Colors.white38)),
-        ),
-      ],
-    );
-  }
-
-}
-
-// ============================================
-// CARD DETAILS SHEET
-// ============================================
-class _CardDetailsSheet extends StatelessWidget {
-  final VccCard card;
-  const _CardDetailsSheet({required this.card});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: AppColors.isDark
-              ? [const Color(0xFF111827), const Color(0xFF0D1117)]
-              : [Colors.white, const Color(0xFFF0F5FF)],
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Gradient header strip
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)]),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 14, 24, 14),
-            child: Column(children: [
-              Center(child: Container(
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(2)),
-              )),
-              const SizedBox(height: 10),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.credit_card_rounded, color: Colors.white, size: 18),
-                  SizedBox(width: 8),
-                  Text('Détails de la carte',
-                      style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
-                ],
-              ),
-            ]),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).padding.bottom + 24),
-            child: Column(children: [
-              _GlassDetailCard(
-                icon: Icons.numbers_rounded,
-                iconColor: const Color(0xFF00D4FF),
-                label: 'NUMÉRO DE CARTE',
-                value: card.formattedNumber,
-                mono: true,
-                context: context,
-              ),
-              const SizedBox(height: 10),
-              Row(children: [
-                Expanded(child: _GlassDetailCard(
-                  icon: Icons.calendar_today_rounded,
-                  iconColor: const Color(0xFF8B5CF6),
-                  label: 'EXPIRATION',
-                  value: card.expiry ?? '—',
-                  mono: true,
-                  context: context,
-                )),
-                const SizedBox(width: 10),
-                Expanded(child: _GlassDetailCard(
-                  icon: Icons.lock_rounded,
-                  iconColor: const Color(0xFFEC4899),
-                  label: 'CVV',
-                  value: card.cvv ?? '•••',
-                  mono: true,
-                  context: context,
-                )),
-              ]),
-              const SizedBox(height: 10),
-              _GlassDetailCard(
-                icon: Icons.person_rounded,
-                iconColor: const Color(0xFF10B981),
-                label: 'TITULAIRE',
-                value: card.holderName ?? UserProfile.name,
-                mono: false,
-                context: context,
-              ),
-              if (card.redeemLink != null && card.redeemLink!.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => CardWebViewScreen(
-                          url: card.redeemLink!,
-                          title: 'Swype — gérer la carte',
-                        ),
-                      ));
-                    },
-                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    label: const Text('Ouvrir Swype (solde · renommer)'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.surface,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.shield_outlined, size: 13, color: AppColors.textDim),
-                const SizedBox(width: 5),
-                Text('Ne partagez jamais ces informations',
-                    style: TextStyle(color: AppColors.textDim, fontSize: 11, fontStyle: FontStyle.italic)),
-              ]),
-            ]),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GlassDetailCard extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final String value;
-  final bool mono;
-  final BuildContext context;
-  const _GlassDetailCard({
-    required this.icon, required this.iconColor,
-    required this.label, required this.value,
-    required this.mono, required this.context,
-  });
-
-  @override
-  Widget build(BuildContext _) {
-    return GestureDetector(
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: value));
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Row(children: [
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF00D4FF), size: 16),
-            const SizedBox(width: 8),
-            Text('$label copié !'),
-          ]),
-          backgroundColor: AppColors.card,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          duration: const Duration(seconds: 1),
-        ));
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border),
-          boxShadow: AppColors.isDark ? null : [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 2)),
-          ],
-        ),
-        child: Row(children: [
-          Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: iconColor, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(color: AppColors.textDim, fontSize: 9, letterSpacing: 1.5, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 3),
-              Text(value,
-                  style: TextStyle(
-                      color: AppColors.label,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: mono ? 'monospace' : null,
-                      letterSpacing: mono ? 1.2 : 0)),
-            ],
-          )),
-          Icon(Icons.copy_rounded, color: AppColors.textDim, size: 15),
-        ]),
-      ),
-    );
-  }
-}
-
-
-// ============================================
-// TRANSACTIONS SCREEN
-// ============================================
-// Shown for manually-issued cards, i.e. when the provider hands over raw card
-// data instead of a hosted page. Also carries the 3DS relay: the OTP for a
-// resold card reaches the account owner, never the buyer's phone, so the
-// client pulls it through here mid-checkout.
-class ManualCardSheet extends StatefulWidget {
-  final String pan, cvv, exp, phone, cardToken;
-  final String? holderName;
-  final double amount;
-  const ManualCardSheet({
-    super.key,
-    required this.pan,
-    required this.cvv,
-    required this.exp,
-    required this.phone,
-    required this.cardToken,
-    required this.amount,
-    this.holderName,
-  });
-
-  @override
-  State<ManualCardSheet> createState() => _ManualCardSheetState();
-}
-
-class _ManualCardSheetState extends State<ManualCardSheet> {
-  bool _revealed = false;
-  bool _waiting3ds = false;
-  String? _code;
-  String? _error;
-  Timer? _poll;
-  int _elapsed = 0;
-
-  static const _pollEvery = Duration(seconds: 3);
-  static const _giveUpAfter = 300; // matches THREEDS_TTL_SEC server-side
-
-  @override
-  void dispose() {
-    _poll?.cancel();
-    super.dispose();
-  }
-
-  String get _prettyPan {
-    final digits = widget.pan.replaceAll(RegExp(r'\D'), '');
-    final out = <String>[];
-    for (var i = 0; i < digits.length; i += 4) {
-      out.add(digits.substring(i, (i + 4 > digits.length) ? digits.length : i + 4));
-    }
-    return out.join(' ');
-  }
-
-  Future<void> _copy(String label, String value) async {
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copié'), duration: const Duration(seconds: 1)),
-    );
-  }
-
-  Future<void> _ask3ds() async {
-    setState(() { _waiting3ds = true; _code = null; _error = null; _elapsed = 0; });
-    try {
-      await PayGateService.request3ds(
-          phone: widget.phone, cardToken: widget.cardToken, merchant: 'achat en ligne');
-    } catch (e) {
-      setState(() {
-        _waiting3ds = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
-      });
-      return;
-    }
-    _poll?.cancel();
-    _poll = Timer.periodic(_pollEvery, (t) async {
-      _elapsed += _pollEvery.inSeconds;
-      String? code;
-      try {
-        code = await PayGateService.fetch3dsCode(
-            phone: widget.phone, cardToken: widget.cardToken);
-      } catch (_) {/* transient — keep polling */}
-      if (!mounted) { t.cancel(); return; }
-      if (code != null && code.isNotEmpty) {
-        t.cancel();
-        setState(() { _code = code; _waiting3ds = false; });
-      } else if (_elapsed >= _giveUpAfter) {
-        t.cancel();
-        setState(() {
-          _waiting3ds = false;
-          _error = 'Pas de code reçu. Relance la demande depuis la page de paiement.';
-        });
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.only(
-          left: 20, right: 20, top: 20,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 28),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-            width: 42, height: 4,
-            decoration: BoxDecoration(
-                color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(height: 18),
-          Text('Ta carte de \$${widget.amount.toStringAsFixed(0)}',
-              style: TextStyle(
-                  color: AppColors.label, fontSize: 19, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text('Note-la maintenant — elle ne sera plus affichée',
-              style: TextStyle(color: Colors.orangeAccent.withValues(alpha: 0.9), fontSize: 12)),
-          const SizedBox(height: 18),
-
-          _row('Numéro', _revealed ? _prettyPan : '•••• •••• •••• ${_last4()}',
-              onCopy: () => _copy('Numéro', widget.pan.replaceAll(RegExp(r'\D'), ''))),
-          _row('Expiration', _revealed ? widget.exp : '••/••',
-              onCopy: () => _copy('Expiration', widget.exp)),
-          _row('CVV', _revealed ? widget.cvv : '•••',
-              onCopy: () => _copy('CVV', widget.cvv)),
-          if (widget.holderName != null && widget.holderName!.isNotEmpty)
-            _row('Titulaire', widget.holderName!),
-
-          const SizedBox(height: 10),
-          TextButton.icon(
-            onPressed: () => setState(() => _revealed = !_revealed),
-            icon: Icon(_revealed ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                size: 18),
-            label: Text(_revealed ? 'Masquer' : 'Afficher'),
-          ),
-
-          const Divider(height: 28),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Code de vérification (3D Secure)',
-                style: TextStyle(
-                    color: AppColors.label, fontWeight: FontWeight.w700, fontSize: 14)),
-          ),
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Si le site te demande un code, appuie ici — il arrive en quelques secondes.',
-              style: TextStyle(color: AppColors.textDim, fontSize: 12.5, height: 1.4),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          if (_code != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00D4FF).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFF00D4FF).withValues(alpha: 0.4)),
-              ),
-              child: Column(children: [
-                Text(_code!,
-                    style: const TextStyle(
-                        color: Color(0xFF00D4FF), fontSize: 30,
-                        fontWeight: FontWeight.bold, letterSpacing: 6)),
-                const SizedBox(height: 6),
-                TextButton.icon(
-                  onPressed: () => _copy('Code', _code!),
-                  icon: const Icon(Icons.copy_rounded, size: 16),
-                  label: const Text('Copier'),
-                ),
-              ]),
-            )
-          else
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _waiting3ds ? null : _ask3ds,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                icon: _waiting3ds
-                    ? const SizedBox(
-                        width: 16, height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.shield_outlined, size: 18),
-                label: Text(_waiting3ds
-                    ? 'En attente du code…  ${_elapsed}s'
-                    : 'Demander mon code 3DS'),
-              ),
-            ),
-
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(_error!,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
-                textAlign: TextAlign.center),
-          ],
-          const SizedBox(height: 8),
-        ]),
-      ),
-    );
-  }
-
-  String _last4() {
-    final d = widget.pan.replaceAll(RegExp(r'\D'), '');
-    return d.length >= 4 ? d.substring(d.length - 4) : d;
-  }
-
-  Widget _row(String label, String value, {VoidCallback? onCopy}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(children: [
-        SizedBox(
-          width: 92,
-          child: Text(label, style: TextStyle(color: AppColors.textDim, fontSize: 13)),
-        ),
-        Expanded(
-          child: Text(value,
-              style: TextStyle(
-                  color: AppColors.label, fontSize: 15.5,
-                  fontWeight: FontWeight.w600, letterSpacing: 0.5)),
-        ),
-        if (onCopy != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.copy_rounded, size: 17, color: Colors.white38),
-            onPressed: onCopy,
-          ),
-      ]),
-    );
-  }
-}
-
-class TransactionsScreen extends StatelessWidget {
-  const TransactionsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        elevation: 0,
-        title: Text('Historique',
-            style: TextStyle(
-                color: AppColors.label, fontWeight: FontWeight.bold)),
-      ),
-      body: FutureBuilder<List<VccTx>>(
-        future: VccTx.loadAll(),
-        builder: (ctx, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child: CircularProgressIndicator(
-                    color: Color(0xFF00D4FF)));
-          }
-          final txs = snap.data ?? [];
-          if (txs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.receipt_long_rounded,
-                      color: AppColors.border,
-                      size: 72),
-                  const SizedBox(height: 16),
-                  Text('Aucune transaction',
-                      style: TextStyle(
-                          color: AppColors.textSub,
-                          fontSize: 16)),
-                  const SizedBox(height: 6),
-                  Text('Activez votre carte pour commencer',
-                      style: TextStyle(
-                          color: AppColors.textDim,
-                          fontSize: 13)),
-                ],
-              ),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(20),
-            itemCount: txs.length,
-            separatorBuilder: (_, __) =>
-                const SizedBox(height: 8),
-            itemBuilder: (_, i) => _TxRow(tx: txs[i]),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ============================================
-// PROFILE SCREEN
-// ============================================
-// ============================================
-// REFERRAL / AFFILIATE SCREEN — earn 1% on every card a friend activates
-// ============================================
-class ReferralScreen extends StatefulWidget {
-  const ReferralScreen({super.key});
-  @override
-  State<ReferralScreen> createState() => _ReferralScreenState();
-}
-
-class _ReferralScreenState extends State<ReferralScreen> {
-  static const _green = Color(0xFF10B981);
-  Map<String, dynamic>? _data;
-  bool _loading = true;
-  String? _error;
-  final _codeCtrl = TextEditingController();
-  bool _claiming = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _codeCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final d = await PayGateService.referralSummary(UserProfile.phone.trim());
-      if (mounted) setState(() { _data = d; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _loading = false; });
-    }
-  }
-
-  Future<void> _claim() async {
-    final code = _codeCtrl.text.trim().toUpperCase();
-    if (code.isEmpty) return;
-    setState(() => _claiming = true);
-    try {
-      await PayGateService.referralClaim(phone: UserProfile.phone.trim(), code: code);
-      _codeCtrl.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Code de parrainage validé ✅'), backgroundColor: _green,
-        ));
-      }
-      await _load();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
-          backgroundColor: Colors.redAccent,
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _claiming = false);
-    }
-  }
-
-  String _money(dynamic v) => '\$${(double.tryParse('$v') ?? 0).toStringAsFixed(2)}';
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        elevation: 0,
-        title: Text('Parrainage', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w700)),
-        iconTheme: IconThemeData(color: AppColors.text),
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: _green))
-          : _error != null
-              ? _errorView()
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  color: _green,
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 40),
-                    children: _content(),
-                  ),
-                ),
-    );
-  }
-
-  Widget _errorView() => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.wifi_off_rounded, color: AppColors.textDim, size: 40),
-              const SizedBox(height: 12),
-              Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSub)),
-              const SizedBox(height: 16),
-              TextButton(onPressed: _load, child: const Text('Réessayer', style: TextStyle(color: _green))),
-            ],
-          ),
-        ),
-      );
-
-  List<Widget> _content() {
-    final d = _data!;
-    final code = d['code']?.toString() ?? '——';
-    final link = d['link']?.toString() ?? 'https://tchipa.co.uk';
-    final referredCount = d['referredCount'] ?? 0;
-    final myReferrer = d['referrerCode']?.toString();
-    final earnings = (d['earnings'] as List? ?? []);
-
-    return [
-      // Hero: the 1% promise
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            colors: [_green.withValues(alpha: 0.16), const Color(0xFFF59E0B).withValues(alpha: 0.10)],
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-          ),
-          border: Border.all(color: _green.withValues(alpha: 0.28)),
-        ),
-        child: Column(children: [
-          const Text('1%', style: TextStyle(color: _green, fontSize: 52, fontWeight: FontWeight.w900, height: 1)),
-          const SizedBox(height: 6),
-          Text('sur chaque carte activée par un ami que tu invites — payé en USDT.',
-              textAlign: TextAlign.center, style: TextStyle(color: AppColors.textSub, fontSize: 13, height: 1.4)),
-        ]),
-      ),
-      const SizedBox(height: 18),
-
-      // My code
-      Text('TON CODE DE PARRAINAGE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-      const SizedBox(height: 8),
-      Container(
-        padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
-        decoration: BoxDecoration(
-          color: AppColors.card, borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Row(children: [
-          Expanded(
-            child: Text(code, style: TextStyle(color: AppColors.text, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: 4)),
-          ),
-          IconButton(
-            icon: const Icon(Icons.copy_rounded, color: _green),
-            tooltip: 'Copier le code',
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: code));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Code copié')));
-            },
-          ),
-        ]),
-      ),
-      const SizedBox(height: 10),
-      Row(children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: link));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lien copié')));
-            },
-            icon: Icon(Icons.link_rounded, size: 18, color: AppColors.text),
-            label: Text('Copier le lien', style: TextStyle(color: AppColors.text)),
-            style: OutlinedButton.styleFrom(side: BorderSide(color: AppColors.border), padding: const EdgeInsets.symmetric(vertical: 12)),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => Share.share(
-                'Rejoins Tchipa et crée ta carte Mastercard virtuelle avec mon code $code 👉 $link'),
-            icon: const Icon(Icons.share_rounded, size: 18, color: Colors.black),
-            label: const Text('Partager', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
-            style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(vertical: 12)),
-          ),
-        ),
-      ]),
-      const SizedBox(height: 22),
-
-      // Earnings stats
-      Row(children: [
-        _statCard('Filleuls', '$referredCount', const Color(0xFF00D4FF)),
-        const SizedBox(width: 10),
-        _statCard('En attente', _money(d['pendingEarned']), const Color(0xFFF59E0B)),
-        const SizedBox(width: 10),
-        _statCard('Total gagné', _money(d['totalEarned']), _green),
-      ]),
-      const SizedBox(height: 22),
-
-      // Enter a friend's code (only if not already referred)
-      if (myReferrer == null) ...[
-        Text('TU AS ÉTÉ INVITÉ ?', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _codeCtrl,
-              textCapitalization: TextCapitalization.characters,
-              maxLength: 6,
-              style: TextStyle(color: AppColors.inputFg, letterSpacing: 3, fontWeight: FontWeight.w700),
-              decoration: InputDecoration(
-                counterText: '',
-                hintText: 'CODE AMI',
-                hintStyle: TextStyle(color: AppColors.hint, letterSpacing: 2),
-                filled: true, fillColor: AppColors.card,
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: AppColors.border)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _green)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          ElevatedButton(
-            onPressed: _claiming ? null : _claim,
-            style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16)),
-            child: _claiming
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                : const Text('Valider', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
-          ),
-        ]),
-        const SizedBox(height: 22),
-      ] else ...[
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
-          child: Row(children: [
-            const Icon(Icons.check_circle_outline_rounded, color: _green, size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text('Invité avec le code $myReferrer', style: TextStyle(color: AppColors.textSub, fontSize: 13))),
-          ]),
-        ),
-        const SizedBox(height: 22),
-      ],
-
-      // Auto-payout / withdrawal address
-      ..._payoutBlock(d),
-
-      // How it works
-      Text('COMMENT ÇA MARCHE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-      const SizedBox(height: 10),
-      _howRow('1', 'Partage ton code', 'Envoie ton code ou ton lien à tes amis.'),
-      _howRow('2', 'Ils activent une carte', 'Ton ami installe Tchipa et active une carte VCC.'),
-      _howRow('3', 'Tu gagnes 1%', 'Automatiquement crédité en USDT, sans limite de filleuls.'),
-      const SizedBox(height: 22),
-
-      // Recent earnings
-      if (earnings.isNotEmpty) ...[
-        Text('DERNIERS GAINS', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-        const SizedBox(height: 10),
-        ...earnings.map((e) {
-          final m = Map<String, dynamic>.from(e as Map);
-          final paid = m['status'] == 'paid';
-          return Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
-            child: Row(children: [
-              Icon(paid ? Icons.check_circle_rounded : Icons.hourglass_bottom_rounded,
-                  color: paid ? _green : const Color(0xFFF59E0B), size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text('Carte de ${_money(m['card_amount'])}', style: TextStyle(color: AppColors.text, fontSize: 13)),
-              ),
-              Text('+${_money(m['commission'])}', style: const TextStyle(color: _green, fontWeight: FontWeight.w800)),
-            ]),
-          );
-        }),
-      ],
-    ];
-  }
-
-  String _maskAddr(String a) => a.length > 12 ? '${a.substring(0, 6)}…${a.substring(a.length - 4)}' : a;
-
-  List<Widget> _payoutBlock(Map<String, dynamic> d) {
-    final addr = d['payoutAddress']?.toString();
-    final threshold = (double.tryParse('${d['payoutThreshold'] ?? 5}') ?? 5).toStringAsFixed(0);
-    final payouts = (d['payouts'] as List? ?? []);
-    return [
-      Text('RETRAIT AUTOMATIQUE', style: TextStyle(color: AppColors.textDim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-      const SizedBox(height: 10),
-      if (addr == null)
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              const Icon(Icons.account_balance_wallet_outlined, color: _green, size: 18),
-              const SizedBox(width: 8),
-              Expanded(child: Text('Reçois tes gains automatiquement', style: TextStyle(color: AppColors.text, fontSize: 13.5, fontWeight: FontWeight.w700))),
-            ]),
-            const SizedBox(height: 6),
-            Text('Ajoute ton adresse USDT (Polygon). Dès que tes gains atteignent $threshold USDT, on te les envoie tout seul — sans rien faire.',
-                style: TextStyle(color: AppColors.textSub, fontSize: 12, height: 1.4)),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _setAddressDialog,
-                icon: const Icon(Icons.add_rounded, size: 18, color: Colors.black),
-                label: const Text('Ajouter mon adresse', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
-                style: ElevatedButton.styleFrom(backgroundColor: _green, padding: const EdgeInsets.symmetric(vertical: 12)),
-              ),
-            ),
-          ]),
-        )
-      else ...[
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
-          child: Row(children: [
-            const Icon(Icons.check_circle_rounded, color: _green, size: 18),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(_maskAddr(addr), style: TextStyle(color: AppColors.text, fontSize: 14, fontWeight: FontWeight.w700, fontFamily: 'monospace')),
-                const SizedBox(height: 2),
-                Text('Paiement auto dès $threshold USDT · Polygon', style: TextStyle(color: AppColors.textSub, fontSize: 11.5)),
-              ]),
-            ),
-            IconButton(
-              icon: Icon(Icons.edit_outlined, color: AppColors.textSub, size: 18),
-              tooltip: 'Modifier l\'adresse',
-              onPressed: _setAddressDialog,
-            ),
-          ]),
-        ),
-        if (payouts.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          ...payouts.map((p) {
-            final m = Map<String, dynamic>.from(p as Map);
-            final st = m['status']?.toString();
-            final confirmed = st == 'confirmed';
-            final hash = m['tx_hash']?.toString();
-            return InkWell(
-              onTap: hash == null ? null : () => launchUrl(Uri.parse('https://polygonscan.com/tx/$hash'), mode: LaunchMode.externalApplication),
-              child: Container(
-                margin: const EdgeInsets.only(top: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.border)),
-                child: Row(children: [
-                  Icon(confirmed ? Icons.check_circle_rounded : (st == 'failed' ? Icons.error_outline_rounded : Icons.sync_rounded),
-                      color: confirmed ? _green : (st == 'failed' ? Colors.redAccent : const Color(0xFFF59E0B)), size: 16),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(confirmed ? 'Payé' : (st == 'failed' ? 'Échec' : 'En cours'), style: TextStyle(color: AppColors.textSub, fontSize: 12.5))),
-                  Text('${_money(m['amount'])} USDT', style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w700, fontSize: 12.5)),
-                  if (hash != null) Icon(Icons.open_in_new_rounded, color: AppColors.textDim, size: 13),
-                ]),
-              ),
-            );
-          }),
-        ],
-      ],
-      const SizedBox(height: 22),
-    ];
-  }
-
-  Future<void> _setAddressDialog() async {
-    final addrCtrl = TextEditingController();
-    final pinCtrl = TextEditingController();
-    bool busy = false;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: Text('Adresse de retrait USDT', style: TextStyle(color: AppColors.text, fontSize: 16)),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('Adresse Polygon (USDT) où recevoir tes gains. Modification protégée par ton PIN Tchipa.',
-                style: TextStyle(color: AppColors.textSub, fontSize: 12.5, height: 1.4)),
-            const SizedBox(height: 14),
-            TextField(
-              controller: addrCtrl,
-              style: TextStyle(color: AppColors.inputFg, fontSize: 13, fontFamily: 'monospace'),
-              decoration: InputDecoration(
-                hintText: '0x…', hintStyle: TextStyle(color: AppColors.hint),
-                filled: true, fillColor: AppColors.card,
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.border)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _green)),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: pinCtrl,
-              obscureText: true, keyboardType: TextInputType.number, maxLength: 6,
-              style: TextStyle(color: AppColors.inputFg, letterSpacing: 4),
-              decoration: InputDecoration(
-                counterText: '', hintText: 'PIN Tchipa', hintStyle: TextStyle(color: AppColors.hint),
-                filled: true, fillColor: AppColors.card,
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.border)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _green)),
-              ),
-            ),
-          ]),
-          actions: [
-            TextButton(onPressed: busy ? null : () => Navigator.pop(ctx), child: const Text('Annuler', style: TextStyle(color: Colors.white54))),
-            ElevatedButton(
-              onPressed: busy ? null : () async {
-                final address = addrCtrl.text.trim();
-                final pin = pinCtrl.text.trim();
-                if (address.isEmpty || pin.isEmpty) return;
-                setD(() => busy = true);
-                try {
-                  await PayGateService.setPayoutAddress(phone: UserProfile.phone.trim(), pin: pin, address: address);
-                  if (ctx.mounted) Navigator.pop(ctx);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Adresse enregistrée ✅'), backgroundColor: _green));
-                  }
-                  await _load();
-                } catch (e) {
-                  setD(() => busy = false);
-                  if (ctx.mounted) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                      content: Text(e.toString().replaceFirst('Exception: ', '')), backgroundColor: Colors.redAccent));
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: _green),
-              child: busy
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
-                  : const Text('Enregistrer', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statCard(String label, String value, Color color) => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-          decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)),
-          child: Column(children: [
-            Text(value, style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.w900)),
-            const SizedBox(height: 3),
-            Text(label, textAlign: TextAlign.center, style: TextStyle(color: AppColors.textDim, fontSize: 10.5)),
-          ]),
-        ),
-      );
-
-  Widget _howRow(String n, String title, String desc) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            width: 26, height: 26, alignment: Alignment.center,
-            decoration: BoxDecoration(color: _green.withValues(alpha: 0.14), shape: BoxShape.circle, border: Border.all(color: _green.withValues(alpha: 0.4))),
-            child: Text(n, style: const TextStyle(color: _green, fontSize: 12, fontWeight: FontWeight.w800)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: TextStyle(color: AppColors.text, fontSize: 13.5, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(desc, style: TextStyle(color: AppColors.textSub, fontSize: 12, height: 1.35)),
-            ]),
-          ),
-        ]),
-      );
 }
 
 class ProfileScreen extends StatefulWidget {
@@ -5923,14 +1360,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               const SizedBox(height: 32),
-              _gradientBtn(
-                label: 'Enregistrer',
-                loading: _saving,
-                colors: const [
-                  Color(0xFF00D4FF), Color(0xFF8B5CF6)
-                ],
-                onTap: _save,
-              ),
+              _GradButton(label: 'Enregistrer', busy: _saving, onTap: _save),
               const SizedBox(height: 28),
               Text(L.settings,
                   style: TextStyle(color: AppColors.textSub, fontSize: 12,
@@ -6018,43 +1448,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               const SizedBox(height: 20),
-              // — Programme de parrainage (gagne 1% sur chaque carte d'un filleul)
-              GestureDetector(
-                onTap: () {
-                  if (UserProfile.phone.trim().isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Renseigne et enregistre ton numéro d\'abord.'),
-                    ));
-                    return;
-                  }
-                  Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const ReferralScreen()));
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: const Color(0xFF10B981).withValues(alpha: 0.30)),
-                    borderRadius: BorderRadius.circular(14),
-                    color: const Color(0xFF10B981).withValues(alpha: 0.06),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.card_giftcard_rounded,
-                          color: Color(0xFF10B981), size: 18),
-                      SizedBox(width: 10),
-                      Text('Parrainage — gagne 1%',
-                          style: TextStyle(
-                              color: Color(0xFF10B981),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
               GestureDetector(
                 onTap: () => Navigator.push(context,
                     MaterialPageRoute(builder: (_) => const AgentWalletScreen())),
@@ -6083,88 +1476,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const AgentScreen())),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: const Color(0xFF00D4FF).withValues(alpha: 0.25)),
-                    borderRadius: BorderRadius.circular(14),
-                    color: const Color(0xFF00D4FF).withValues(alpha: 0.05),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.shield_outlined,
-                          color: Color(0xFF00D4FF), size: 18),
-                      const SizedBox(width: 10),
-                      Text(L.agentMode,
-                          style: const TextStyle(
-                              color: Color(0xFF00D4FF),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () async {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      backgroundColor: AppColors.surface,
-                      title: Text('Réinitialiser la carte',
-                          style: TextStyle(color: AppColors.text)),
-                      content: Text(
-                          'Cette action supprimera toutes les données de ta carte VCC de l\'appareil.',
-                          style: TextStyle(color: AppColors.textDim)),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Annuler',
-                              style: TextStyle(color: Colors.white54)),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Supprimer',
-                              style: TextStyle(color: Colors.redAccent)),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirm == true) {
-                    await VccCard.remove();
-                    if (mounted) setState(() {});
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                        color: Colors.redAccent.withValues(alpha: 0.25)),
-                    borderRadius: BorderRadius.circular(14),
-                    color: Colors.redAccent.withValues(alpha: 0.05),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.delete_outline_rounded,
-                          color: Colors.redAccent, size: 18),
-                      SizedBox(width: 10),
-                      Text('Réinitialiser ma carte',
-                          style: TextStyle(
-                              color: Colors.redAccent,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.5)),
-                    ],
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -6256,1690 +1567,6 @@ class _FieldLabel extends StatelessWidget {
               letterSpacing: 0.5)),
     );
   }
-}
-
-// ============================================
-// AGENT SCREEN
-// ============================================
-class AgentScreen extends StatefulWidget {
-  const AgentScreen({super.key});
-  @override
-  State<AgentScreen> createState() => _AgentScreenState();
-}
-
-class _AgentScreenState extends State<AgentScreen>
-    with SingleTickerProviderStateMixin {
-  // PIN lock
-  bool _unlocked = false;
-  String _pin = '';
-  bool _pinError = false;
-  String _pinExpected = '1234'; // loaded from AgentPin on initState
-  late AnimationController _shakeCtrl;
-  late Animation<double> _shakeAnim;
-
-  // Form
-  final _phoneCtrl   = TextEditingController();
-  final _nameCtrl    = TextEditingController();
-  final _emailCtrl   = TextEditingController();
-  final _customCtrl  = TextEditingController();
-  bool _isRecharge   = false;
-  double _amount     = 7.0;
-  bool _customMode   = false;
-  static const _presets = [7.0, 10.0, 20.0, 50.0, 100.0, 200.0, 300.0];
-
-  // State
-  bool _loading = false;
-  String? _error;
-  AgentOrder? _current; // active order being processed
-  Timer? _autoPoll;
-  bool _pinIsDefault = true;
-  int _pending3ds = 0;     // badge: clients stuck mid-checkout waiting on an OTP
-  Timer? _threedsPoll;
-
-  @override
-  void initState() {
-    super.initState();
-    _shakeCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 400));
-    _shakeAnim = TweenSequence([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: -12.0), weight: 1),
-      TweenSequenceItem(tween: Tween(begin: -12.0, end: 12.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: 12.0, end: -8.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: -8.0, end: 8.0), weight: 2),
-      TweenSequenceItem(tween: Tween(begin: 8.0, end: 0.0), weight: 1),
-    ]).animate(_shakeCtrl);
-    _bootstrap();
-  }
-
-  Future<void> _bootstrap() async {
-    _pinExpected = await AgentPin.get();
-    _pinIsDefault = await AgentPin.isDefault();
-    final order = await AgentOrder.load();
-    if (mounted) {
-      setState(() { if (order != null) _current = order; });
-      if (order != null) _startAutoPoll();
-    }
-  }
-
-  @override
-  void dispose() {
-    _autoPoll?.cancel();
-    _threedsPoll?.cancel();
-    _shakeCtrl.dispose();
-    _phoneCtrl.dispose();
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _customCtrl.dispose();
-    super.dispose();
-  }
-
-  // A waiting client has ~5 minutes before the merchant's checkout expires,
-  // so the badge has to be near-live or the relay is pointless.
-  void _start3dsWatch() {
-    _threedsPoll?.cancel();
-    _refresh3dsCount();
-    _threedsPoll = Timer.periodic(
-        const Duration(seconds: 20), (_) => _refresh3dsCount());
-  }
-
-  void _pressDigit(String d) {
-    if (_pin.length >= 4) return;
-    setState(() {
-      _pin += d;
-      _pinError = false;
-    });
-    if (_pin.length == 4) {
-      Future.delayed(const Duration(milliseconds: 120), _checkPin);
-    }
-  }
-
-  void _backspace() => setState(() {
-        if (_pin.isNotEmpty) _pin = _pin.substring(0, _pin.length - 1);
-        _pinError = false;
-      });
-
-  void _checkPin() {
-    if (_pin == _pinExpected) {
-      setState(() { _unlocked = true; _pinError = false; });
-      _start3dsWatch();
-    } else {
-      setState(() { _pin = ''; _pinError = true; });
-      _shakeCtrl.forward(from: 0);
-    }
-  }
-
-  Future<void> _changePinDialog() async {
-    final newPinCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text('Changer le PIN agent',
-            style: TextStyle(color: AppColors.text)),
-        content: TextField(
-          controller: newPinCtrl,
-          maxLength: 4,
-          keyboardType: TextInputType.number,
-          obscureText: true,
-          style: TextStyle(color: AppColors.text, letterSpacing: 8),
-          decoration: const InputDecoration(
-            hintText: '4 chiffres',
-            counterText: '',
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Annuler')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Enregistrer')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      await AgentPin.set(newPinCtrl.text.trim());
-      _pinExpected = newPinCtrl.text.trim();
-      _pinIsDefault = await AgentPin.isDefault();
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('PIN mis à jour')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(e.toString().replaceAll('Exception: ', '')),
-            backgroundColor: Colors.redAccent));
-      }
-    }
-  }
-
-  void _startAutoPoll() {
-    _autoPoll?.cancel();
-    _autoPoll = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (_current != null &&
-          _current!.state != AgentOrderState.completed) {
-        _checkStatus(silent: true);
-      }
-    });
-  }
-
-  Future<void> _checkStatus({bool silent = false}) async {
-    final c = _current;
-    if (c == null) return;
-    try {
-      final s = await PayGateService.checkAgentOrderStatus(c.agentOrderToken);
-      final state = switch (s['state']) {
-        'completed' => AgentOrderState.completed,
-        'paid'      => AgentOrderState.paid,
-        _           => AgentOrderState.pending,
-      };
-      if (state != c.state) {
-        final updated = c.copyWith(state: state);
-        await updated.save();
-        if (mounted) setState(() => _current = updated);
-        if (state == AgentOrderState.completed) {
-          _autoPoll?.cancel();
-        }
-      } else if (!silent) {
-        if (mounted) setState(() => _error = null); // clear stale error
-      }
-    } catch (e) {
-      if (!silent && mounted) {
-        setState(() => _error = e.toString().replaceAll('Exception: ', ''));
-      }
-    }
-  }
-
-  Future<void> _confirm() async {
-    final phone = _phoneCtrl.text.trim();
-    final name  = _nameCtrl.text.trim();
-    final email = _emailCtrl.text.trim();
-    if (phone.isEmpty || name.isEmpty || email.isEmpty) {
-      setState(() => _error = 'Téléphone, nom et email du client requis');
-      return;
-    }
-    if (!RegExp(r'^\+?\d[\d\s\-]{5,}$').hasMatch(phone)) {
-      setState(() => _error = 'Numéro invalide (format: +213 555 123 456)');
-      return;
-    }
-    if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
-      setState(() => _error = 'Email client invalide');
-      return;
-    }
-    setState(() { _loading = true; _error = null; });
-    try {
-      final order = await PayGateService.createVccOrder(
-        amount: _amount,
-        holderName: name,
-        phone: phone,
-        flow: _isRecharge ? 'recharge' : 'activation',
-        source: 'agent',
-        clientEmail: email,
-      );
-      final token = order.agentOrderToken;
-      if (token == null || token.isEmpty) {
-        throw Exception('Reponse backend invalide (token manquant)');
-      }
-      final agentOrder = AgentOrder(
-        agentOrderToken: token,
-        phone:           phone,
-        holderName:      name,
-        amountUsd:       order.cardValue,
-        flow:            _isRecharge ? 'recharge' : 'activation',
-        cryptoAddress:   order.cryptoAddress,
-        amountUsdt:      order.amountUsdt,
-        createdAt:       DateTime.now(),
-        claimCode:       order.claimCode,
-      );
-      await agentOrder.save();
-      if (!mounted) return;
-      setState(() { _current = agentOrder; _loading = false; });
-      _startAutoPoll();
-    } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _newOperation() async {
-    _autoPoll?.cancel();
-    await AgentOrder.clear();
-    if (mounted) {
-      setState(() {
-        _current = null;
-        _error = null;
-        _phoneCtrl.clear();
-        _nameCtrl.clear();
-        _emailCtrl.clear();
-        _customCtrl.clear();
-        _isRecharge = false;
-        _customMode = false;
-        _amount = 7.0;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        foregroundColor: AppColors.label,
-        elevation: 0,
-        title: const Text('Mode Agent',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        actions: [
-          if (_unlocked)
-            IconButton(
-              tooltip: 'Changer le PIN',
-              icon: const Icon(Icons.password_rounded),
-              onPressed: _changePinDialog,
-            ),
-        ],
-      ),
-      body: _unlocked ? _buildPanel() : _buildPinLock(),
-    );
-  }
-
-  // ── PIN LOCK ──────────────────────────────────────────────────
-  Widget _buildPinLock() {
-    return SafeArea(
-      child: Column(children: [
-        const SizedBox(height: 40),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xFF00D4FF).withValues(alpha: 0.1),
-            boxShadow: [
-              BoxShadow(
-                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3),
-                  blurRadius: 24),
-            ],
-          ),
-          child: const Icon(Icons.shield_rounded,
-              color: Color(0xFF00D4FF), size: 40),
-        ),
-        const SizedBox(height: 24),
-        Text('Code Agent',
-            style: TextStyle(
-                color: AppColors.label,
-                fontSize: 22,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text('Entrez votre code à 4 chiffres',
-            style: TextStyle(color: AppColors.hint, fontSize: 13)),
-        const SizedBox(height: 36),
-        AnimatedBuilder(
-          animation: _shakeAnim,
-          builder: (_, child) =>
-              Transform.translate(offset: Offset(_shakeAnim.value, 0), child: child),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(4, (i) {
-              final filled = i < _pin.length;
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.symmetric(horizontal: 10),
-                width: 18, height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _pinError
-                      ? Colors.redAccent
-                      : filled
-                          ? const Color(0xFF00D4FF)
-                          : Colors.white12,
-                  boxShadow: filled && !_pinError
-                      ? [BoxShadow(
-                          color: const Color(0xFF00D4FF).withValues(alpha: 0.5),
-                          blurRadius: 8)]
-                      : null,
-                ),
-              );
-            }),
-          ),
-        ),
-        if (_pinError) ...[
-          const SizedBox(height: 12),
-          const Text('Code incorrect',
-              style: TextStyle(color: Colors.redAccent, fontSize: 13)),
-        ],
-        const Spacer(),
-        // Numpad
-        Padding(
-          padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
-          child: Column(
-            children: [
-              for (final row in [
-                ['1', '2', '3'],
-                ['4', '5', '6'],
-                ['7', '8', '9'],
-                ['', '0', '⌫'],
-              ])
-                Row(
-                  children: row.map((d) {
-                    if (d.isEmpty) return const Expanded(child: SizedBox());
-                    return Expanded(
-                      child: GestureDetector(
-                        onTap: () =>
-                            d == '⌫' ? _backspace() : _pressDigit(d),
-                        child: Container(
-                          margin: const EdgeInsets.all(6),
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: d == '⌫'
-                                ? Colors.transparent
-                                : AppColors.card,
-                            borderRadius: BorderRadius.circular(14),
-                            border: d == '⌫'
-                                ? null
-                                : Border.all(
-                                    color: Colors.white.withValues(alpha: 0.06)),
-                          ),
-                          child: Center(
-                            child: d == '⌫'
-                                ? const Icon(Icons.backspace_outlined,
-                                    color: Colors.white54, size: 22)
-                                : Text(d,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.w500)),
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-            ],
-          ),
-        ),
-      ]),
-    );
-  }
-
-  // ── AGENT PANEL ───────────────────────────────────────────────
-  Widget _buildPanel() {
-    return Column(children: [
-      if (_pinIsDefault)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          color: Colors.redAccent.withValues(alpha: 0.12),
-          child: Row(children: [
-            const Icon(Icons.warning_amber_rounded,
-                color: Colors.redAccent, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'PIN par défaut (1234) — changez-le maintenant.',
-                style: TextStyle(color: Colors.redAccent.withValues(alpha: 0.95), fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ),
-            TextButton(
-              onPressed: _changePinDialog,
-              style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10)),
-              child: const Text('Changer',
-                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-            ),
-          ]),
-        ),
-      // Provider-independent tools, added after the July-2026 outage: issue a
-      // card bought by hand on any dashboard, and relay 3DS codes that land on
-      // our side instead of the buyer's phone.
-      if (_current == null)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-          child: Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _manualIssueSheet,
-                icon: const Icon(Icons.credit_card_rounded, size: 17),
-                label: const Text('Carte', style: TextStyle(fontSize: 13)),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _rechargeSheet,
-                icon: const Icon(Icons.add_card_rounded, size: 17),
-                label: const Text('Recharge', style: TextStyle(fontSize: 13)),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _threedsInbox,
-                icon: const Icon(Icons.shield_outlined, size: 17),
-                label: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Text('3DS', style: TextStyle(fontSize: 13)),
-                  if (_pending3ds > 0) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                          color: Colors.redAccent,
-                          borderRadius: BorderRadius.circular(9)),
-                      child: Text('$_pending3ds',
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 11,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ]),
-              ),
-            ),
-          ]),
-        ),
-      Expanded(
-        child: _current != null ? _buildOrderStatus() : _buildForm(),
-      ),
-    ]);
-  }
-
-  // ── Manual issuance ───────────────────────────────────────────────────
-  // The agent already bought the card upstream; this only records it so the
-  // client's existing PIN-gated flow can deliver it. A one-time LINK is always
-  // preferred — raw PAN is stored encrypted and wiped the moment the client
-  // reads it, so we hold card data for minutes, not forever.
-  Future<void> _manualIssueSheet() async {
-    final phoneCtrl = TextEditingController(text: _phoneCtrl.text.trim());
-    final amountCtrl = TextEditingController();
-    final linkCtrl = TextEditingController();
-    final panCtrl = TextEditingController();
-    final cvvCtrl = TextEditingController();
-    final expCtrl = TextEditingController();
-    final refCtrl = TextEditingController();
-    final cardIdCtrl = TextEditingController();
-    bool useLink = true;
-    bool busy = false;
-    String? err;
-    String? okMsg;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
-        Future<void> submit() async {
-          final phone = phoneCtrl.text.trim();
-          final amount = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
-          if (phone.length < 6) {
-            setSheet(() => err = 'Téléphone du client requis');
-            return;
-          }
-          if (amount == null || amount <= 0) {
-            setSheet(() => err = 'Montant invalide');
-            return;
-          }
-          final pan = panCtrl.text.replaceAll(RegExp(r'[\s-]'), '');
-          if (useLink) {
-            if (!linkCtrl.text.trim().startsWith('https://')) {
-              setSheet(() => err = 'Le lien doit commencer par https://');
-              return;
-            }
-          } else {
-            if (!RegExp(r'^\d{15,19}$').hasMatch(pan)) {
-              setSheet(() => err = 'Numéro invalide (15-19 chiffres)');
-              return;
-            }
-            if (!RegExp(r'^\d{3,4}$').hasMatch(cvvCtrl.text.trim())) {
-              setSheet(() => err = 'CVV invalide');
-              return;
-            }
-            if (!RegExp(r'^\d{2}/\d{2,4}$').hasMatch(expCtrl.text.trim())) {
-              setSheet(() => err = 'Expiration au format MM/AA');
-              return;
-            }
-          }
-          setSheet(() { busy = true; err = null; });
-          try {
-            final res = await PayGateService.manualIssue(
-              phone: phone,
-              amountUsd: amount,
-              provider: refCtrl.text.trim().isEmpty ? null : refCtrl.text.trim(),
-              providerCardId: cardIdCtrl.text.trim(),
-              cardLink: useLink ? linkCtrl.text.trim() : null,
-              pan: useLink ? null : pan,
-              cvv: useLink ? null : cvvCtrl.text.trim(),
-              exp: useLink ? null : expCtrl.text.trim(),
-            );
-            final code = res['claimCode']?.toString();
-            setSheet(() {
-              busy = false;
-              okMsg = code != null && code.isNotEmpty
-                  ? 'Enregistrée. Donne ce code au client : $code'
-                  : 'Enregistrée. Le client la débloque avec son PIN.';
-            });
-          } catch (e) {
-            setSheet(() {
-              busy = false;
-              err = e.toString().replaceFirst('Exception: ', '');
-            });
-          }
-        }
-
-        InputDecoration deco(String hint) => InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: AppColors.hint, fontSize: 13.5),
-              filled: true,
-              fillColor: AppColors.card,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: BorderSide.none),
-            );
-
-        return Padding(
-          padding: EdgeInsets.only(
-              left: 20, right: 20, top: 18,
-              bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 24),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            padding: const EdgeInsets.all(20),
-            child: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text('Carte achetée manuellement',
-                    style: TextStyle(
-                        color: AppColors.label, fontSize: 17,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text('Achète la carte chez ton fournisseur, puis saisis-la ici.',
-                    style: TextStyle(color: AppColors.textDim, fontSize: 12.5),
-                    textAlign: TextAlign.center),
-                const SizedBox(height: 18),
-                TextField(controller: phoneCtrl, keyboardType: TextInputType.phone,
-                    style: TextStyle(color: AppColors.inputFg),
-                    decoration: deco('Téléphone du client  +213…')),
-                const SizedBox(height: 10),
-                TextField(controller: amountCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: TextStyle(color: AppColors.inputFg),
-                    decoration: deco('Montant USD  ex: 20')),
-                const SizedBox(height: 10),
-                TextField(controller: refCtrl,
-                    style: TextStyle(color: AppColors.inputFg),
-                    decoration: deco('Fournisseur  ex: flexcard  (optionnel)')),
-                const SizedBox(height: 10),
-                TextField(controller: cardIdCtrl,
-                    style: TextStyle(color: AppColors.inputFg),
-                    decoration: deco('ID de la carte chez le fournisseur')),
-                const SizedBox(height: 4),
-                Text(
-                  'Indispensable pour pouvoir la recharger plus tard — '
-                  'c\'est là qu\'est la marge.',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, label: Text('Lien')),
-                    ButtonSegment(value: false, label: Text('Numéro')),
-                  ],
-                  selected: {useLink},
-                  onSelectionChanged: (s) => setSheet(() => useLink = s.first),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  useLink
-                      ? 'Recommandé : le numéro ne transite jamais par nos serveurs.'
-                      : 'Stocké chiffré, puis effacé dès que le client l\'a lu.',
-                  style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                if (useLink)
-                  TextField(controller: linkCtrl,
-                      style: TextStyle(color: AppColors.inputFg),
-                      decoration: deco('https://…  lien à usage unique'))
-                else ...[
-                  TextField(controller: panCtrl,
-                      keyboardType: TextInputType.number,
-                      style: TextStyle(color: AppColors.inputFg),
-                      decoration: deco('Numéro de carte')),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Expanded(
-                      child: TextField(controller: expCtrl,
-                          style: TextStyle(color: AppColors.inputFg),
-                          decoration: deco('MM/AA')),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(controller: cvvCtrl,
-                          keyboardType: TextInputType.number,
-                          style: TextStyle(color: AppColors.inputFg),
-                          decoration: deco('CVV')),
-                    ),
-                  ]),
-                ],
-                if (err != null) ...[
-                  const SizedBox(height: 12),
-                  Text(err!,
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
-                      textAlign: TextAlign.center),
-                ],
-                if (okMsg != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.greenAccent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(okMsg!,
-                        style: const TextStyle(
-                            color: Colors.greenAccent, fontSize: 13,
-                            fontWeight: FontWeight.w600),
-                        textAlign: TextAlign.center),
-                  ),
-                ],
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: busy ? null : (okMsg != null
-                        ? () => Navigator.of(sheetCtx).pop()
-                        : submit),
-                    style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14)),
-                    child: busy
-                        ? const SizedBox(
-                            width: 17, height: 17,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Text(okMsg != null ? 'Fermer' : 'Enregistrer la carte'),
-                  ),
-                ),
-              ]),
-            ),
-          ),
-        );
-      }),
-    );
-    _refresh3dsCount();
-  }
-
-  // ── Recharge ──────────────────────────────────────────────────────────
-  // The profitable path: the issuance fee was paid once, a top-up costs only
-  // the deposit percentage. The agent looks up the client, reads the upstream
-  // card id, tops it up on the provider dashboard, then records it here.
-  Future<void> _rechargeSheet() async {
-    final phoneCtrl = TextEditingController(text: _phoneCtrl.text.trim());
-    final amountCtrl = TextEditingController();
-    List<Map<String, dynamic>> cards = [];
-    Map<String, dynamic>? selected;
-    bool searching = false;
-    bool busy = false;
-    String? err;
-    String? okMsg;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
-        Future<void> search() async {
-          final p = phoneCtrl.text.trim();
-          if (p.length < 6) {
-            setSheet(() => err = 'Téléphone requis');
-            return;
-          }
-          setSheet(() { searching = true; err = null; okMsg = null; selected = null; });
-          try {
-            final r = await PayGateService.fetchClientCards(p);
-            setSheet(() {
-              cards = r;
-              searching = false;
-              if (r.isEmpty) err = 'Aucune carte pour ce numéro.';
-            });
-          } catch (e) {
-            setSheet(() {
-              searching = false;
-              err = e.toString().replaceFirst('Exception: ', '');
-            });
-          }
-        }
-
-        Future<void> submit() async {
-          final amount = double.tryParse(amountCtrl.text.trim().replaceAll(',', '.'));
-          if (selected == null) {
-            setSheet(() => err = 'Choisis une carte');
-            return;
-          }
-          if (amount == null || amount <= 0) {
-            setSheet(() => err = 'Montant invalide');
-            return;
-          }
-          setSheet(() { busy = true; err = null; });
-          try {
-            await PayGateService.manualRecharge(
-              cardToken: selected!['cardToken'].toString(),
-              amountUsd: amount,
-            );
-            setSheet(() {
-              busy = false;
-              okMsg = 'Recharge de \$${amount.toStringAsFixed(0)} enregistrée.';
-            });
-            await search();
-          } catch (e) {
-            setSheet(() {
-              busy = false;
-              err = e.toString().replaceFirst('Exception: ', '');
-            });
-          }
-        }
-
-        InputDecoration deco(String hint) => InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: AppColors.hint, fontSize: 13.5),
-              filled: true,
-              fillColor: AppColors.card,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: BorderSide.none),
-            );
-
-        return Padding(
-          padding: EdgeInsets.only(
-              left: 16, right: 16, top: 50,
-              bottom: MediaQuery.of(sheetCtx).viewInsets.bottom + 20),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            padding: const EdgeInsets.all(18),
-            child: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text('Recharger un client',
-                    style: TextStyle(
-                        color: AppColors.label, fontSize: 17,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 14),
-                Row(children: [
-                  Expanded(
-                    child: TextField(controller: phoneCtrl,
-                        keyboardType: TextInputType.phone,
-                        style: TextStyle(color: AppColors.inputFg),
-                        decoration: deco('Téléphone du client')),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: searching ? null : search,
-                    style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 14)),
-                    child: searching
-                        ? const SizedBox(
-                            width: 15, height: 15,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Chercher'),
-                  ),
-                ]),
-                if (cards.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  ...cards.map((c) {
-                    final isSel = selected != null &&
-                        selected!['cardToken'] == c['cardToken'];
-                    final upstream = c['providerCardId']?.toString();
-                    return GestureDetector(
-                      onTap: () => setSheet(() { selected = c; err = null; }),
-                      child: Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: isSel
-                              ? const Color(0xFF00D4FF).withValues(alpha: 0.12)
-                              : AppColors.card,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: isSel
-                                  ? const Color(0xFF00D4FF)
-                                  : Colors.white.withValues(alpha: 0.07)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(children: [
-                              Text('\$${(c['totalUsd'] as num?)?.toStringAsFixed(0) ?? '?'}',
-                                  style: TextStyle(
-                                      color: AppColors.label, fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(width: 8),
-                              Text('${c['provider'] ?? '?'}',
-                                  style: TextStyle(
-                                      color: AppColors.textDim, fontSize: 12)),
-                              const Spacer(),
-                              if ((c['rechargeCount'] as num? ?? 0) > 0)
-                                Text('${c['rechargeCount']} recharge(s)',
-                                    style: const TextStyle(
-                                        color: Colors.greenAccent, fontSize: 11.5)),
-                            ]),
-                            const SizedBox(height: 6),
-                            if (upstream != null && upstream.isNotEmpty)
-                              Row(children: [
-                                Expanded(
-                                  child: Text('ID fournisseur : $upstream',
-                                      style: const TextStyle(
-                                          color: Color(0xFF00D4FF),
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w600)),
-                                ),
-                                IconButton(
-                                  visualDensity: VisualDensity.compact,
-                                  icon: const Icon(Icons.copy_rounded,
-                                      size: 16, color: Colors.white38),
-                                  onPressed: () async {
-                                    await Clipboard.setData(
-                                        ClipboardData(text: upstream));
-                                    if (sheetCtx.mounted) {
-                                      ScaffoldMessenger.of(sheetCtx).showSnackBar(
-                                        const SnackBar(
-                                            content: Text('ID copié'),
-                                            duration: Duration(seconds: 1)),
-                                      );
-                                    }
-                                  },
-                                ),
-                              ])
-                            else
-                              Text(
-                                'Aucun ID enregistré — retrouve la carte à la main '
-                                'chez le fournisseur.',
-                                style: TextStyle(
-                                    color: Colors.orangeAccent.withValues(alpha: 0.9),
-                                    fontSize: 11.5),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Recharge d\'abord la carte chez le fournisseur, puis note le '
-                    'montant ici.',
-                    style: TextStyle(color: AppColors.textDim, fontSize: 11.5),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(controller: amountCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      style: TextStyle(color: AppColors.inputFg),
-                      decoration: deco('Montant rechargé (USD)')),
-                ],
-                if (err != null) ...[
-                  const SizedBox(height: 12),
-                  Text(err!,
-                      style: const TextStyle(color: Colors.redAccent, fontSize: 12.5),
-                      textAlign: TextAlign.center),
-                ],
-                if (okMsg != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.greenAccent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(okMsg!,
-                        style: const TextStyle(
-                            color: Colors.greenAccent, fontSize: 13,
-                            fontWeight: FontWeight.w600),
-                        textAlign: TextAlign.center),
-                  ),
-                ],
-                if (cards.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: busy ? null : submit,
-                      style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14)),
-                      child: busy
-                          ? const SizedBox(
-                              width: 17, height: 17,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('Enregistrer la recharge'),
-                    ),
-                  ),
-                ],
-              ]),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
-  // ── 3DS inbox ─────────────────────────────────────────────────────────
-  // Each row says WHICH client is waiting on WHICH card — the attribution the
-  // provider's Telegram feed cannot give you once two clients buy at once.
-  Future<void> _threedsInbox() async {
-    // State lives OUTSIDE the StatefulBuilder — declaring it inside would reset
-    // it on every rebuild and spin load() forever.
-    List<Map<String, dynamic>> rows = [];
-    bool loading = true;
-    String? err;
-    bool started = false;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetCtx) => StatefulBuilder(builder: (sheetCtx, setSheet) {
-        Future<void> load() async {
-          setSheet(() { loading = true; err = null; });
-          try {
-            final r = await PayGateService.fetch3dsPending();
-            setSheet(() { rows = r; loading = false; });
-          } catch (e) {
-            setSheet(() {
-              loading = false;
-              err = e.toString().replaceFirst('Exception: ', '');
-            });
-          }
-        }
-
-        if (!started) {
-          started = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) => load());
-        }
-
-        Future<void> answer(int id) async {
-          final ctrl = TextEditingController();
-          final ok = await showDialog<bool>(
-            context: sheetCtx,
-            builder: (d) => AlertDialog(
-              backgroundColor: AppColors.surface,
-              title: Text('Code reçu du fournisseur',
-                  style: TextStyle(color: AppColors.label, fontSize: 16)),
-              content: TextField(
-                controller: ctrl,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                style: TextStyle(color: AppColors.inputFg, letterSpacing: 4),
-                decoration: const InputDecoration(hintText: '123456'),
-              ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.of(d).pop(false),
-                    child: const Text('Annuler')),
-                ElevatedButton(
-                    onPressed: () => Navigator.of(d).pop(true),
-                    child: const Text('Envoyer')),
-              ],
-            ),
-          );
-          if (ok != true) return;
-          try {
-            await PayGateService.answer3ds(id: id, code: ctrl.text.trim());
-            await load();
-          } catch (e) {
-            setSheet(() => err = e.toString().replaceFirst('Exception: ', ''));
-          }
-        }
-
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 60, 16, 20),
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            padding: const EdgeInsets.all(18),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Row(children: [
-                Expanded(
-                  child: Text('Demandes 3D Secure',
-                      style: TextStyle(
-                          color: AppColors.label, fontSize: 16.5,
-                          fontWeight: FontWeight.bold)),
-                ),
-                IconButton(
-                    onPressed: load,
-                    icon: const Icon(Icons.refresh_rounded, size: 20)),
-              ]),
-              const SizedBox(height: 4),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (err != null)
-                Text(err!, style: const TextStyle(color: Colors.redAccent, fontSize: 12.5))
-              else if (rows.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 26),
-                  child: Text('Aucun client en attente.',
-                      style: TextStyle(color: AppColors.textDim, fontSize: 13)),
-                )
-              else
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 400),
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: rows.length,
-                    separatorBuilder: (_, __) => const Divider(height: 16),
-                    itemBuilder: (_, i) {
-                      final r = rows[i];
-                      final left = (r['seconds_left'] as num?)?.toInt() ?? 0;
-                      return Row(children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(r['phone']?.toString() ?? '?',
-                                  style: TextStyle(
-                                      color: AppColors.label,
-                                      fontWeight: FontWeight.w700, fontSize: 14)),
-                              const SizedBox(height: 2),
-                              Text(
-                                '\$${r['amount_usd'] ?? '?'} · ${r['provider'] ?? '?'}'
-                                ' · ${left}s restantes',
-                                style: TextStyle(
-                                    color: left < 60
-                                        ? Colors.orangeAccent
-                                        : AppColors.textDim,
-                                    fontSize: 11.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => answer((r['id'] as num).toInt()),
-                          style: ElevatedButton.styleFrom(
-                              visualDensity: VisualDensity.compact),
-                          child: const Text('Coller', style: TextStyle(fontSize: 12.5)),
-                        ),
-                      ]);
-                    },
-                  ),
-                ),
-            ]),
-          ),
-        );
-      }),
-    );
-    _refresh3dsCount();
-  }
-
-  Future<void> _refresh3dsCount() async {
-    try {
-      final r = await PayGateService.fetch3dsPending();
-      if (mounted) setState(() => _pending3ds = r.length);
-    } catch (_) {/* badge is cosmetic */}
-  }
-
-  Widget _buildForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 12),
-          // Type toggle
-          Container(
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(children: [
-              _typeBtn('Activation', !_isRecharge, () {
-                setState(() { _isRecharge = false; _amount = 7.0; });
-              }),
-              _typeBtn('Rechargement', _isRecharge, () {
-                setState(() { _isRecharge = true; _amount = 20.0; });
-              }),
-            ]),
-          ),
-          const SizedBox(height: 24),
-          const _FieldLabel('Téléphone du client *'),
-          TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: '+213 XXX XXX XXX',
-              hintStyle: TextStyle(color: AppColors.hint),
-              filled: true,
-              fillColor: AppColors.card,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00D4FF))),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const _FieldLabel('Nom complet du client *'),
-          TextField(
-            controller: _nameCtrl,
-            textCapitalization: TextCapitalization.words,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'Prénom Nom',
-              hintStyle: TextStyle(color: AppColors.hint),
-              filled: true,
-              fillColor: AppColors.card,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00D4FF))),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const _FieldLabel('Email du client *'),
-          TextField(
-            controller: _emailCtrl,
-            keyboardType: TextInputType.emailAddress,
-            autocorrect: false,
-            style: const TextStyle(color: Colors.white),
-            decoration: InputDecoration(
-              hintText: 'client@email.com',
-              hintStyle: TextStyle(color: AppColors.hint),
-              helperText: 'Doit être l\'email que le client a vérifié dans son app Tchipa.',
-              helperStyle: TextStyle(color: AppColors.textDim, fontSize: 11),
-              filled: true,
-              fillColor: AppColors.card,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00D4FF))),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
-            ),
-          ),
-          if (_isRecharge) ...[
-            const SizedBox(height: 20),
-            const _FieldLabel('Montant (USD)'),
-            Wrap(
-              spacing: 8, runSpacing: 8,
-              children: [
-                ..._presets.where((p) => p != 7.0).map((p) {
-                  final sel = !_customMode && _amount == p;
-                  return GestureDetector(
-                    onTap: () => setState(() { _amount = p; _customMode = false; _customCtrl.clear(); }),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: sel ? const Color(0xFF00D4FF) : AppColors.card,
-                        border: sel ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                      ),
-                      child: Text('\$${p.toStringAsFixed(0)}',
-                          style: TextStyle(
-                              color: sel ? Colors.black : Colors.white70,
-                              fontWeight: FontWeight.w600)),
-                    ),
-                  );
-                }),
-                GestureDetector(
-                  onTap: () => setState(() { _customMode = true; }),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      color: _customMode ? const Color(0xFF8B5CF6) : AppColors.card,
-                      border: _customMode ? null : Border.all(color: Colors.white.withValues(alpha: 0.1)),
-                    ),
-                    child: Text('Autre',
-                        style: TextStyle(
-                            color: _customMode ? Colors.white : Colors.white70,
-                            fontWeight: FontWeight.w600)),
-                  ),
-                ),
-              ],
-            ),
-            if (_customMode) ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _customCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: TextStyle(color: AppColors.inputFg),
-                onChanged: (v) {
-                  final parsed = double.tryParse(v);
-                  if (parsed != null && parsed >= 5) setState(() => _amount = parsed);
-                },
-                decoration: InputDecoration(
-                  hintText: 'Montant libre (min 5\$)',
-                  hintStyle: TextStyle(color: Colors.white38),
-                  prefixText: '\$ ',
-                  prefixStyle: const TextStyle(color: Color(0xFF00D4FF), fontWeight: FontWeight.bold),
-                  filled: true,
-                  fillColor: AppColors.card,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF8B5CF6))),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFF8B5CF6), width: 2)),
-                  enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: const Color(0xFF8B5CF6).withValues(alpha: 0.5))),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
-              ),
-            ],
-          ],
-          const SizedBox(height: 24),
-          // Summary box — shown only for recharge (no fee display for activation)
-          if (_isRecharge)
-          Container(
-            padding: const EdgeInsets.symmetric(
-                vertical: 14, horizontal: 20),
-            decoration: BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                  color: const Color(0xFF00D4FF).withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Montant à encaisser',
-                    style: TextStyle(
-                        color: AppColors.textSub,
-                        fontSize: 13)),
-                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                  Text('\$${_amount.toStringAsFixed(0)} USD',
-                      style: const TextStyle(
-                          color: Color(0xFF00D4FF),
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold)),
-                  Text(
-                      '${(_amount * kExchangeRate).toStringAsFixed(0)} DA',
-                      style: TextStyle(
-                          color: AppColors.textDim,
-                          fontSize: 11)),
-                ]),
-              ],
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                  color: Colors.redAccent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Text(_error!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Colors.redAccent, fontSize: 13)),
-            ),
-          ],
-          const SizedBox(height: 24),
-          _gradientBtn(
-            label: _isRecharge
-                ? 'Confirmer le rechargement'
-                : 'Activer la carte',
-            loading: _loading,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _confirm,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _typeBtn(String label, bool active, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          margin: const EdgeInsets.all(4),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            gradient: active
-                ? const LinearGradient(
-                    colors: [Color(0xFF00D4FF), Color(0xFF8B5CF6)])
-                : null,
-          ),
-          child: Text(label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: active ? Colors.black : AppColors.sublabel,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOrderStatus() {
-    final o = _current!;
-    final isCompleted = o.state == AgentOrderState.completed;
-    final isPaid      = o.state == AgentOrderState.paid;
-
-    // Icon + headline reflect the actual lifecycle stage so the agent
-    // can never confuse "order created" with "payment confirmed".
-    final IconData icon;
-    final Color   iconColor;
-    final String  headline;
-    final String  subline;
-    if (isCompleted) {
-      icon = Icons.check_circle_rounded;
-      iconColor = const Color(0xFF22D3A1);
-      headline = 'Carte livrée au client';
-      subline = 'Le client ${o.holderName} (${o.phone}) verra la carte apparaître dans son app Tchipa.';
-    } else if (isPaid) {
-      icon = Icons.hourglass_bottom_rounded;
-      iconColor = const Color(0xFFFFB020);
-      headline = 'Paiement reçu — carte en émission';
-      subline = 'PayGate génère la carte (~30–60s). On vérifie automatiquement.';
-    } else {
-      icon = Icons.payments_rounded;
-      iconColor = const Color(0xFF00D4FF);
-      headline = 'En attente du paiement USDT';
-      subline = 'Envoyez exactement le montant ci-dessous au wallet VPS (Polygon). On vérifie automatiquement.';
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: iconColor, size: 48),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(headline,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: AppColors.text,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(subline,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textSub, fontSize: 13)),
-          const SizedBox(height: 20),
-
-          // Client info — always visible (no card secrets here, just routing info)
-          _infoCard('Client', '${o.holderName}  ·  ${o.phone}', Icons.person_outline_rounded),
-          const SizedBox(height: 12),
-          _infoCard('Type · Montant',
-              '${o.flow == 'recharge' ? 'Rechargement' : 'Activation'}  ·  \$${o.amountUsd.toStringAsFixed(0)}',
-              Icons.tune_rounded),
-          const SizedBox(height: 12),
-
-          // Claim code — to be relayed to the client out-of-band (Telegram).
-          // Without it the user's app cannot unlock the redeem link, so
-          // someone who only knows the phone number can't steal the card.
-          if (o.claimCode != null && o.claimCode!.isNotEmpty) ...[
-            _ClaimCodeCard(code: o.claimCode!),
-            const SizedBox(height: 12),
-          ],
-
-          // Payment instructions — hide once paid
-          if (!isPaid && !isCompleted) ...[
-            _infoCard('Montant USDT (Polygon)', '${o.amountUsdt} USDT', Icons.toll_rounded),
-            const SizedBox(height: 12),
-            _infoCard('Envoyer USDT ici (Polygon)', o.cryptoAddress, Icons.account_balance_wallet_rounded),
-            const SizedBox(height: 12),
-          ],
-
-          // Référence courte (8 premiers chars du token) — utile pour le SAV
-          // sans jamais exposer le redeem_id sous-jacent au PayGate.
-          _infoCard(
-            'Référence',
-            o.agentOrderToken.isEmpty
-                ? '—'
-                : o.agentOrderToken.substring(0, 8).toUpperCase(),
-            Icons.tag_rounded,
-          ),
-
-          if (_error != null) ...[
-            const SizedBox(height: 16),
-            Text(_error!, textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
-          ],
-
-          const SizedBox(height: 24),
-          if (!isCompleted)
-            _gradientBtn(
-              label: 'Vérifier le paiement',
-              loading: false,
-              colors: const [Color(0xFF00D4FF), Color(0xFF0096FF)],
-              onTap: () => _checkStatus(),
-            ),
-          if (isCompleted)
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF22D3A1).withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF22D3A1).withValues(alpha: 0.3)),
-              ),
-              child: Row(children: [
-                const Icon(Icons.lock_outline_rounded,
-                    color: Color(0xFF22D3A1), size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Les détails de la carte (numéro, CVV, expiration) ne sont jamais visibles côté agent. Ils n\'apparaissent que sur l\'app du client.',
-                    style: TextStyle(color: AppColors.textSub, fontSize: 12),
-                  ),
-                ),
-              ]),
-            ),
-          const SizedBox(height: 12),
-          _gradientBtn(
-            label: 'Nouvelle opération',
-            loading: false,
-            colors: const [Color(0xFF00D4FF), Color(0xFF8B5CF6)],
-            onTap: _newOperation,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoCard(String label, String value, IconData icon) {
-    return GestureDetector(
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: value));
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('$label copié'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: AppColors.card,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-        ));
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: const Color(0xFF00D4FF).withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Icon(icon, color: const Color(0xFF00D4FF), size: 14),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 10,
-                      letterSpacing: 1.2)),
-              const Spacer(),
-              const Icon(Icons.copy_rounded,
-                  color: Colors.white24, size: 14),
-            ]),
-            const SizedBox(height: 8),
-            Text(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'monospace',
-                    letterSpacing: 1.5)),
-          ],
-        ),
-      ),
-    );
-  }
-
-}
-
-// Prominent claim-code card shown in the agent panel. The agent must read
-// this code and send it to the client via Telegram/SMS — the client's app
-// asks for it before unlocking the redeem link.
-class _ClaimCodeCard extends StatelessWidget {
-  final String code;
-  const _ClaimCodeCard({required this.code});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: code));
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Code copié — envoyez-le au client'),
-          duration: const Duration(seconds: 2),
-          backgroundColor: AppColors.card,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
-        ));
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              const Color(0xFFFFB020).withValues(alpha: 0.18),
-              const Color(0xFFFF7A00).withValues(alpha: 0.08),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: const Color(0xFFFFB020).withValues(alpha: 0.5)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              const Icon(Icons.vpn_key_rounded,
-                  color: Color(0xFFFFB020), size: 16),
-              const SizedBox(width: 8),
-              const Text('CODE DE DÉVERROUILLAGE',
-                  style: TextStyle(
-                      color: Color(0xFFFFB020),
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2)),
-              const Spacer(),
-              const Icon(Icons.copy_rounded,
-                  color: Color(0xFFFFB020), size: 16),
-            ]),
-            const SizedBox(height: 10),
-            Center(
-              child: Text(code,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'monospace',
-                      letterSpacing: 10)),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Envoyez ce code au client par Telegram. Sans lui, son app ne pourra pas récupérer la carte.',
-              style: TextStyle(color: AppColors.textSub, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ============================================
-// SHARED HELPERS
-// ============================================
-
-Widget _gradientBtn({
-  required String label,
-  required bool loading,
-  required List<Color> colors,
-  required VoidCallback onTap,
-}) {
-  return GestureDetector(
-    onTap: loading ? null : onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: colors),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: loading
-          ? const Center(
-              child: SizedBox(
-                width: 22, height: 22,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2.5, color: Colors.black),
-              ),
-            )
-          : Text(label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16)),
-    ),
-  );
 }
 
 // ============================================
@@ -8069,319 +1696,6 @@ class _ElectricLogoPainter extends CustomPainter {
 }
 
 // ============================================
-// CARD WEBVIEW SCREEN
-// ============================================
-class CardWebViewScreen extends StatefulWidget {
-  final String url;
-  final String title;
-  final void Function(String? cardNumber, String? cvv, String? expiry)? onCardData;
-  const CardWebViewScreen({super.key, required this.url, this.title = 'Ma carte', this.onCardData});
-
-  @override
-  State<CardWebViewScreen> createState() => _CardWebViewScreenState();
-}
-
-class _CardWebViewScreenState extends State<CardWebViewScreen> {
-  late final WebViewController _controller;
-  bool _loading = true;
-  bool _extracted = false;
-  bool _showFallback = false; // true only if extraction failed after timeout
-
-  // Robust card-data extraction. Swype's reveal page is a React SPA — the
-  // card data appears in the DOM only after async hydration finishes, which
-  // can be 2-8s after onPageFinished depending on network. So we retry on
-  // a MutationObserver-flavoured schedule rather than fire-and-forget.
-  //
-  // Strategy stack, each attempt:
-  //   1. <input>/<textarea> values — Swype renders the card in masked
-  //      inputs the user can "reveal"/"copy"; .value carries the data even
-  //      when textContent is empty.
-  //   2. Leaf elements with short numeric text — divs/spans holding the PAN
-  //      after the user clicks "show".
-  //   3. data-* attributes & aria-labels — copy-to-clipboard buttons often
-  //      stash the value here.
-  //   4. Whole-body regex sweep — last resort if the above selectors miss.
-  static const _kExtractJs = r'''
-(function(){
-  if (window.__tchipaExtractStarted) return; window.__tchipaExtractStarted = true;
-  var attempts = 0;
-  var MAX_ATTEMPTS = 12;        // ~18s total at 1500ms apart
-  var INTERVAL_MS = 1500;
-  function looksLikePan(s){ var d=String(s||'').replace(/[\s-]/g,''); return /^\d{15,19}$/.test(d) ? d : null; }
-  function looksLikeCvv(s){ var d=String(s||'').replace(/\D/g,''); return /^\d{3,4}$/.test(d) ? d : null; }
-  function looksLikeExp(s){ var t=String(s||'').trim(); return /\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/.test(t) ? t.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/)[0] : null; }
-  function collect(){
-    var hits = { n:null, c:null, e:null };
-    // --- inputs / textareas (value) ---
-    var inputs = document.querySelectorAll('input,textarea');
-    for (var i = 0; i < inputs.length; i++) {
-      var v = inputs[i].value || inputs[i].getAttribute('value') || '';
-      if (!v) continue;
-      if (!hits.n) { var n = looksLikePan(v); if (n) hits.n = n; }
-      if (!hits.c) { var c = looksLikeCvv(v); if (c) hits.c = c; }
-      if (!hits.e) { var e = looksLikeExp(v); if (e) hits.e = e; }
-    }
-    // --- data-clipboard-text / data-value / aria-label on any element ---
-    if (!hits.n || !hits.c || !hits.e) {
-      var withAttrs = document.querySelectorAll('[data-clipboard-text],[data-value],[data-copy],[aria-label]');
-      for (var j = 0; j < withAttrs.length; j++) {
-        var el = withAttrs[j];
-        var v2 = el.getAttribute('data-clipboard-text') || el.getAttribute('data-value') ||
-                 el.getAttribute('data-copy') || el.getAttribute('aria-label') || '';
-        if (!v2) continue;
-        if (!hits.n) { var n2 = looksLikePan(v2); if (n2) hits.n = n2; }
-        if (!hits.c) { var c2 = looksLikeCvv(v2); if (c2) hits.c = c2; }
-        if (!hits.e) { var e2 = looksLikeExp(v2); if (e2) hits.e = e2; }
-      }
-    }
-    // --- leaf elements (short text only) ---
-    if (!hits.n || !hits.c || !hits.e) {
-      var all = document.querySelectorAll('*');
-      for (var k = 0; k < all.length && (!hits.n || !hits.c || !hits.e); k++) {
-        var elx = all[k];
-        if (elx.children && elx.children.length > 0) continue;
-        var t = (elx.textContent || '').replace(/\s+/g, ' ').trim();
-        if (!t || t.length > 30) continue;
-        if (!hits.n) { var nn = looksLikePan(t); if (nn) hits.n = nn; }
-        if (!hits.c) { var cc = looksLikeCvv(t); if (cc) hits.c = cc; }
-        if (!hits.e) { var ee = looksLikeExp(t); if (ee) hits.e = ee; }
-      }
-    }
-    // --- whole-body regex (handles concatenated text nodes) ---
-    if (!hits.n || !hits.c || !hits.e) {
-      var b = document.body ? document.body.innerText : '';
-      if (!hits.n) { var m1 = b.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/); if (m1) hits.n = m1[1].replace(/[\s-]/g,''); }
-      if (!hits.c) { var m2 = b.match(/CVV[^\d]{0,10}(\d{3,4})/i)||b.match(/CVC[^\d]{0,10}(\d{3,4})/i)||b.match(/Security[^\d]{0,15}(\d{3,4})/i); if (m2) hits.c = m2[1]; }
-      if (!hits.e) { var m3 = b.match(/\b(0[1-9]|1[0-2])[\/\-](\d{2,4})\b/); if (m3) hits.e = m3[0]; }
-    }
-    return hits;
-  }
-  function tick(){
-    attempts++;
-    try {
-      var r = collect();
-      if (r.n) { // PAN is the gate — without it the whole row is useless
-        TchipaCard.postMessage(JSON.stringify({cardNumber:r.n, cvv:r.c, expiry:r.e}));
-        return;
-      }
-    } catch(err){ /* swallow per-tick; keep retrying */ }
-    if (attempts < MAX_ATTEMPTS) {
-      setTimeout(tick, INTERVAL_MS);
-    } else {
-      // Final diagnostic so we know what the page actually contained.
-      try {
-        var snippet = (document.body ? document.body.innerText : '').slice(0, 400);
-        TchipaCard.postMessage(JSON.stringify({error:'extraction_timeout', snippet:snippet}));
-      } catch(_){ TchipaCard.postMessage(JSON.stringify({error:'extraction_timeout'})); }
-    }
-  }
-  setTimeout(tick, 800); // small head start so the SPA can render the first frame
-})();
-''';
-
-  @override
-  void initState() {
-    super.initState();
-    // Always reveal the underlying WebView after 8s so the user can read +
-    // copy the numbers manually if our JS scrape fails. Total extraction
-    // budget is ~18s (12 retries × 1.5s); after that we surface a snackbar
-    // telling them to read the card directly from the page.
-    Future.delayed(const Duration(seconds: 8), () {
-      if (!_extracted && mounted) setState(() => _showFallback = true);
-    });
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(AppColors.bg)
-      ..addJavaScriptChannel('TchipaCard', onMessageReceived: (msg) {
-        if (_extracted || widget.onCardData == null) return;
-        try {
-          final data = jsonDecode(msg.message) as Map<String, dynamic>;
-          if (data['error'] != null) {
-            debugPrint('[CardWebView] extract error: ${data['error']} snippet=${data['snippet']?.toString() ?? ''}');
-            // Fire-and-forget POST the snippet to a debug endpoint so we can
-            // iterate on selectors without needing adb logcat from the user.
-            final snippet = data['snippet']?.toString();
-            if (snippet != null && snippet.isNotEmpty) {
-              http.post(
-                Uri.parse('$kVpsBase/debug/webview-snippet'),
-                headers: {'Content-Type': 'application/json'},
-                body: jsonEncode({'snippet': snippet, 'url': widget.url}),
-              ).timeout(const Duration(seconds: 5)).catchError((_) => http.Response('', 0));
-            }
-            if (mounted) {
-              setState(() => _showFallback = true);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: const Text('Lecture auto échouée. Tape ✏️ en haut à droite pour saisir manuellement.'),
-                backgroundColor: Colors.orange.shade800,
-                duration: const Duration(seconds: 8),
-              ));
-            }
-            return;
-          }
-          final number = data['cardNumber'] as String?;
-          final cvv = data['cvv'] as String?;
-          final expiry = data['expiry'] as String?;
-          if (number != null && number.length >= 15) {
-            _extracted = true;
-            widget.onCardData!(number, cvv, expiry);
-          }
-        } catch (_) {}
-      })
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageStarted: (_) => setState(() => _loading = true),
-        onPageFinished: (_) {
-          setState(() => _loading = false);
-          if (widget.onCardData != null) {
-            _controller.runJavaScript(_kExtractJs);
-          }
-        },
-      ))
-      ..loadRequest(Uri.parse(widget.url));
-  }
-
-  Future<void> _manualEntryDialog() async {
-    final numCtrl = TextEditingController();
-    final cvvCtrl = TextEditingController();
-    final expCtrl = TextEditingController();
-    String? errorMsg;
-    bool submitted = false;
-    await showDialog<void>(
-      context: context,
-      builder: (dlgCtx) => StatefulBuilder(builder: (dlgCtx, setDlg) {
-        void submit() {
-          final n = numCtrl.text.replaceAll(RegExp(r'[\s-]'), '');
-          final c = cvvCtrl.text.trim();
-          final e = expCtrl.text.trim();
-          if (!RegExp(r'^\d{15,19}$').hasMatch(n)) {
-            setDlg(() => errorMsg = 'Numéro invalide (15-19 chiffres)');
-            return;
-          }
-          if (!RegExp(r'^\d{3,4}$').hasMatch(c)) {
-            setDlg(() => errorMsg = 'CVV invalide (3-4 chiffres)');
-            return;
-          }
-          if (!RegExp(r'^(0[1-9]|1[0-2])[\/\-]\d{2,4}$').hasMatch(e)) {
-            setDlg(() => errorMsg = 'Expiration: MM/AA (ex 04/28)');
-            return;
-          }
-          submitted = true;
-          Navigator.of(dlgCtx).pop();
-          if (!_extracted && widget.onCardData != null) {
-            _extracted = true;
-            widget.onCardData!(n, c, e);
-          }
-        }
-        return AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: const Text('Saisie manuelle', style: TextStyle(color: Colors.white)),
-          content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Text(
-                'Recopie les valeurs depuis l\'écran Swype derrière ce dialog.',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: numCtrl,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white, fontFamily: 'monospace', letterSpacing: 2),
-                decoration: const InputDecoration(labelText: 'Numéro carte (16 chiffres)'),
-              ),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: expCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'MM/AA'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: cvvCtrl,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'CVV'),
-                  ),
-                ),
-              ]),
-              if (errorMsg != null) ...[
-                const SizedBox(height: 8),
-                Text(errorMsg!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-              ],
-            ]),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(dlgCtx).pop(), child: const Text('Annuler')),
-            ElevatedButton(onPressed: submit, child: const Text('Enregistrer')),
-          ],
-        );
-      }),
-    );
-    if (submitted && mounted) Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      appBar: AppBar(
-        backgroundColor: AppColors.bg,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.close_rounded, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(widget.title,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        actions: [
-          if (widget.onCardData != null)
-            IconButton(
-              tooltip: 'Saisir manuellement',
-              icon: const Icon(Icons.edit_note_rounded, color: Colors.white),
-              onPressed: _manualEntryDialog,
-            ),
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white54),
-            onPressed: () => _controller.reload(),
-          ),
-        ],
-      ),
-      body: Stack(children: [
-        WebViewWidget(controller: _controller),
-        // Hide the PayGate page behind our loading screen until extraction succeeds.
-        // Only removed (_showFallback) if JS extraction fails after 6s.
-        if (!_showFallback)
-          Container(
-            color: AppColors.bg,
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 56, height: 56,
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF00D4FF),
-                      strokeWidth: 2.5,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text('Récupération de votre carte…',
-                      style: TextStyle(color: AppColors.sublabel, fontSize: 15)),
-                  const SizedBox(height: 8),
-                  Text('Quelques secondes',
-                      style: TextStyle(color: AppColors.hint, fontSize: 13)),
-                ],
-              ),
-            ),
-          ),
-      ]),
-    );
-  }
-}
-
-// ============================================
 // BOUTIQUE 1688 + PORTE-MONNAIE $ (2026-09-28)
 // ============================================
 // PayGate/Swype are gone: Tchipa now sells clothes (1688 catalogue) paid with
@@ -8489,10 +1803,14 @@ class ShopApi {
   static Future<List<dynamic>> categories() async =>
       (await _req('GET', '/shop/categories'))['categories'] as List;
 
-  static Future<Map<String, dynamic>> products({String? category, String q = '', int page = 1}) {
+  static Future<Map<String, dynamic>> products(
+      {String? category, String? sub, String q = '', String sort = 'pop', double? max, int page = 1}) {
     final qs = {
       'page': '$page',
+      'sort': sort,
       if (category != null) 'category': category,
+      if (sub != null) 'sub': sub,
+      if (max != null) 'max': '$max',
       if (q.trim().isNotEmpty) 'q': q.trim(),
     };
     return _req('GET', '/shop/products?${Uri(queryParameters: qs).query}');
@@ -8679,14 +1997,15 @@ void _toast(BuildContext context, String msg, {bool error = false}) {
 
 Widget _netImage(String? url, {BoxFit fit = BoxFit.cover, bool thumb = true}) {
   if (url == null || url.isEmpty) return Container(color: AppColors.card);
-  return Image.network(
-    thumb ? _thumb(url) : url,
+  Widget ph(BuildContext c, String u) => Container(color: AppColors.card);
+  return CachedNetworkImage(
+    imageUrl: thumb ? _thumb(url) : url,
     fit: fit,
-    errorBuilder: (_, __, ___) => thumb
-        ? Image.network(url, fit: fit,
-            errorBuilder: (_, __, ___) => Container(color: AppColors.card))
-        : Container(color: AppColors.card),
-    loadingBuilder: (c, child, p) => p == null ? child : Container(color: AppColors.card),
+    fadeInDuration: const Duration(milliseconds: 180),
+    placeholder: ph,
+    errorWidget: (c, u, e) => thumb
+        ? CachedNetworkImage(imageUrl: url, fit: fit, placeholder: ph, errorWidget: (c2, u2, e2) => ph(c2, u2))
+        : ph(c, u),
   );
 }
 
@@ -8790,6 +2109,17 @@ class _WalletLoginSheetState extends State<_WalletLoginSheet> {
 }
 
 // ── Onglet Boutique ──────────────────────────────────────────────────────
+// Accueil (« Tout ») : bannières, univers Femme/Homme/Enfants, meilleures ventes,
+// petits prix, puis une grille sans fin. Un univers choisi : ses sous-catégories
+// en vignettes rondes, tri, grille. Tout vient de /shop/categories et /shop/products.
+const _kShopSorts = {'pop': 'Populaires', 'price_asc': 'Prix croissant', 'price_desc': 'Prix décroissant'};
+
+String _soldLabel(num n) {
+  if (n >= 10000) return '${(n / 1000).round()}k vendus';
+  if (n >= 1000) return '${(n / 1000).toStringAsFixed(1).replaceAll('.0', '')}k vendus';
+  return '${n.toInt()} vendus';
+}
+
 class ShopScreen extends StatefulWidget {
   const ShopScreen({super.key});
   @override
@@ -8800,17 +2130,21 @@ class _ShopScreenState extends State<ShopScreen> {
   final _scroll = ScrollController();
   final _search = TextEditingController();
   List<dynamic> _cats = [];
-  String? _cat;
+  String? _cat, _sub;
+  String _sort = 'pop';
   final List<dynamic> _items = [];
-  int _page = 0;
+  List<dynamic> _best = [], _cheap = [];
+  int _page = 0, _gen = 0;
   bool _hasMore = true, _loading = false;
   String? _err;
+
+  bool get _home => _cat == null && _search.text.trim().isEmpty;
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(() {
-      if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) _more();
+      if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 900) _more();
     });
     _reload();
   }
@@ -8823,51 +2157,60 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Future<void> _reload() async {
-    setState(() { _items.clear(); _page = 0; _hasMore = true; _err = null; });
-    try {
-      final c = await ShopApi.categories();
-      if (mounted) setState(() => _cats = c);
-    } catch (_) {}
-    await _more();
+    final gen = ++_gen;
+    setState(() { _items.clear(); _page = 0; _hasMore = true; _err = null; _loading = false; });
+    if (_cats.isEmpty) {
+      try {
+        final c = await ShopApi.categories();
+        if (mounted) setState(() => _cats = c);
+      } catch (_) {}
+    }
+    if (_home && _best.isEmpty) {
+      ShopApi.products(sort: 'pop').then((d) {
+        if (mounted) setState(() => _best = d['items'] as List);
+      }).catchError((_) {});
+      ShopApi.products(sort: 'pop', max: 5).then((d) {
+        if (mounted) setState(() => _cheap = d['items'] as List);
+      }).catchError((_) {});
+    }
+    if (gen == _gen) await _more();
   }
 
   Future<void> _more() async {
     if (_loading || !_hasMore) return;
+    final gen = _gen;
     setState(() => _loading = true);
     try {
-      final d = await ShopApi.products(category: _cat, q: _search.text, page: _page + 1);
-      if (!mounted) return;
+      final d = await ShopApi.products(
+          category: _cat, sub: _sub, q: _search.text, sort: _sort, page: _page + (_home ? 2 : 1));
+      if (!mounted || gen != _gen) return;
       setState(() {
         _items.addAll(d['items'] as List);
         _page++;
         _hasMore = d['hasMore'] == true;
       });
     } on ApiError catch (e) {
-      if (mounted) setState(() => _err = e.message);
+      if (mounted && gen == _gen) setState(() => _err = e.message);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && gen == _gen) setState(() => _loading = false);
     }
   }
 
-  Widget _chip(String label, String? value) {
-    final sel = _cat == value;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: () { _cat = value; _reload(); },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-          decoration: BoxDecoration(
-            gradient: sel ? _kShopGrad : null,
-            color: sel ? null : AppColors.card,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(label,
-              style: TextStyle(
-                  color: sel ? Colors.white : AppColors.label, fontWeight: FontWeight.w700, fontSize: 13)),
-        ),
-      ),
-    );
+  void _openCat(String? c, {String? sub}) {
+    _cat = c;
+    _sub = sub;
+    _sort = 'pop';
+    _search.clear();
+    FocusScope.of(context).unfocus();
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    _reload();
+  }
+
+  Map<String, dynamic>? get _catData {
+    for (final c in _cats) {
+      if (c['name'] == _cat) return Map<String, dynamic>.from(c as Map);
+    }
+    return null;
   }
 
   @override
@@ -8877,82 +2220,523 @@ class _ShopScreenState extends State<ShopScreen> {
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(
-          onRefresh: _reload,
+          color: const Color(0xFF8B5CF6),
+          onRefresh: () async {
+            _best = [];
+            _cheap = [];
+            _cats = [];
+            await _reload();
+          },
           child: CustomScrollView(controller: _scroll, slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Row(children: [
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Boutique',
-                        style: TextStyle(color: AppColors.label, fontSize: 28, fontWeight: FontWeight.w800)),
-                    Text('Vêtements livrés en Algérie, payés avec ton solde',
-                        style: TextStyle(color: AppColors.sublabel, fontSize: 13)),
-                  ])),
-                  const _CartButton(),
-                ]),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 10),
-                child: TextField(
-                  controller: _search,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => _reload(),
-                  style: TextStyle(color: AppColors.inputFg),
-                  decoration: _field('Rechercher', hint: 'robe longue, abaya, pyjama…', icon: Icons.search_rounded),
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 40,
-                child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 20),
-                    children: [
-                      _chip('Tout', null),
-                      for (final c in _cats) _chip('${c['name']}', c['name'] as String),
-                    ]),
-              ),
-            ),
-            if (_cats.isNotEmpty && _cats.length < 5)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-                  child: Text('Homme, Hijab, Abaya et Enfants arrivent très bientôt.',
-                      style: TextStyle(color: AppColors.hint, fontSize: 12.5)),
-                ),
-              ),
+            SliverToBoxAdapter(child: _header()),
+            SliverPersistentHeader(pinned: true, delegate: _PinnedBar(height: 54, child: _catTabs())),
+            if (_home) ..._homeSlivers() else ..._listingHeader(),
             if (_err != null && _items.isEmpty)
+              SliverToBoxAdapter(child: _errorBox()),
+            if (!_home || _items.isNotEmpty || _loading)
               SliverToBoxAdapter(
-                child: Padding(padding: const EdgeInsets.all(24),
-                    child: Text(_err!, style: TextStyle(color: AppColors.sublabel))),
+                child: _home
+                    ? _sectionTitle('Pour toi', 'Les plus achetés cette semaine')
+                    : const SizedBox(height: 4),
               ),
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2, mainAxisSpacing: 14, crossAxisSpacing: 12, childAspectRatio: 0.60),
+                    crossAxisCount: 2, mainAxisSpacing: 14, crossAxisSpacing: 12, childAspectRatio: 0.58),
                 delegate: SliverChildBuilderDelegate(
-                  (_, i) => _ProductTile(p: _items[i] as Map<String, dynamic>),
-                  childCount: _items.length,
+                  (_, i) => i < _items.length
+                      ? _ProductTile(p: _items[i] as Map<String, dynamic>)
+                      : const _TileSkeleton(),
+                  childCount: _items.length + (_loading ? (_items.isEmpty ? 6 : 2) : 0),
                 ),
               ),
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.only(top: 16, bottom: 120),
+                padding: const EdgeInsets.only(top: 18, bottom: 130),
                 child: Center(
-                  child: _loading
-                      ? const CircularProgressIndicator()
-                      : (!_hasMore && _items.isEmpty && _err == null
-                          ? Text('Aucun article trouvé', style: TextStyle(color: AppColors.sublabel))
+                  child: (!_hasMore && _items.isEmpty && _err == null && !_loading)
+                      ? Column(children: [
+                          Icon(Icons.search_off_rounded, size: 46, color: AppColors.hint),
+                          const SizedBox(height: 8),
+                          Text('Aucun article trouvé', style: TextStyle(color: AppColors.sublabel)),
+                        ])
+                      : (!_hasMore && _items.isNotEmpty
+                          ? Text('Tu as tout vu ✨', style: TextStyle(color: AppColors.hint, fontSize: 12.5))
                           : const SizedBox.shrink()),
                 ),
               ),
             ),
           ]),
         ),
+      ),
+    );
+  }
+
+  // ── En-tête : marque + panier, puis recherche ──
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 6),
+      child: Column(children: [
+        Row(children: [
+          ShaderMask(
+            shaderCallback: (r) => _kShopGrad.createShader(r),
+            child: const Text('Tchipa',
+                style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+                color: const Color(0xFF8B5CF6).withValues(alpha: 0.14), borderRadius: BorderRadius.circular(8)),
+            child: const Text('Boutique',
+                style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 11, fontWeight: FontWeight.w800)),
+          ),
+          const Spacer(),
+          const _CartButton(),
+        ]),
+        const SizedBox(height: 12),
+        Container(
+          height: 46,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(23),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(children: [
+            const SizedBox(width: 14),
+            Icon(Icons.search_rounded, color: AppColors.hint, size: 21),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _search,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) {
+                  _cat = null;
+                  _sub = null;
+                  _reload();
+                },
+                onChanged: (_) => setState(() {}),
+                style: TextStyle(color: AppColors.inputFg, fontSize: 14.5),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  hintText: 'Robe longue, pyjama enfant, baskets…',
+                  hintStyle: TextStyle(color: AppColors.hint, fontSize: 14),
+                ),
+              ),
+            ),
+            if (_search.text.isNotEmpty)
+              IconButton(
+                icon: Icon(Icons.close_rounded, color: AppColors.hint, size: 20),
+                onPressed: () => _openCat(null),
+              ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // ── Onglets d'univers (restent collés en haut) ──
+  Widget _catTabs() {
+    final names = <String?>[null, ..._cats.map((c) => c['name'] as String)];
+    return Container(
+      color: AppColors.bg,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        children: [
+          for (final n in names)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => _openCat(n),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: _cat == n && _search.text.trim().isEmpty ? _kShopGrad : null,
+                    color: _cat == n && _search.text.trim().isEmpty ? null : AppColors.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                        color: _cat == n && _search.text.trim().isEmpty ? Colors.transparent : AppColors.border),
+                  ),
+                  child: Text(n ?? 'Accueil',
+                      style: TextStyle(
+                          color: _cat == n && _search.text.trim().isEmpty ? Colors.white : AppColors.label,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13.5)),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── Accueil ──
+  List<Widget> _homeSlivers() => [
+        const SliverToBoxAdapter(child: _PromoCarousel()),
+        if (_cats.isNotEmpty) ...[
+          SliverToBoxAdapter(child: _sectionTitle('Univers', null)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 168,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                children: [
+                  for (final c in _cats)
+                    _UniverseCard(
+                      name: c['name'] as String,
+                      count: c['count'] as int,
+                      image: c['image'] as String?,
+                      onTap: () => _openCat(c['name'] as String),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+        if (_best.isNotEmpty) ...[
+          SliverToBoxAdapter(child: _sectionTitle('Meilleures ventes', 'Les favoris des clientes et clients')),
+          SliverToBoxAdapter(child: _hList(_best)),
+        ],
+        if (_cheap.isNotEmpty) ...[
+          SliverToBoxAdapter(child: _sectionTitle('Petits prix', 'Moins de 5 \$ — livraison comprise')),
+          SliverToBoxAdapter(child: _hList(_cheap)),
+        ],
+      ];
+
+  Widget _hList(List<dynamic> items) => SizedBox(
+        height: 262,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (_, i) =>
+              SizedBox(width: 150, child: _ProductTile(p: items[i] as Map<String, dynamic>)),
+        ),
+      );
+
+  // ── Univers choisi ou recherche : sous-catégories + tri ──
+  List<Widget> _listingHeader() {
+    final c = _catData;
+    final subs = ((c?['subs'] as List?) ?? []);
+    final searching = _search.text.trim().isNotEmpty;
+    return [
+      if (searching)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+            child: Text('Résultats pour « ${_search.text.trim()} »',
+                style: TextStyle(color: AppColors.label, fontSize: 17, fontWeight: FontWeight.w800)),
+          ),
+        ),
+      if (!searching && subs.isNotEmpty)
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 112,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              children: [
+                _SubBubble(
+                    label: 'Tout',
+                    image: c?['image'] as String?,
+                    selected: _sub == null,
+                    onTap: () => _openCat(_cat)),
+                for (final s in subs)
+                  _SubBubble(
+                    label: s['name'] as String,
+                    image: s['image'] as String?,
+                    selected: _sub == s['name'],
+                    onTap: () => _openCat(_cat, sub: s['name'] as String),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 10, 0),
+          child: Row(children: [
+            Expanded(
+              child: Text(
+                  _sub ?? (searching ? '' : (c == null ? '' : '${c['name']} · ${c['count']} articles')),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.sublabel, fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+            PopupMenuButton<String>(
+              initialValue: _sort,
+              color: AppColors.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              onSelected: (v) {
+                _sort = v;
+                _reload();
+              },
+              itemBuilder: (_) => [
+                for (final e in _kShopSorts.entries)
+                  PopupMenuItem(
+                    value: e.key,
+                    child: Row(children: [
+                      Icon(e.key == _sort ? Icons.radio_button_checked : Icons.radio_button_off,
+                          size: 18, color: e.key == _sort ? const Color(0xFF8B5CF6) : AppColors.hint),
+                      const SizedBox(width: 10),
+                      Text(e.value, style: TextStyle(color: AppColors.label)),
+                    ]),
+                  ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(children: [
+                  Icon(Icons.swap_vert_rounded, size: 19, color: AppColors.label),
+                  const SizedBox(width: 4),
+                  Text(_kShopSorts[_sort]!,
+                      style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700, fontSize: 13)),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    ];
+  }
+
+  Widget _sectionTitle(String title, String? sub) => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: TextStyle(color: AppColors.label, fontSize: 19, fontWeight: FontWeight.w800)),
+          if (sub != null) ...[
+            const SizedBox(height: 2),
+            Text(sub, style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+          ],
+        ]),
+      );
+
+  Widget _errorBox() => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(children: [
+          Icon(Icons.wifi_off_rounded, size: 42, color: AppColors.hint),
+          const SizedBox(height: 10),
+          Text(_err!, textAlign: TextAlign.center, style: TextStyle(color: AppColors.sublabel)),
+          const SizedBox(height: 12),
+          TextButton(onPressed: _reload, child: const Text('Réessayer')),
+        ]),
+      );
+}
+
+class _PinnedBar extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+  _PinnedBar({required this.height, required this.child});
+  @override
+  double get minExtent => height;
+  @override
+  double get maxExtent => height;
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) => child;
+  @override
+  bool shouldRebuild(_PinnedBar old) => true;
+}
+
+// Bannières d'accueil : uniquement des promesses vraies (livraison et douane
+// comprises, paiement avec le solde, nouveautés réelles du catalogue).
+class _PromoCarousel extends StatefulWidget {
+  const _PromoCarousel();
+  @override
+  State<_PromoCarousel> createState() => _PromoCarouselState();
+}
+
+class _PromoCarouselState extends State<_PromoCarousel> {
+  final _pc = PageController(viewportFraction: 0.92);
+  Timer? _t;
+  int _i = 0;
+  static const _slides = [
+    (
+      Icons.local_shipping_rounded,
+      'Livré chez toi en Algérie',
+      'Livraison et douane comprises dans le prix affiché.',
+      [Color(0xFF00B4D8), Color(0xFF7C3AED)]
+    ),
+    (
+      Icons.child_care_rounded,
+      'Nouveau : Enfants & chaussures',
+      'Bébé, fille, garçon — vêtements et chaussures.',
+      [Color(0xFFF472B6), Color(0xFF8B5CF6)]
+    ),
+    (
+      Icons.account_balance_wallet_rounded,
+      'Paie avec ton solde Tchipa',
+      'Ton agent le recharge en dinars, tu commandes en un geste.',
+      [Color(0xFF10B981), Color(0xFF0EA5E9)]
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!_pc.hasClients) return;
+      _pc.animateToPage((_i + 1) % _slides.length,
+          duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    _pc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      const SizedBox(height: 8),
+      SizedBox(
+        height: 132,
+        child: PageView.builder(
+          controller: _pc,
+          itemCount: _slides.length,
+          onPageChanged: (i) => setState(() => _i = i),
+          itemBuilder: (_, i) {
+            final s = _slides[i];
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: s.$4, begin: Alignment.topLeft, end: Alignment.bottomRight),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Stack(children: [
+                  Positioned(
+                    right: -18, bottom: -22,
+                    child: Icon(s.$1, size: 130, color: Colors.white.withValues(alpha: 0.16)),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 90, 18),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Text(s.$2,
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 19, fontWeight: FontWeight.w900, height: 1.15)),
+                      const SizedBox(height: 6),
+                      Text(s.$3,
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12.5, height: 1.3)),
+                    ]),
+                  ),
+                ]),
+              ),
+            );
+          },
+        ),
+      ),
+      const SizedBox(height: 10),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        for (var i = 0; i < _slides.length; i++)
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            width: i == _i ? 18 : 6,
+            height: 6,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              gradient: i == _i ? _kShopGrad : null,
+              color: i == _i ? null : AppColors.border,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+      ]),
+    ]);
+  }
+}
+
+class _UniverseCard extends StatelessWidget {
+  final String name;
+  final int count;
+  final String? image;
+  final VoidCallback onTap;
+  const _UniverseCard({required this.name, required this.count, required this.image, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 132,
+        margin: const EdgeInsets.only(right: 12),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), color: AppColors.card),
+        child: Stack(fit: StackFit.expand, children: [
+          _netImage(image),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Color(0xCC000000)],
+                stops: [0.45, 1],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12, right: 12, bottom: 12,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
+              Text('$count articles',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 11.5)),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _SubBubble extends StatelessWidget {
+  final String label;
+  final String? image;
+  final bool selected;
+  final VoidCallback onTap;
+  const _SubBubble({required this.label, required this.image, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: SizedBox(
+        width: 78,
+        child: Column(children: [
+          Container(
+            padding: const EdgeInsets.all(2.5),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: selected ? _kShopGrad : null,
+              color: selected ? null : AppColors.border,
+            ),
+            child: Container(
+              width: 60, height: 60,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.bg),
+              child: ClipOval(child: _netImage(image)),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: selected ? AppColors.label : AppColors.sublabel,
+                  fontSize: 11.5,
+                  fontWeight: selected ? FontWeight.w800 : FontWeight.w600)),
+        ]),
       ),
     );
   }
@@ -8965,30 +2749,81 @@ class _ProductTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final from = (p['priceFrom'] as num).toDouble();
+    final to = ((p['priceTo'] as num?) ?? from).toDouble();
+    final sold = (p['sold'] as num?) ?? 0;
     return GestureDetector(
       onTap: () => Navigator.push(
           context, MaterialPageRoute(builder: (_) => ProductScreen(productId: p['id'] as int))),
-      child: Container(
-        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
-        clipBehavior: Clip.antiAlias,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          AspectRatio(aspectRatio: 1, child: _netImage(p['image'] as String?)),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
-            child: Text('${p['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.label, fontSize: 13, fontWeight: FontWeight.w600, height: 1.25)),
-          ),
-          const Spacer(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('dès ', style: TextStyle(color: AppColors.hint, fontSize: 11)),
-              Text(_usd(from),
-                  style: const TextStyle(color: Color(0xFF00D4FF), fontSize: 16, fontWeight: FontWeight.w800)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        AspectRatio(
+          aspectRatio: 0.82,
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(16)),
+            child: Stack(fit: StackFit.expand, children: [
+              _netImage(p['image'] as String?),
+              if (sold >= 1000)
+                Positioned(
+                  left: 8, bottom: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55), borderRadius: BorderRadius.circular(8)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.local_fire_department_rounded, size: 12, color: Color(0xFFFFB020)),
+                      const SizedBox(width: 3),
+                      Text(_soldLabel(sold),
+                          style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                ),
             ]),
           ),
-        ]),
-      ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 8, 2, 0),
+          child: Text('${p['title']}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.label, fontSize: 13, fontWeight: FontWeight.w600, height: 1.25)),
+        ),
+        const Spacer(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 4, 2, 2),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+            if (to > from + 0.01)
+              Text('dès ', style: TextStyle(color: AppColors.hint, fontSize: 11)),
+            Text(_usd(from),
+                style: TextStyle(color: AppColors.label, fontSize: 16.5, fontWeight: FontWeight.w900)),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _TileSkeleton extends StatelessWidget {
+  const _TileSkeleton();
+  @override
+  Widget build(BuildContext context) {
+    Widget bar(double w, double h) => Container(
+        width: w, height: h,
+        decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(6)));
+    return Shimmer.fromColors(
+      baseColor: AppColors.card,
+      highlightColor: AppColors.surface,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        AspectRatio(
+          aspectRatio: 0.82,
+          child: Container(decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(16))),
+        ),
+        const SizedBox(height: 10),
+        bar(double.infinity, 11),
+        const SizedBox(height: 6),
+        bar(90, 11),
+        const SizedBox(height: 12),
+        bar(60, 15),
+      ]),
     );
   }
 }
@@ -9106,6 +2941,9 @@ class _ProductScreenState extends State<ProductScreen> {
         backgroundColor: AppColors.bg,
         foregroundColor: AppColors.label,
         elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Text(p == null ? '' : '${p['sub'] ?? p['category'] ?? ''}',
+            style: TextStyle(color: AppColors.label, fontSize: 16, fontWeight: FontWeight.w700)),
         actions: const [Padding(padding: EdgeInsets.only(right: 12), child: _CartButton())],
       ),
       body: p == null
@@ -9122,67 +2960,130 @@ class _ProductScreenState extends State<ProductScreen> {
     final v = _current;
     final opts = _options;
     final hasSize = opts.keys.any((k) => k.toLowerCase().contains('size') || k.toLowerCase().contains('height'));
+    final sold = (p['sold'] as num?) ?? 0;
     return Column(children: [
       Expanded(
         child: ListView(padding: EdgeInsets.zero, children: [
           AspectRatio(
-            aspectRatio: 1,
+            aspectRatio: 0.9,
             child: Stack(children: [
               PageView.builder(
                 itemCount: max(1, images.length),
                 onPageChanged: (i) => setState(() => _img = i),
-                itemBuilder: (_, i) =>
-                    _netImage(images.isEmpty ? null : images[i], thumb: false),
+                itemBuilder: (_, i) => _netImage(images.isEmpty ? null : images[i], thumb: false),
               ),
               if (images.length > 1)
                 Positioned(
-                  bottom: 10, left: 0, right: 0,
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    for (var i = 0; i < images.length; i++)
-                      Container(
-                        width: i == _img ? 18 : 6, height: 6,
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: i == _img ? 0.95 : 0.5),
-                            borderRadius: BorderRadius.circular(3)),
-                      ),
-                  ]),
+                  right: 14, bottom: 14,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
+                    child: Text('${_img + 1}/${images.length}',
+                        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                  ),
                 ),
             ]),
           ),
+          if (images.length > 1)
+            SizedBox(
+              height: 64,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                itemCount: images.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) => Container(
+                  width: 54,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: i == _img ? const Color(0xFF8B5CF6) : Colors.transparent, width: 2),
+                  ),
+                  child: _netImage(images[i]),
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${p['title']}',
-                  style: TextStyle(color: AppColors.label, fontSize: 20, fontWeight: FontWeight.w800)),
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                ShaderMask(
+                  shaderCallback: (r) => _kShopGrad.createShader(r),
+                  child: Text(v == null ? '—' : _usd(v['priceUsd'] as num),
+                      style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900)),
+                ),
+                const Spacer(),
+                if (sold > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(children: [
+                      const Icon(Icons.local_fire_department_rounded, size: 16, color: Color(0xFFFFB020)),
+                      const SizedBox(width: 3),
+                      Text(_soldLabel(sold),
+                          style: TextStyle(color: AppColors.sublabel, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+              ]),
+              if (v == null)
+                Text('Cette combinaison n\'est pas disponible',
+                    style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
               const SizedBox(height: 8),
-              Text(v == null ? 'Choisis une option disponible' : _usd(v['priceUsd'] as num),
-                  style: const TextStyle(color: Color(0xFF00D4FF), fontSize: 26, fontWeight: FontWeight.w900)),
-              Text('Livraison en Algérie et douane comprises',
-                  style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+              Text('${p['title']}',
+                  style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Row(children: [
+                  _Perk(icon: Icons.local_shipping_rounded, text: 'Livré en\nAlgérie'),
+                  _Perk(icon: Icons.verified_user_rounded, text: 'Douane\ncomprise'),
+                  _Perk(icon: Icons.account_balance_wallet_rounded, text: 'Payé avec\nton solde'),
+                ]),
+              ),
               for (final e in opts.entries) ...[
-                const SizedBox(height: 18),
-                Text(_optLabel(e.key),
-                    style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
+                const SizedBox(height: 20),
+                Row(children: [
+                  Text(_optLabel(e.key),
+                      style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w800, fontSize: 15)),
+                  if (_sel[e.key] != null) ...[
+                    Text('  ·  ', style: TextStyle(color: AppColors.hint)),
+                    Expanded(
+                      child: Text(_sel[e.key]!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: AppColors.sublabel, fontSize: 13.5)),
+                    ),
+                  ],
+                ]),
+                const SizedBox(height: 10),
                 Wrap(spacing: 8, runSpacing: 8, children: [
                   for (final val in e.value)
                     GestureDetector(
                       onTap: () => _pick(e.key, val),
-                      child: Opacity(
-                        opacity: _available(e.key, val) ? 1 : 0.4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                          decoration: BoxDecoration(
-                            gradient: _sel[e.key] == val ? _kShopGrad : null,
-                            color: _sel[e.key] == val ? null : AppColors.card,
-                            borderRadius: BorderRadius.circular(12),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: _sel[e.key] == val
+                              ? const Color(0xFF8B5CF6).withValues(alpha: 0.12)
+                              : AppColors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            width: _sel[e.key] == val ? 1.6 : 1,
+                            color: _sel[e.key] == val ? const Color(0xFF8B5CF6) : AppColors.border,
                           ),
-                          child: Text(val,
-                              style: TextStyle(
-                                  color: _sel[e.key] == val ? Colors.white : AppColors.label,
-                                  fontWeight: FontWeight.w600)),
                         ),
+                        child: Text(val,
+                            style: TextStyle(
+                                color: _available(e.key, val) ? AppColors.label : AppColors.hint,
+                                decoration: _available(e.key, val) ? null : TextDecoration.lineThrough,
+                                fontWeight: _sel[e.key] == val ? FontWeight.w800 : FontWeight.w600)),
                       ),
                     ),
                 ]),
@@ -9194,38 +3095,86 @@ class _ProductScreenState extends State<ProductScreen> {
                   decoration: BoxDecoration(
                       color: const Color(0xFFF79009).withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(12)),
-                  child: Text(
-                      'Tailles chinoises : elles taillent petit. Prends 1 à 2 tailles au-dessus de ta taille habituelle.',
-                      style: TextStyle(color: AppColors.label, fontSize: 13)),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.straighten_rounded, size: 18, color: Color(0xFFF79009)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                          'Tailles chinoises : elles taillent petit. Prends 1 à 2 tailles au-dessus de ta taille habituelle.',
+                          style: TextStyle(color: AppColors.label, fontSize: 13, height: 1.35)),
+                    ),
+                  ]),
                 ),
               const SizedBox(height: 18),
               Row(children: [
-                Text('Quantité', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+                Text('Quantité', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w800, fontSize: 15)),
                 const Spacer(),
-                IconButton(
-                    onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
-                    icon: Icon(Icons.remove_circle_outline, color: AppColors.label)),
-                Text('$_qty', style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w700)),
-                IconButton(
-                    onPressed: _qty < 10 ? () => setState(() => _qty++) : null,
-                    icon: Icon(Icons.add_circle_outline, color: AppColors.label)),
+                Container(
+                  decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border)),
+                  child: Row(children: [
+                    IconButton(
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
+                        icon: Icon(Icons.remove_rounded, color: AppColors.label)),
+                    Text('$_qty',
+                        style: TextStyle(color: AppColors.label, fontSize: 16, fontWeight: FontWeight.w800)),
+                    IconButton(
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _qty < 10 ? () => setState(() => _qty++) : null,
+                        icon: Icon(Icons.add_rounded, color: AppColors.label)),
+                  ]),
+                ),
               ]),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
             ]),
           ),
         ]),
       ),
-      SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-          child: _GradButton(
-              label: v == null ? 'Indisponible' : 'Ajouter au panier — ${_usd((v['priceUsd'] as num) * _qty)}',
-              onTap: v == null ? null : _add),
+      Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: AppColors.border)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Row(children: [
+              Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Total', style: TextStyle(color: AppColors.hint, fontSize: 11.5)),
+                Text(v == null ? '—' : _usd((v['priceUsd'] as num) * _qty),
+                    style: TextStyle(color: AppColors.label, fontSize: 19, fontWeight: FontWeight.w900)),
+              ]),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _GradButton(
+                    label: v == null ? 'Indisponible' : 'Ajouter au panier', onTap: v == null ? null : _add),
+              ),
+            ]),
+          ),
         ),
       ),
     ]);
   }
+}
+
+class _Perk extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  const _Perk({required this.icon, required this.text});
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Column(children: [
+          Icon(icon, size: 22, color: const Color(0xFF8B5CF6)),
+          const SizedBox(height: 6),
+          Text(text,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.sublabel, fontSize: 11.5, height: 1.25, fontWeight: FontWeight.w600)),
+        ]),
+      );
 }
 
 // ── Panier + paiement avec le solde ──────────────────────────────────────

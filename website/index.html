@@ -1,30 +1,50 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr" id="root">
-<!-- v4 -->
+<html lang="fr" dir="ltr" id="root">
+<!-- v5 : boutique de vêtements -->
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tchipa — Virtual Credit Card App | بطاقة افتراضية</title>
-  <meta name="description" content="Generate Mastercard Virtual Credit Cards instantly with USDT on Polygon. No KYC. Pay worldwide.">
+  <title>Tchipa — Vêtements de Chine livrés en Algérie</title>
+  <meta name="description" content="Tchipa, la boutique de vêtements en ligne : robes, abayas, hijabs à prix fabricant, livrés en Algérie. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi de commande dans l'app.">
+  <meta name="theme-color" content="#0D1117">
+  <link rel="canonical" href="https://tchipa.co.uk/">
+  <link rel="icon" type="image/png" href="/tchipa_logo.png">
+
+  <!-- Open Graph / partage -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Tchipa">
+  <meta property="og:locale" content="fr_FR">
+  <meta property="og:url" content="https://tchipa.co.uk/">
+  <meta property="og:title" content="Tchipa — Vêtements de Chine livrés en Algérie">
+  <meta property="og:description" content="Robes, abayas, hijabs à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi dans l'app.">
+  <meta property="og:image" content="https://tchipa.co.uk/tchipa_logo.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Tchipa — Vêtements de Chine livrés en Algérie">
+  <meta name="twitter:description" content="Robes, abayas, hijabs à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises.">
+  <meta name="twitter:image" content="https://tchipa.co.uk/tchipa_logo.png">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://cbu01.alicdn.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Tajawal:wght@500;700&display=swap" rel="stylesheet">
   <style>
-    /* ── VARIABLES ─────────────────────────────────────────── */
+    /* ── VARIABLES (charte Tchipa) ───────────────────────────── */
     :root {
       --bg:       #0D1117;
       --surface:  #161B22;
       --card:     #21262D;
-      --border:   rgba(255,255,255,0.07);
+      --border:   rgba(255,255,255,0.08);
       --cyan:     #00D4FF;
       --purple:   #8B5CF6;
       --gold:     #F59E0B;
       --green:    #10B981;
+      --pink:     #EC4899;
       --text:     #F0F6FC;
-      --sub:      rgba(240,246,252,0.52);
-      --font-en:  'Inter', sans-serif;
+      --sub:      rgba(240,246,252,0.68);
+      --font-en:  'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       --font-ar:  'Tajawal', sans-serif;
       --radius:   20px;
+      --maxw:     1180px;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
@@ -36,1431 +56,640 @@
       line-height: 1.65;
       -webkit-font-smoothing: antialiased;
     }
-    [dir="rtl"] body { font-family: var(--font-ar); }
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--card); border-radius: 3px; }
+    img { max-width: 100%; display: block; }
+    a { color: inherit; }
     ::selection { background: rgba(0,212,255,.28); color: #fff; }
+    :focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; border-radius: 8px; }
+    .skip {
+      position:absolute; left:-9999px; top:0; z-index:999;
+      background:var(--cyan); color:#04121a; padding:.6rem 1rem; font-weight:700; border-radius:0 0 10px 0;
+    }
+    .skip:focus { left:0; }
+    .ar { font-family: var(--font-ar); }
+    .wrap { max-width: var(--maxw); margin: 0 auto; }
 
-    /* ── CANVAS ─────────────────────────────────────────────── */
-    #c { position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.45; }
-
-    /* ── UTILITIES ──────────────────────────────────────────── */
+    /* ── UTILITAIRES ─────────────────────────────────────────── */
     .grad-text {
       background: linear-gradient(135deg,var(--cyan) 0%,var(--purple) 55%,var(--gold) 100%);
-      background-size: 200% 200%;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: grad-move 5s ease infinite;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
     }
-    @keyframes grad-move {
-      0%,100% { background-position:0% 50%; }
-      50%      { background-position:100% 50%; }
-    }
-    .reveal { opacity:0; transform:translateY(28px); transition:opacity .7s ease,transform .7s ease; }
+    .reveal { opacity:0; transform:translateY(22px); transition:opacity .6s ease,transform .6s ease; }
     .reveal.in { opacity:1; transform:none; }
-    .reveal-d1 { transition-delay:.1s; }
-    .reveal-d2 { transition-delay:.2s; }
-    .reveal-d3 { transition-delay:.3s; }
-    .reveal-d4 { transition-delay:.4s; }
-
-    /* ── NAVBAR ─────────────────────────────────────────────── */
-    nav {
-      position: fixed; top:0; left:0; right:0; z-index:200;
-      padding: 1rem 4%;
-      display: flex; align-items:center; justify-content:space-between;
-      background: rgba(13,17,23,.85);
-      backdrop-filter: blur(24px);
-      border-bottom: 1px solid var(--border);
-      transition: padding .3s;
+    @media (prefers-reduced-motion:reduce){
+      html { scroll-behavior:auto; }
+      .reveal { opacity:1; transform:none; transition:none; }
+      *, *::before, *::after { animation:none !important; }
     }
-    nav.scrolled { padding: .6rem 4%; box-shadow:0 4px 40px rgba(0,0,0,.4); }
+
+    /* ── NAVBAR ──────────────────────────────────────────────── */
+    nav {
+      position: sticky; top:0; z-index:200;
+      padding: .8rem 16px;
+      background: rgba(13,17,23,.9);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-in { display:flex; align-items:center; justify-content:space-between; gap:1rem; max-width:var(--maxw); margin:0 auto; }
     .logo {
-      font-size: 1.55rem; font-weight:900; letter-spacing:-.03em;
+      display:flex; align-items:center; gap:.5rem;
+      font-size: 1.45rem; font-weight:900; letter-spacing:-.03em; text-decoration:none;
+    }
+    .logo img { width:34px; height:34px; }
+    .logo span {
       background: linear-gradient(135deg,var(--cyan),var(--purple));
       -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-      text-decoration: none;
     }
-    .nav-mid { display:flex; gap:2.25rem; align-items:center; }
-    .nav-mid a {
-      color:var(--sub); text-decoration:none; font-size:.9rem; font-weight:500;
-      transition:color .2s;
-    }
+    .nav-mid { display:flex; gap:1.8rem; align-items:center; }
+    .nav-mid a { color:var(--sub); text-decoration:none; font-size:.92rem; font-weight:500; transition:color .2s; }
     .nav-mid a:hover { color:var(--text); }
-    .nav-right { display:flex; gap:.75rem; align-items:center; }
-    .lang-btn {
-      display:flex; align-items:center; gap:.45rem;
-      background:var(--card); border:1px solid var(--border); border-radius:100px;
-      padding:.3rem .85rem; cursor:pointer; font-size:.82rem; font-weight:600;
-      color:var(--sub); transition:all .2s; font-family:inherit;
-    }
-    .lang-btn:hover { border-color:var(--cyan); color:var(--cyan); }
     .btn-nav {
-      padding:.45rem 1.2rem; border-radius:100px;
+      padding:.55rem 1.1rem; border-radius:100px;
       background:linear-gradient(135deg,var(--cyan),var(--purple));
-      color:#000; font-weight:700; font-size:.85rem; text-decoration:none;
-      transition:all .25s;
+      color:#04121a; font-weight:800; font-size:.88rem; text-decoration:none; white-space:nowrap;
     }
-    .btn-nav:hover { transform:scale(1.05); box-shadow:0 0 22px rgba(0,212,255,.45); }
 
-    /* ── HERO ────────────────────────────────────────────────── */
-    .hero {
-      min-height:100vh;
-      display:flex; align-items:center; justify-content:space-between;
-      padding: 9rem 6% 5rem;
-      position:relative; overflow:hidden; gap:3rem;
-    }
-    /* Orbs */
-    .orb {
-      position:absolute; border-radius:50%; filter:blur(90px); pointer-events:none;
-      animation:orb-drift 10s ease-in-out infinite;
-    }
-    .orb1 { width:700px;height:700px; background:radial-gradient(circle,rgba(0,212,255,.13) 0%,transparent 70%); top:-180px;left:-180px; animation-duration:9s; }
-    .orb2 { width:550px;height:550px; background:radial-gradient(circle,rgba(139,92,246,.18) 0%,transparent 70%); bottom:-150px;right:-100px; animation-duration:12s; animation-direction:reverse; }
-    .orb3 { width:350px;height:350px; background:radial-gradient(circle,rgba(245,158,11,.1) 0%,transparent 70%); top:45%;left:45%; animation-duration:15s; }
-    @keyframes orb-drift {
-      0%,100% { transform:translate(0,0); }
-      33%      { transform:translate(40px,-40px); }
-      66%      { transform:translate(-25px,30px); }
-    }
-    /* Hero content */
-    .hero-left { flex:1; max-width:620px; position:relative; z-index:2; }
-    .badge {
-      display:inline-flex; align-items:center; gap:.5rem;
-      background:rgba(0,212,255,.09); border:1px solid rgba(0,212,255,.28);
-      border-radius:100px; padding:.38rem 1rem;
-      font-size:.78rem; font-weight:700; color:var(--cyan);
-      margin-bottom:1.6rem;
-      animation:fade-up .6s ease both;
-    }
-    .badge::before { content:''; width:7px;height:7px; background:var(--cyan); border-radius:50%; animation:blink 2s infinite; }
-    @keyframes blink { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.4;transform:scale(.75);} }
-    .hero-h1 {
-      font-size: clamp(2.6rem,5.5vw,5rem);
-      font-weight:900; line-height:1.08; letter-spacing:-.035em;
-      margin-bottom:1.5rem;
-      animation:fade-up .65s .08s ease both;
-    }
-    [dir="rtl"] .hero-h1 { letter-spacing:0; line-height:1.25; }
-    .hero-sub {
-      font-size:1.08rem; color:var(--sub); line-height:1.75;
-      max-width:540px; margin-bottom:2.5rem;
-      animation:fade-up .65s .18s ease both;
-    }
-    .hero-btns {
-      display:flex; gap:1rem; flex-wrap:wrap;
-      animation:fade-up .65s .28s ease both;
+    /* ── BOUTONS ─────────────────────────────────────────────── */
+    .btn {
+      display:inline-flex; align-items:center; justify-content:center; gap:.55rem;
+      min-height:50px; padding:.85rem 1.6rem; border-radius:100px;
+      font-weight:800; font-size:1rem; text-decoration:none; transition:transform .2s, box-shadow .2s, background .2s;
     }
     .btn-primary {
-      display:inline-flex; align-items:center; gap:.5rem;
-      background:linear-gradient(135deg,var(--cyan),var(--purple));
-      color:#000; font-weight:800; padding:.9rem 2rem;
-      border-radius:100px; text-decoration:none; font-size:1rem;
-      transition:all .3s; position:relative; overflow:hidden;
-      animation:glow-pulse 3.5s ease-in-out infinite;
+      background:linear-gradient(135deg,var(--cyan),var(--purple)); color:#04121a;
+      box-shadow:0 8px 28px rgba(0,212,255,.25);
     }
-    @keyframes glow-pulse {
-      0%,100% { box-shadow:0 0 20px rgba(0,212,255,.3); }
-      50%      { box-shadow:0 0 45px rgba(139,92,246,.55),0 0 70px rgba(0,212,255,.2); }
-    }
-    .btn-primary:hover { transform:translateY(-3px) scale(1.02); }
-    .btn-ghost {
-      display:inline-flex; align-items:center; gap:.5rem;
-      background:transparent; color:var(--text); font-weight:600; padding:.9rem 2rem;
-      border-radius:100px; border:1px solid var(--border); text-decoration:none;
-      font-size:1rem; transition:all .3s;
-    }
-    .btn-ghost:hover { border-color:rgba(139,92,246,.5); background:rgba(139,92,246,.08); transform:translateY(-3px); }
+    .btn-primary:hover { transform:translateY(-2px); box-shadow:0 12px 36px rgba(139,92,246,.4); }
+    .btn-ghost { background:rgba(255,255,255,.03); color:var(--text); border:1px solid rgba(255,255,255,.18); font-weight:700; }
+    .btn-ghost:hover { border-color:var(--purple); background:rgba(139,92,246,.1); transform:translateY(-2px); }
+    .btn svg { width:20px; height:20px; flex:none; }
 
-    /* ── VCC CARD ───────────────────────────────────────────── */
-    .hero-right {
-      flex:1; display:flex; justify-content:center; align-items:center;
-      position:relative; z-index:2;
-      animation:fade-up .85s .35s ease both;
+    /* ── HERO ────────────────────────────────────────────────── */
+    .hero { position:relative; overflow:hidden; padding:3rem 16px 3.5rem; }
+    .hero::before {
+      content:''; position:absolute; inset:0; pointer-events:none;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(0,212,255,.14), transparent 45%),
+        radial-gradient(circle at 88% 70%, rgba(139,92,246,.18), transparent 50%),
+        radial-gradient(circle at 60% 10%, rgba(236,72,153,.08), transparent 40%);
     }
-    .card-wrap { position:relative; padding:2.5rem 5rem 2.5rem 2.5rem; }
-    .card-scene { width:370px;height:225px; perspective:1100px; cursor:pointer; }
-    .card-inner {
-      width:100%;height:100%; position:relative;
-      transform-style:preserve-3d;
-      transition:transform .85s cubic-bezier(.4,0,.2,1);
-      animation:card-float 7s ease-in-out infinite;
+    .hero-in { position:relative; display:grid; grid-template-columns:1.05fr .95fr; gap:3rem; align-items:center; max-width:var(--maxw); margin:0 auto; }
+    .badge {
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.35);
+      border-radius:100px; padding:.38rem .95rem;
+      font-size:.8rem; font-weight:700; color:#5EEAD4; margin-bottom:1.3rem;
     }
-    .card-scene:hover .card-inner { transform:rotateY(180deg)!important; }
-    @keyframes card-float {
-      0%,100% { transform:translateY(0) rotateX(3deg) rotateY(-6deg); }
-      50%      { transform:translateY(-18px) rotateX(-2deg) rotateY(6deg); }
+    .badge::before { content:''; width:7px; height:7px; background:var(--green); border-radius:50%; }
+    .hero h1 {
+      font-size: clamp(2.1rem, 6.2vw, 4.1rem);
+      font-weight:900; line-height:1.08; letter-spacing:-.035em; margin-bottom:1.1rem;
     }
-    .card-face {
-      position:absolute; inset:0; border-radius:20px;
-      backface-visibility:hidden; -webkit-backface-visibility:hidden; overflow:hidden;
+    .hero-ar { font-size:1.15rem; color:var(--sub); margin-bottom:1rem; }
+    .hero-sub { font-size:1.08rem; color:var(--sub); max-width:560px; margin-bottom:1.8rem; }
+    .hero-sub strong { color:var(--text); }
+    .hero-btns { display:flex; gap:.8rem; flex-wrap:wrap; }
+    .trust { display:flex; flex-wrap:wrap; gap:.55rem; margin-top:1.6rem; list-style:none; }
+    .trust li {
+      display:inline-flex; align-items:center; gap:.4rem;
+      background:rgba(22,27,34,.8); border:1px solid var(--border);
+      border-radius:100px; padding:.4rem .85rem; font-size:.82rem; font-weight:600; color:var(--text);
     }
-    /* Front */
-    .cf {
-      background:linear-gradient(135deg,#1a1f2e 0%,#0d1220 40%,#1b0d2e 100%);
-      border:1px solid rgba(255,255,255,.12);
-      box-shadow:0 30px 60px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);
-    }
-    .cf::before {
-      content:''; position:absolute; inset:0;
-      background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.07) 50%,transparent 60%);
-      background-size:200% 100%;
-      animation:shimmer 3.5s linear infinite;
-    }
-    @keyframes shimmer { 0%{background-position:-200% center;} 100%{background-position:200% center;} }
-    .card-holo {
-      position:absolute; inset:0;
-      background:conic-gradient(from 0deg,rgba(0,212,255,.06),rgba(139,92,246,.06),rgba(245,158,11,.04),rgba(0,212,255,.06));
-      mix-blend-mode:screen;
-      animation:holo 9s linear infinite;
-    }
-    @keyframes holo { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
-    /* Chip */
-    .chip {
-      position:absolute; top:1.4rem;left:1.6rem;
-      width:44px;height:33px;
-      background:linear-gradient(135deg,#c9a227,#f0c040,#c9a227);
-      border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,.5);
-    }
-    .chip::after {
-      content:''; position:absolute; top:50%;left:50%;
-      transform:translate(-50%,-50%);
-      width:70%;height:1px; background:rgba(0,0,0,.3);
-      box-shadow:0 4px 0 rgba(0,0,0,.3),0 8px 0 rgba(0,0,0,.3),0 -4px 0 rgba(0,0,0,.3);
-    }
-    /* NFC */
-    .nfc {
-      position:absolute; top:1.55rem; left:4.5rem;
-      width:22px;height:22px; border-radius:50%;
-      border:2px solid rgba(255,255,255,.12);
-      display:flex;align-items:center;justify-content:center;
-      font-size:.7rem; color:rgba(255,255,255,.25);
-    }
-    /* Logo */
-    .c-logo {
-      position:absolute; top:1.2rem; right:1.4rem;
-      font-size:1rem; font-weight:900; letter-spacing:-.02em;
-      background:linear-gradient(135deg,var(--cyan),var(--purple));
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-    }
-    /* Number */
-    .c-num {
-      position:absolute; bottom:3.6rem; left:1.6rem; right:1.6rem;
-      font-family:'Courier New',monospace; font-size:1.05rem; font-weight:700;
-      letter-spacing:.16em; color:rgba(255,255,255,.88);
-    }
-    /* Info */
-    .c-info {
-      position:absolute; bottom:1.1rem; left:1.6rem; right:1.6rem;
-      display:flex; justify-content:space-between; align-items:flex-end;
-    }
-    .c-label { font-size:.62rem; color:rgba(255,255,255,.38); text-transform:uppercase; letter-spacing:.1em; }
-    .c-val   { font-size:.88rem; color:rgba(255,255,255,.85); font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
-    /* MC logo */
-    .mc { position:absolute; bottom:1.1rem; right:1.4rem; display:flex; }
-    .mc-c { width:30px;height:30px; border-radius:50%; opacity:.92; }
-    .mc-red  { background:#EB001B; margin-right:-9px; }
-    .mc-yel  { background:#F79E1B; }
-    /* Back */
-    .cb {
-      transform:rotateY(180deg);
-      background:linear-gradient(135deg,#0d1220 0%,#1a1f2e 100%);
-      border:1px solid rgba(255,255,255,.1);
-      box-shadow:0 30px 60px rgba(0,0,0,.55);
-    }
-    .cb-stripe { position:absolute; top:2rem; left:0;right:0; height:42px; background:rgba(0,0,0,.85); }
-    .cb-cvv-row { position:absolute; top:5.2rem; left:1.4rem;right:1.4rem; }
-    .cb-cvv-lbl { font-size:.68rem; color:rgba(255,255,255,.35); margin-bottom:.3rem; }
-    .cb-cvv-bar { background:#fff; border-radius:5px; padding:.38rem .8rem; display:flex; justify-content:flex-end; }
-    .cb-cvv { font-family:'Courier New',monospace; font-size:.95rem; color:#000; font-weight:800; letter-spacing:.22em; }
-    .cb-note { position:absolute; bottom:1rem; left:1.4rem;right:1.4rem; text-align:center; font-size:.62rem; color:rgba(255,255,255,.25); line-height:1.5; }
-    /* Floating badges */
-    .fb {
-      position:absolute; display:flex; align-items:center; gap:.45rem;
-      background:rgba(22,27,34,.92); border:1px solid var(--border);
-      border-radius:12px; padding:.5rem .8rem;
-      font-size:.78rem; font-weight:700;
-      backdrop-filter:blur(12px); white-space:nowrap;
-      box-shadow:0 8px 30px rgba(0,0,0,.35);
-    }
-    .fb1 { top:-1rem;right:-1rem; color:#26A17B; border-color:rgba(38,161,123,.35); animation:fb-float 4.5s ease-in-out infinite; }
-    .fb2 { bottom:-1rem;left:-1rem; color:var(--cyan); border-color:rgba(0,212,255,.3); animation:fb-float 5.5s ease-in-out infinite .8s; }
-    .fb3 { top:50%;right:-4.5rem; color:var(--purple); border-color:rgba(139,92,246,.3); animation:fb-float3 6s ease-in-out infinite .4s; }
-    @keyframes fb-float  { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-9px);} }
-    @keyframes fb-float3 { 0%,100%{transform:translateY(-50%);} 50%{transform:translateY(calc(-50% - 9px));} }
+    .trust li b { color:var(--green); }
 
-    /* ── SECTION BASE ────────────────────────────────────────── */
-    section { position:relative; z-index:2; }
-    .sec { padding:7rem 6%; }
+    .hero-collage { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; position:relative; }
+    .hero-collage figure {
+      border-radius:18px; overflow:hidden; background:var(--card); aspect-ratio:1/1;
+      border:1px solid var(--border); box-shadow:0 20px 50px rgba(0,0,0,.45);
+    }
+    .hero-collage figure:nth-child(2), .hero-collage figure:nth-child(4) { transform:translateY(1.6rem); }
+    .hero-collage figure img { width:100%; height:100%; object-fit:cover; }
+    .hero-logo {
+      position:absolute; left:50%; top:52%; transform:translate(-50%,-50%);
+      width:74px; height:74px; border-radius:22px; padding:10px;
+      background:rgba(13,17,23,.88); border:1px solid rgba(255,255,255,.14);
+      box-shadow:0 0 30px rgba(0,212,255,.35);
+    }
+
+    /* ── SECTIONS ────────────────────────────────────────────── */
+    .sec { padding:4.5rem 16px; position:relative; }
+    .sec-alt { background:rgba(22,27,34,.45); border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
     .sec-tag {
       display:inline-block; font-size:.76rem; font-weight:800;
-      text-transform:uppercase; letter-spacing:.18em; color:var(--cyan);
-      margin-bottom:.9rem;
+      text-transform:uppercase; letter-spacing:.16em; color:var(--cyan); margin-bottom:.7rem;
     }
-    .sec-h2 {
-      font-size:clamp(2rem,4vw,3.2rem); font-weight:900; line-height:1.15;
-      letter-spacing:-.025em; margin-bottom:.9rem;
-    }
-    [dir="rtl"] .sec-h2 { letter-spacing:0; line-height:1.35; }
-    .sec-lead { font-size:1.05rem; color:var(--sub); max-width:580px; line-height:1.75; }
+    .sec-h2 { font-size:clamp(1.75rem,4.2vw,2.8rem); font-weight:900; line-height:1.15; letter-spacing:-.025em; margin-bottom:.8rem; }
+    .sec-lead { font-size:1.03rem; color:var(--sub); max-width:640px; }
+    .sec-head { margin-bottom:2.2rem; }
+    .center { text-align:center; }
+    .center .sec-lead { margin:0 auto; }
 
-    /* ── STATS BAR ───────────────────────────────────────────── */
-    .stats-bar {
-      margin:0 6% 5rem; position:relative; z-index:2;
-      background:rgba(22,27,34,.65); border:1px solid var(--border);
-      border-radius:22px; overflow:hidden;
-      display:grid; grid-template-columns:repeat(4,1fr);
-      backdrop-filter:blur(20px);
+    /* ── VITRINE PRODUITS ────────────────────────────────────── */
+    .products { display:grid; grid-template-columns:repeat(4,1fr); gap:1.1rem; list-style:none; }
+    .product {
+      background:var(--surface); border:1px solid var(--border); border-radius:18px; overflow:hidden;
+      transition:transform .25s, border-color .25s, box-shadow .25s;
     }
-    .stats-bar::before {
-      content:''; position:absolute; top:0;left:0;right:0; height:1px;
-      background:linear-gradient(90deg,transparent,var(--cyan),var(--purple),transparent);
-    }
-    .stat-cell {
-      padding:2.2rem 1.5rem; text-align:center;
-      border-right:1px solid var(--border);
-    }
-    .stat-cell:last-child { border-right:none; }
-    .stat-v {
-      font-size:2.2rem; font-weight:900; letter-spacing:-.04em;
-      line-height:1; margin-bottom:.45rem;
-    }
-    .stat-l { font-size:.82rem; color:var(--sub); font-weight:500; }
+    .product:hover { transform:translateY(-4px); border-color:rgba(139,92,246,.4); box-shadow:0 16px 40px rgba(0,0,0,.35); }
+    .product .ph { aspect-ratio:1/1; background:var(--card); }
+    .product img { width:100%; height:100%; object-fit:cover; }
+    .product figcaption { padding:.75rem .85rem .9rem; font-size:.86rem; font-weight:600; line-height:1.4; color:var(--text); }
+    .product figcaption small { display:block; margin-top:.3rem; font-size:.74rem; font-weight:700; color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+    .vitrine-foot { margin-top:2rem; display:flex; flex-direction:column; align-items:center; gap:.8rem; text-align:center; }
+    .vitrine-foot p { color:var(--sub); font-size:.92rem; }
 
-    /* ── FEATURES GRID ───────────────────────────────────────── */
-    .feat-grid {
-      display:grid; grid-template-columns:repeat(3,1fr);
-      gap:1.4rem; margin-top:3rem;
+    /* ── CATEGORIES ──────────────────────────────────────────── */
+    .cats { display:grid; grid-template-columns:repeat(5,1fr); gap:1rem; list-style:none; }
+    .cat {
+      background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+      padding:1.5rem 1rem; text-align:center; position:relative;
     }
-    .feat-card {
-      background:rgba(22,27,34,.6); border:1px solid var(--border);
-      border-radius:var(--radius); padding:2rem;
-      backdrop-filter:blur(20px); transition:all .3s; position:relative; overflow:hidden;
+    .cat-ic { font-size:2rem; margin-bottom:.6rem; line-height:1; }
+    .cat-name { font-weight:800; font-size:1.08rem; }
+    .pill {
+      display:inline-block; margin-top:.6rem; padding:.22rem .7rem; border-radius:100px;
+      font-size:.74rem; font-weight:800; letter-spacing:.03em;
     }
-    .feat-card::after {
-      content:''; position:absolute; inset:0; border-radius:var(--radius);
-      background:linear-gradient(135deg,rgba(0,212,255,.04),rgba(139,92,246,.06));
-      opacity:0; transition:opacity .3s;
-    }
-    .feat-card:hover::after { opacity:1; }
-    .feat-card:hover {
-      border-color:rgba(0,212,255,.22);
-      transform:translateY(-5px);
-      box-shadow:0 20px 60px rgba(0,0,0,.3),0 0 0 1px rgba(0,212,255,.1);
-    }
-    .f-icon {
-      width:54px;height:54px; border-radius:15px;
-      display:flex;align-items:center;justify-content:center;
-      font-size:1.4rem; margin-bottom:1.2rem;
-    }
-    .fi1{background:rgba(0,212,255,.14);box-shadow:0 0 22px rgba(0,212,255,.18);}
-    .fi2{background:rgba(139,92,246,.14);box-shadow:0 0 22px rgba(139,92,246,.18);}
-    .fi3{background:rgba(245,158,11,.14);box-shadow:0 0 22px rgba(245,158,11,.18);}
-    .fi4{background:rgba(16,185,129,.14);box-shadow:0 0 22px rgba(16,185,129,.18);}
-    .fi5{background:rgba(236,72,153,.14);box-shadow:0 0 22px rgba(236,72,153,.18);}
-    .fi6{background:rgba(6,182,212,.14);box-shadow:0 0 22px rgba(6,182,212,.18);}
-    .f-title { font-size:1.1rem; font-weight:700; margin-bottom:.5rem; letter-spacing:-.01em; }
-    .f-desc  { font-size:.88rem; color:var(--sub); line-height:1.65; }
+    .pill-live { background:rgba(16,185,129,.15); color:#5EEAD4; border:1px solid rgba(16,185,129,.4); }
+    .pill-soon { background:rgba(245,158,11,.12); color:#FCD34D; border:1px solid rgba(245,158,11,.35); }
+    .cat.live { border-color:rgba(16,185,129,.4); box-shadow:0 0 0 1px rgba(16,185,129,.15), 0 14px 40px rgba(16,185,129,.08); }
 
-    /* ── HOW IT WORKS ────────────────────────────────────────── */
-    .how-sec {
-      background:rgba(22,27,34,.35);
-      border-top:1px solid var(--border);
-      border-bottom:1px solid var(--border);
-    }
-    .steps-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:2rem; margin-top:3rem; }
+    /* ── COMMENT ÇA MARCHE ───────────────────────────────────── */
+    .steps { list-style:none; display:grid; grid-template-columns:repeat(5,1fr); gap:1rem; counter-reset:step; }
     .step {
-      text-align:center; padding:2rem 1.5rem; position:relative;
+      background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+      padding:1.5rem 1.2rem; position:relative;
     }
-    .step:not(:last-child)::after {
-      content:'→'; position:absolute; top:2.2rem; right:-1rem;
-      font-size:1.3rem; color:rgba(255,255,255,.18); z-index:1;
-    }
-    [dir="rtl"] .step:not(:last-child)::after { right:auto; left:-1rem; content:'←'; }
     .step-num {
-      width:58px;height:58px; border-radius:50%;
-      display:flex;align-items:center;justify-content:center;
-      font-size:1.3rem; font-weight:900; margin:0 auto 1.4rem;
+      width:44px; height:44px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:1.1rem; font-weight:900; margin-bottom:1rem;
+      background:rgba(0,212,255,.12); border:2px solid rgba(0,212,255,.45); color:var(--cyan);
     }
-    .sn1{background:rgba(0,212,255,.12);border:2px solid rgba(0,212,255,.38);color:var(--cyan);box-shadow:0 0 28px rgba(0,212,255,.2);}
-    .sn2{background:rgba(139,92,246,.12);border:2px solid rgba(139,92,246,.38);color:var(--purple);box-shadow:0 0 28px rgba(139,92,246,.2);}
-    .sn3{background:rgba(245,158,11,.12);border:2px solid rgba(245,158,11,.38);color:var(--gold);box-shadow:0 0 28px rgba(245,158,11,.2);}
-    .step-t { font-size:1.15rem; font-weight:700; margin-bottom:.65rem; }
-    .step-d { font-size:.88rem; color:var(--sub); line-height:1.65; }
+    .step:nth-child(2) .step-num { background:rgba(139,92,246,.12); border-color:rgba(139,92,246,.5); color:#A78BFA; }
+    .step:nth-child(3) .step-num { background:rgba(236,72,153,.12); border-color:rgba(236,72,153,.45); color:#F472B6; }
+    .step:nth-child(4) .step-num { background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.45); color:var(--gold); }
+    .step:nth-child(5) .step-num { background:rgba(16,185,129,.12); border-color:rgba(16,185,129,.45); color:var(--green); }
+    .step h3 { font-size:1.05rem; font-weight:800; margin-bottom:.45rem; line-height:1.3; }
+    .step p { font-size:.9rem; color:var(--sub); }
 
-    /* ── PLATFORMS ───────────────────────────────────────────── */
-    .platforms { padding:2rem 6% 5.5rem; position:relative; z-index:2; }
-    .plat-label { text-align:center; font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.18em; color:var(--sub); margin-bottom:1.8rem; }
-    .plat-row {
-      display:flex; gap:3rem; justify-content:center; align-items:center;
-      flex-wrap:wrap; opacity:.42; filter:grayscale(1);
+    /* ── LIVRAISON & SUIVI ───────────────────────────────────── */
+    .ship { display:grid; grid-template-columns:1fr 1fr; gap:1.4rem; align-items:stretch; }
+    .panel {
+      background:var(--surface); border:1px solid var(--border); border-radius:24px; padding:2rem;
     }
-    .plat-name { font-size:1.05rem; font-weight:800; letter-spacing:-.01em; }
+    .panel h3 { font-size:1.3rem; font-weight:800; margin-bottom:.6rem; }
+    .panel p { color:var(--sub); font-size:.95rem; }
+    .route { list-style:none; display:flex; flex-direction:column; gap:.2rem; margin:1.4rem 0 1.2rem; }
+    .route li { display:flex; gap:.8rem; align-items:center; font-weight:600; font-size:.95rem; }
+    .route li .ic {
+      width:38px; height:38px; flex:none; border-radius:12px; display:flex; align-items:center; justify-content:center;
+      background:rgba(0,212,255,.1); font-size:1.1rem;
+    }
+    .route li.line { height:14px; margin-left:18px; border-left:2px dashed rgba(255,255,255,.2); }
+    .incl { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem; list-style:none; }
+    .incl li {
+      background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.35); color:#5EEAD4;
+      border-radius:100px; padding:.35rem .85rem; font-size:.84rem; font-weight:700;
+    }
+    .delay { margin-top:1.2rem; font-size:.95rem; color:var(--text); }
+    .delay strong { color:var(--gold); }
 
-    /* ── MOCKUP SECTION ──────────────────────────────────────── */
-    .mockup-sec { padding:7rem 6%; display:flex; align-items:center; gap:5rem; }
-    .mock-left { flex:1; }
-    .mock-phone {
-      flex:1; display:flex; justify-content:center; align-items:center;
-      position:relative;
+    .track { list-style:none; margin:1.4rem 0 1rem; display:flex; flex-direction:column; gap:.1rem; }
+    .track li { display:flex; align-items:flex-start; gap:.85rem; position:relative; padding-bottom:1rem; }
+    .track li:not(:last-child)::after {
+      content:''; position:absolute; left:13px; top:28px; bottom:0; width:2px;
+      background:linear-gradient(var(--cyan),var(--purple));
+      opacity:.45;
     }
-    .phone-frame {
-      width:280px;height:560px; background:var(--surface); border-radius:38px;
-      border:2px solid rgba(255,255,255,.1);
-      box-shadow:0 40px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.06);
-      overflow:hidden; position:relative;
-      animation:phone-bob 6s ease-in-out infinite;
+    .dot {
+      width:28px; height:28px; border-radius:50%; flex:none;
+      display:flex; align-items:center; justify-content:center; font-size:.8rem; font-weight:900;
+      background:rgba(0,212,255,.14); border:2px solid var(--cyan); color:var(--cyan);
     }
-    @keyframes phone-bob { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-14px);} }
-    .phone-notch {
-      width:90px;height:22px; background:var(--bg); border-radius:0 0 14px 14px;
-      margin:0 auto; position:relative; z-index:10;
-    }
-    .phone-screen {
-      padding:1rem 1rem 1rem;
-      height:calc(100% - 22px);
-      background:linear-gradient(180deg,#161b22 0%,#0d1117 100%);
-      display:flex; flex-direction:column; gap:.8rem; overflow:hidden;
-    }
-    /* Mini card in phone */
-    .mini-card {
-      width:100%; height:115px; border-radius:14px;
-      background:linear-gradient(135deg,#1a1f2e,#0d1220,#1b0d2e);
-      border:1px solid rgba(255,255,255,.1); position:relative; overflow:hidden;
-      animation:shimmer 3s linear infinite;
-    }
-    .mini-card::before {
-      content:''; position:absolute; inset:0;
-      background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.07) 50%,transparent 60%);
-      background-size:200% 100%;
-      animation:shimmer 3.5s linear infinite;
-    }
-    .mini-card-num {
-      position:absolute; bottom:2.2rem; left:1rem;
-      font-family:'Courier New',monospace; font-size:.72rem; letter-spacing:.12em;
-      color:rgba(255,255,255,.75);
-    }
-    .mini-mc { position:absolute; bottom:.7rem; right:.8rem; display:flex; }
-    .mini-mc-c { width:20px;height:20px; border-radius:50%; }
-    .mini-mc-r { background:#EB001B; margin-right:-6px; opacity:.9; }
-    .mini-mc-y { background:#F79E1B; opacity:.9; }
-    .mini-tchipa { position:absolute; top:.7rem; right:.8rem; font-size:.7rem; font-weight:900; background:linear-gradient(135deg,var(--cyan),var(--purple)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-    /* Phone UI rows */
-    .phone-row {
-      background:rgba(255,255,255,.04); border-radius:10px;
-      padding:.6rem .8rem; display:flex; align-items:center; justify-content:space-between;
-    }
-    .phone-row-icon { width:28px;height:28px; border-radius:8px; display:flex;align-items:center;justify-content:center; font-size:.8rem; }
-    .phone-row-text { flex:1; margin-left:.6rem; }
-    .phone-row-t { font-size:.72rem; font-weight:700; color:var(--text); }
-    .phone-row-s { font-size:.62rem; color:var(--sub); }
-    .phone-row-val { font-size:.78rem; font-weight:700; }
-    .phone-cta {
-      margin-top:auto; padding:.6rem; border-radius:12px;
-      background:linear-gradient(135deg,var(--cyan),var(--purple));
-      text-align:center; font-size:.78rem; font-weight:800; color:#000;
-    }
-    /* Glow behind phone */
-    .phone-glow {
-      position:absolute; width:350px;height:350px; border-radius:50%;
-      background:radial-gradient(circle,rgba(139,92,246,.18),transparent 70%);
-      filter:blur(40px); z-index:-1;
+    .track li:last-child .dot { background:rgba(16,185,129,.18); border-color:var(--green); color:var(--green); }
+    .track strong { display:block; font-size:.98rem; }
+    .track span.d { font-size:.86rem; color:var(--sub); }
+    .note {
+      display:flex; gap:.6rem; align-items:flex-start; margin-top:.4rem;
+      background:rgba(139,92,246,.08); border:1px solid rgba(139,92,246,.3);
+      border-radius:14px; padding:.85rem 1rem; font-size:.9rem; color:var(--text);
     }
 
-    /* ── CTA SECTION ─────────────────────────────────────────── */
-    .cta-sec { padding:7rem 6%; }
+    /* ── TAILLES ─────────────────────────────────────────────── */
+    .size {
+      display:grid; grid-template-columns:auto 1fr; gap:2rem; align-items:center;
+      background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(236,72,153,.07));
+      border:1px solid rgba(245,158,11,.3); border-radius:26px; padding:2.2rem;
+    }
+    .size-big {
+      font-size:clamp(2.6rem,8vw,4.2rem); font-weight:900; line-height:1; letter-spacing:-.04em;
+      background:linear-gradient(135deg,var(--gold),var(--pink));
+      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    }
+    .size-big small { display:block; font-size:.9rem; letter-spacing:0; margin-top:.3rem; -webkit-text-fill-color:var(--sub); color:var(--sub); font-weight:600; }
+    .size h2 { font-size:clamp(1.4rem,3.5vw,2rem); font-weight:900; margin-bottom:.5rem; line-height:1.2; }
+    .size p { color:var(--sub); }
+    .size ul { margin:.8rem 0 0 1.1rem; color:var(--sub); font-size:.95rem; }
+    .size ul li { margin-bottom:.25rem; }
+    .size strong { color:var(--text); }
+
+    /* ── FAQ ─────────────────────────────────────────────────── */
+    .faq { max-width:820px; margin:0 auto; display:flex; flex-direction:column; gap:.7rem; }
+    .faq details {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden;
+    }
+    .faq details[open] { border-color:rgba(0,212,255,.35); }
+    .faq summary {
+      cursor:pointer; list-style:none; padding:1.05rem 1.2rem; font-weight:700; font-size:1rem;
+      display:flex; justify-content:space-between; align-items:center; gap:1rem;
+    }
+    .faq summary::-webkit-details-marker { display:none; }
+    .faq summary::after { content:'+'; font-size:1.4rem; color:var(--cyan); font-weight:500; flex:none; transition:transform .2s; }
+    .faq details[open] summary::after { transform:rotate(45deg); }
+    .faq summary:focus-visible { outline-offset:-3px; border-radius:16px; }
+    .faq .a { padding:0 1.2rem 1.15rem; color:var(--sub); font-size:.95rem; }
+    .faq .a strong { color:var(--text); }
+
+    /* ── CTA TÉLÉCHARGEMENT ──────────────────────────────────── */
     .cta-card {
-      background:linear-gradient(135deg,rgba(0,212,255,.07) 0%,rgba(139,92,246,.11) 50%,rgba(245,158,11,.05) 100%);
-      border:1px solid rgba(0,212,255,.18); border-radius:32px;
-      padding:5.5rem 4rem; text-align:center; position:relative; overflow:hidden;
+      max-width:var(--maxw); margin:0 auto;
+      background:linear-gradient(135deg,rgba(0,212,255,.08) 0%,rgba(139,92,246,.12) 55%,rgba(236,72,153,.07) 100%);
+      border:1px solid rgba(0,212,255,.22); border-radius:30px;
+      padding:3.5rem 2rem; text-align:center;
     }
-    .cta-card::before {
-      content:''; position:absolute; inset:0; border-radius:32px;
-      background:repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(255,255,255,.015) 39px,rgba(255,255,255,.015) 40px),
-                 repeating-linear-gradient(90deg,transparent,transparent 39px,rgba(255,255,255,.015) 39px,rgba(255,255,255,.015) 40px);
+    .cta-card .badge { background:rgba(0,212,255,.09); border-color:rgba(0,212,255,.3); color:var(--cyan); }
+    .cta-card .badge::before { background:var(--cyan); }
+    .cta-h2 { font-size:clamp(1.9rem,4.6vw,3.2rem); font-weight:900; line-height:1.12; letter-spacing:-.03em; margin-bottom:.9rem; }
+    .cta-sub { font-size:1.03rem; color:var(--sub); max-width:520px; margin:0 auto 1.8rem; }
+    .cta-btns { display:flex; gap:.8rem; justify-content:center; flex-wrap:wrap; }
+    .cta-hint { margin:1.3rem auto 0; font-size:.9rem; color:var(--sub); }
+    .update-warn {
+      display:flex; align-items:flex-start; gap:.6rem; max-width:560px; margin:0 auto 1.6rem;
+      padding:.85rem 1.1rem; text-align:left; font-size:.9rem; line-height:1.45; color:#FCD34D;
+      background:rgba(245,158,11,0.09); border:1px solid rgba(245,158,11,0.32); border-radius:14px;
     }
-    .cta-h2 {
-      font-size:clamp(2.2rem,4.5vw,4rem); font-weight:900; line-height:1.1;
-      letter-spacing:-.035em; margin-bottom:1rem; position:relative;
-    }
-    [dir="rtl"] .cta-h2 { letter-spacing:0; }
-    .cta-sub { font-size:1.05rem; color:var(--sub); max-width:480px; margin:0 auto 2.5rem; line-height:1.7; position:relative; }
-    .cta-btns { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; position:relative; }
-    .cta-hint { margin:1.4rem auto 0; font-size:.88rem; color:var(--sub); opacity:.85; position:relative; }
-    .update-warn { display:flex; align-items:flex-start; gap:.6rem; max-width:560px; margin:0 auto 1.6rem; padding:.85rem 1.1rem; text-align:left; font-size:.9rem; line-height:1.45; color:var(--gold); background:rgba(245,158,11,0.09); border:1px solid rgba(245,158,11,0.32); border-radius:14px; }
-    [dir="rtl"] .update-warn { text-align:right; }
 
     /* ── FOOTER ──────────────────────────────────────────────── */
-    footer {
-      padding:4rem 6% 2rem;
-      border-top:1px solid var(--border);
-      position:relative; z-index:2;
-    }
-    .footer-top {
-      display:grid; grid-template-columns:2.2fr 1fr 1fr 1fr;
-      gap:3rem; margin-bottom:3rem;
-    }
-    .footer-logo-area p { font-size:.88rem; color:var(--sub); line-height:1.7; margin-top:.75rem; max-width:300px; }
-    .foot-col h4 { font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.15em; color:var(--sub); margin-bottom:1.1rem; }
-    .foot-col a { display:block; color:var(--sub); text-decoration:none; font-size:.88rem; margin-bottom:.55rem; transition:color .2s; }
+    footer { padding:3.5rem 16px 6rem; border-top:1px solid var(--border); }
+    .footer-top { display:grid; grid-template-columns:2fr 1fr 1fr; gap:2.5rem; margin-bottom:2.2rem; max-width:var(--maxw); margin-left:auto; margin-right:auto; }
+    .footer-top p { font-size:.9rem; color:var(--sub); margin-top:.7rem; max-width:340px; }
+    .foot-col h4 { font-size:.78rem; font-weight:800; text-transform:uppercase; letter-spacing:.14em; color:var(--sub); margin-bottom:.9rem; }
+    .foot-col a { display:block; color:var(--sub); text-decoration:none; font-size:.92rem; margin-bottom:.5rem; }
     .foot-col a:hover { color:var(--text); }
     .footer-bot {
-      display:flex; align-items:center; justify-content:space-between;
-      padding-top:1.5rem; border-top:1px solid var(--border);
-      font-size:.78rem; color:var(--sub);
+      max-width:var(--maxw); margin:0 auto; display:flex; flex-wrap:wrap; gap:.6rem;
+      align-items:center; justify-content:space-between;
+      padding-top:1.3rem; border-top:1px solid var(--border); font-size:.8rem; color:var(--sub);
     }
-    [dir="rtl"] .footer-bot { flex-direction:row-reverse; }
-
-    /* ── ANIMATIONS (shared) ─────────────────────────────────── */
-    @keyframes fade-up { from{opacity:0;transform:translateY(28px);} to{opacity:1;transform:none;} }
 
     /* ── RESPONSIVE ──────────────────────────────────────────── */
-    @media(max-width:1024px){
-      .hero{flex-direction:column;padding:8rem 6% 4rem;text-align:center;}
-      .hero-left{max-width:100%;}
-      .hero-sub{max-width:100%;}
-      .hero-btns{justify-content:center;}
-      .hero-right{display:none;}
-      .stats-bar{grid-template-columns:repeat(2,1fr);}
-      .stat-cell:nth-child(2){border-right:none;}
-      .stat-cell:nth-child(3){border-top:1px solid var(--border);}
-      .feat-grid{grid-template-columns:repeat(2,1fr);}
-      .steps-grid{grid-template-columns:1fr;gap:1.5rem;}
-      .step:not(:last-child)::after{display:none;}
-      .mockup-sec{flex-direction:column;}
-      .footer-top{grid-template-columns:1fr 1fr;}
+    @media (max-width:1024px){
+      .steps { grid-template-columns:repeat(2,1fr); }
+      .steps .step:last-child { grid-column:1 / -1; }
+      .products { grid-template-columns:repeat(3,1fr); }
+      .cats { grid-template-columns:repeat(3,1fr); }
     }
-    @media(max-width:640px){
-      .hero{padding:7rem 5% 3rem;}
-      .sec{padding:4rem 5%;}
-      .stats-bar{margin:0 5% 4rem; grid-template-columns:repeat(2,1fr);}
-      .feat-grid{grid-template-columns:1fr;}
-      .nav-mid{display:none;}
-      .cta-card{padding:3.5rem 1.5rem;}
-      .footer-top{grid-template-columns:1fr;}
+    @media (max-width:860px){
+      .hero-in { grid-template-columns:1fr; gap:2.2rem; }
+      .hero-collage { max-width:460px; margin:0 auto 1.6rem; width:100%; }
+      .ship { grid-template-columns:1fr; }
+      .nav-mid { display:none; }
+      .footer-top { grid-template-columns:1fr 1fr; }
+      .footer-top > div:first-child { grid-column:1 / -1; }
     }
-
-    /* ── RTL OVERRIDES ───────────────────────────────────────── */
-    [dir="rtl"] .feat-card{ text-align:right; }
-    [dir="rtl"] .cta-card { text-align:right; }
-    [dir="rtl"] .cta-card .cta-sub { margin:0 0 2.5rem 0; text-align:right; }
-    [dir="rtl"] .cta-btns { justify-content:flex-start; }
-    [dir="rtl"] .footer-bot { text-align:right; }
-    [dir="rtl"] .foot-col { text-align:right; }
-    [dir="rtl"] nav { flex-direction:row-reverse; }
-    [dir="rtl"] .nav-mid { flex-direction:row-reverse; }
-    [dir="rtl"] .nav-right { flex-direction:row-reverse; }
-    [dir="rtl"] .hero-btns { flex-direction:row-reverse; }
-
-    /* ── WALLET SHOWCASE ─────────────────────────────────────── */
-    .wallet-sec {
-      padding: 8rem 6%;
-      position: relative; z-index: 2; overflow: hidden;
-      background: rgba(22,27,34,.35);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 5rem;
+    @media (max-width:600px){
+      .hero { padding-top:2rem; }
+      .products { grid-template-columns:repeat(2,1fr); gap:.75rem; }
+      .product figcaption { font-size:.8rem; padding:.6rem .65rem .75rem; }
+      .cats { grid-template-columns:repeat(2,1fr); }
+      .cats .cat.live { grid-column:1 / -1; }
+      .steps { grid-template-columns:1fr; }
+      .size { grid-template-columns:1fr; padding:1.6rem; gap:1rem; }
+      .panel { padding:1.5rem; }
+      .cta-card { padding:2.6rem 1.2rem; }
+      .hero-btns .btn, .cta-btns .btn { width:100%; }
+      .logo { font-size:1.3rem; }
+      .logo img { width:30px; height:30px; }
     }
-    .wallet-sec::before {
-      content:''; position:absolute; inset:0;
-      background: radial-gradient(circle at 75% 50%, rgba(139,92,246,.10), transparent 55%);
-      pointer-events:none;
-    }
-    .wallet-copy { flex:1; position:relative; z-index:3; }
-    .wallet-tag {
-      display:inline-flex; align-items:center; gap:.5rem;
-      background:rgba(139,92,246,.1); border:1px solid rgba(139,92,246,.3);
-      border-radius:100px; padding:.38rem 1rem;
-      font-size:.78rem; font-weight:800; color:var(--purple);
-      text-transform:uppercase; letter-spacing:.1em; margin-bottom:1.2rem;
-    }
-    .wallet-features { list-style:none; display:flex; flex-direction:column; gap:.85rem; margin:2rem 0; }
-    .wallet-features li { display:flex; gap:.75rem; align-items:flex-start; font-size:.94rem; color:var(--sub); }
-    .wallet-features .wf-ic {
-      flex:0 0 auto; width:30px;height:30px; border-radius:9px;
-      display:flex;align-items:center;justify-content:center; font-size:.9rem;
-      background:rgba(139,92,246,.14); box-shadow:0 0 18px rgba(139,92,246,.2);
-    }
-    .wallet-features strong { color:var(--text); font-weight:700; }
-
-    /* Spinning T stage */
-    .wallet-stage {
-      flex:1; position:relative; z-index:2;
-      min-height:440px;
-      display:flex; align-items:center; justify-content:center;
-      perspective:1400px;
-    }
-    .fx-canvas {
-      position:absolute; inset:0; z-index:1; pointer-events:none;
-    }
-    .t-halo {
-      position:absolute; width:380px; height:380px; border-radius:50%;
-      background:conic-gradient(from 0deg, var(--cyan), var(--purple), var(--gold), var(--cyan));
-      filter:blur(70px); opacity:.32; z-index:1;
-      animation:t-halo-spin 8s linear infinite;
-    }
-    @keyframes t-halo-spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }
-    .t-spin-wrap {
-      position:relative; z-index:3;
-      transform-style:preserve-3d;
-      animation:t-spin 5s linear infinite;
-    }
-    @keyframes t-spin {
-      from { transform:rotateY(0deg); }
-      to   { transform:rotateY(360deg); }
-    }
-    .t-logo {
-      width:clamp(180px,22vw,300px); height:auto; display:block;
-      filter:drop-shadow(0 0 0 transparent);
-      animation:t-flash 3s ease-in-out infinite;
-    }
-    @keyframes t-flash {
-      0%,100% { filter:drop-shadow(0 0 18px rgba(0,212,255,.7)) drop-shadow(0 0 40px rgba(139,92,246,.45)); }
-      33%     { filter:drop-shadow(0 0 26px rgba(139,92,246,.85)) drop-shadow(0 0 55px rgba(0,212,255,.5)); }
-      66%     { filter:drop-shadow(0 0 24px rgba(245,158,11,.7)) drop-shadow(0 0 50px rgba(236,72,153,.5)); }
-    }
-    /* Top-of-page hero fireworks banner */
-    .topfx {
-      position:relative; width:100%;
-      min-height:clamp(240px,34vh,400px);
-      display:flex; align-items:center; justify-content:center;
-      overflow:hidden; perspective:1400px;
-      border-bottom:1px solid rgba(255,255,255,.05);
-    }
-    .topfx .t-halo { width:clamp(260px,32vw,420px); height:clamp(260px,32vw,420px); opacity:.4; }
-    .t-logo-top { width:clamp(150px,18vw,260px); }
-    @media (max-width:768px){ .topfx{ min-height:clamp(200px,28vh,300px); } }
-    @media (prefers-reduced-motion:reduce){
-      .t-spin-wrap{ animation:none; } .t-halo{ animation:none; }
-    }
-    .wallet-badges { display:flex; gap:.75rem; flex-wrap:wrap; margin-top:1.8rem; }
-    .wallet-pill {
-      display:inline-flex; align-items:center; gap:.4rem;
-      background:rgba(22,27,34,.7); border:1px solid var(--border);
-      border-radius:100px; padding:.42rem .9rem; font-size:.8rem; font-weight:700; color:var(--sub);
-    }
-    @media(max-width:1024px){
-      .wallet-sec{ flex-direction:column; gap:2rem; text-align:center; }
-      .wallet-features li{ text-align:left; }
-      .wallet-stage{ min-height:360px; width:100%; }
-      .wallet-badges{ justify-content:center; }
-      .wallet-tag{ }
-    }
-    [dir="rtl"] .wallet-copy{ text-align:right; }
-    [dir="rtl"] .wallet-features li{ flex-direction:row-reverse; text-align:right; }
-    [dir="rtl"] .wallet-badges{ flex-direction:row-reverse; }
-
-    /* ── AFFILIATE / REFERRAL ─────────────────────────────────── */
-    .aff-sec {
-      padding:8rem 6%; position:relative; z-index:2; overflow:hidden;
-      background:rgba(22,27,34,.35);
-      border-top:1px solid var(--border); border-bottom:1px solid var(--border);
-    }
-    .aff-sec::before {
-      content:''; position:absolute; inset:0; pointer-events:none;
-      background:radial-gradient(circle at 22% 38%, rgba(16,185,129,.10), transparent 55%);
-    }
-    .aff-head { text-align:center; max-width:640px; margin:0 auto 3.5rem; position:relative; z-index:2; }
-    .aff-head .sec-lead { margin:0 auto; }
-    .aff-tag {
-      display:inline-flex; align-items:center; gap:.5rem;
-      background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3);
-      border-radius:100px; padding:.38rem 1rem;
-      font-size:.78rem; font-weight:800; color:var(--green);
-      text-transform:uppercase; letter-spacing:.1em; margin-bottom:1.2rem;
-    }
-    .aff-top {
-      display:grid; grid-template-columns:.85fr 1.15fr; gap:2rem; align-items:stretch;
-      position:relative; z-index:2; max-width:1100px; margin:0 auto;
-    }
-    .aff-hero-num {
-      background:rgba(22,27,34,.6); border:1px solid rgba(16,185,129,.22);
-      border-radius:24px; padding:3rem 2rem; text-align:center;
-      display:flex; flex-direction:column; align-items:center; justify-content:center;
-      backdrop-filter:blur(20px); position:relative; overflow:hidden;
-    }
-    .aff-hero-num::after {
-      content:''; position:absolute; inset:0; border-radius:24px; pointer-events:none;
-      background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(245,158,11,.06));
-    }
-    .aff-pct {
-      font-size:clamp(4.5rem,11vw,7.5rem); font-weight:900; line-height:1; letter-spacing:-.05em;
-      background:linear-gradient(135deg,var(--green),var(--gold));
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-      position:relative; z-index:2;
-    }
-    .aff-pct-sub { font-size:1rem; color:var(--sub); margin-top:.6rem; position:relative; z-index:2; max-width:250px; line-height:1.55; }
-    .aff-calc {
-      background:rgba(22,27,34,.6); border:1px solid var(--border);
-      border-radius:24px; padding:2.4rem 2.2rem; backdrop-filter:blur(20px);
-      position:relative; z-index:2;
-    }
-    .aff-calc-title { font-size:1.05rem; font-weight:800; margin-bottom:1.6rem; }
-    .aff-calc-row { display:flex; justify-content:space-between; align-items:baseline; }
-    .aff-calc-label { font-size:.85rem; color:var(--sub); }
-    .aff-calc-amt { font-size:1.7rem; font-weight:900; color:var(--cyan); letter-spacing:-.02em; }
-    .aff-slider {
-      -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:100px;
-      background:var(--card); outline:none; margin:1rem 0 2rem;
-    }
-    .aff-slider::-webkit-slider-thumb {
-      -webkit-appearance:none; appearance:none; width:22px; height:22px; border-radius:50%;
-      background:linear-gradient(135deg,var(--green),var(--gold)); cursor:pointer;
-      box-shadow:0 0 14px rgba(16,185,129,.6); border:2px solid #0d1117;
-    }
-    .aff-slider::-moz-range-thumb {
-      width:22px; height:22px; border-radius:50%; border:2px solid #0d1117;
-      background:linear-gradient(135deg,var(--green),var(--gold)); cursor:pointer;
-    }
-    .aff-earn {
-      background:rgba(16,185,129,.08); border:1px solid rgba(16,185,129,.25);
-      border-radius:16px; padding:1.4rem; text-align:center;
-    }
-    .aff-earn-lbl { font-size:.8rem; color:var(--sub); text-transform:uppercase; letter-spacing:.08em; }
-    .aff-earn-val {
-      font-size:2.6rem; font-weight:900; letter-spacing:-.03em; margin-top:.3rem; line-height:1;
-      background:linear-gradient(135deg,var(--green),var(--gold));
-      -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
-    }
-    .aff-earn-note { font-size:.78rem; color:var(--sub); margin-top:.5rem; }
-    .aff-steps {
-      display:grid; grid-template-columns:repeat(3,1fr); gap:1.4rem;
-      max-width:1100px; margin:3.5rem auto 0; position:relative; z-index:2;
-    }
-    .aff-step {
-      background:rgba(22,27,34,.6); border:1px solid var(--border);
-      border-radius:var(--radius); padding:2rem; backdrop-filter:blur(20px); transition:all .3s;
-    }
-    .aff-step:hover { border-color:rgba(16,185,129,.3); transform:translateY(-5px); box-shadow:0 20px 60px rgba(0,0,0,.3); }
-    .aff-step-ic {
-      width:52px; height:52px; border-radius:15px;
-      display:flex; align-items:center; justify-content:center; font-size:1.4rem; margin-bottom:1.1rem;
-      background:rgba(16,185,129,.14); box-shadow:0 0 22px rgba(16,185,129,.18);
-    }
-    .aff-step-n { font-size:.72rem; font-weight:800; color:var(--green); text-transform:uppercase; letter-spacing:.12em; margin-bottom:.4rem; }
-    .aff-step-t { font-size:1.1rem; font-weight:700; margin-bottom:.5rem; }
-    .aff-step-d { font-size:.88rem; color:var(--sub); line-height:1.65; }
-    .aff-cta { text-align:center; margin-top:3rem; position:relative; z-index:2; }
-    @media(max-width:900px){
-      .aff-top{ grid-template-columns:1fr; }
-      .aff-steps{ grid-template-columns:1fr; }
-    }
-    [dir="rtl"] .aff-head{ }
-    [dir="rtl"] .aff-step{ text-align:right; }
   </style>
 </head>
 <body>
-
-<canvas id="c"></canvas>
+<a href="#main" class="skip">Aller au contenu</a>
 
 <!-- ── NAVBAR ─────────────────────────────────────────────── -->
-<nav id="nav">
-  <a href="#home" class="logo">Tchipa</a>
-  <div class="nav-mid">
-    <a href="#features" data-k="nav.features">Features</a>
-    <a href="#how"      data-k="nav.how">How it Works</a>
-    <a href="/demo.html" data-k="nav.demo">▶ Demo</a>
-    <a href="#wallet"   data-k="nav.wallet">Wallet</a>
-    <a href="#affiliate" data-k="nav.aff">Affiliate</a>
-    <a href="#download" data-k="nav.download">Download</a>
-  </div>
-  <div class="nav-right">
-    <button class="lang-btn" onclick="toggleLang()" id="lang-btn">🌐 عربي</button>
-    <a href="#download" class="btn-nav" data-k="nav.cta">Get the App</a>
+<nav id="nav" aria-label="Navigation principale">
+  <div class="nav-in">
+    <a href="#home" class="logo" aria-label="Tchipa, accueil">
+      <img src="/tchipa_logo.png" alt="" width="34" height="34"><span>Tchipa</span>
+    </a>
+    <div class="nav-mid">
+      <a href="#boutique">Boutique</a>
+      <a href="#comment">Comment ça marche</a>
+      <a href="#livraison">Livraison</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <a href="#telecharger" class="btn-nav">Télécharger l'app</a>
   </div>
 </nav>
 
-<!-- ── TOP FIREWORKS BANNER ───────────────────────────────── -->
-<div class="topfx" id="topfx">
-  <canvas class="fx-canvas" id="fireworks-top"></canvas>
-  <div class="t-halo"></div>
-  <div class="t-spin-wrap">
-    <img src="/tchipa_logo.png" alt="Tchipa T logo" class="t-logo t-logo-top">
-  </div>
-</div>
+<main id="main">
 
 <!-- ── HERO ───────────────────────────────────────────────── -->
 <section id="home" class="hero">
-  <div class="orb orb1"></div>
-  <div class="orb orb2"></div>
-  <div class="orb orb3"></div>
-
-  <div class="hero-left">
-    <div class="badge" data-k="hero.badge">🔒 v4 — Client PIN · Email Verified · Theft-Proof</div>
-    <h1 class="hero-h1">
-      <span data-k="hero.h1a">Your Virtual Card,</span><br>
-      <span class="grad-text" data-k="hero.h1b">Activated Instantly</span>
-    </h1>
-    <p class="hero-sub" data-k="hero.sub">
-      Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.
-    </p>
-    <div class="hero-btns">
-      <a href="#download" class="btn-primary">
-        <span>⚡</span><span data-k="hero.cta1">Get Your Card Now</span>
-      </a>
-      <a href="/demo.html" class="btn-ghost">
-        <span>▶</span><span data-k="hero.cta2">Watch Live Demo</span>
-      </a>
-    </div>
-  </div>
-
-  <div class="hero-right">
-    <div class="card-wrap">
-      <div class="card-scene" title="Hover to flip">
-        <div class="card-inner" id="ci">
-          <!-- Front -->
-          <div class="card-face cf">
-            <div class="card-holo"></div>
-            <div class="chip"></div>
-            <div class="nfc">))))</div>
-            <div class="c-logo">tchipa</div>
-            <div class="c-num">4716 •••• •••• 9421</div>
-            <div class="c-info">
-              <div>
-                <div class="c-label">Card Holder</div>
-                <div class="c-val">Virtual User</div>
-              </div>
-              <div style="text-align:right">
-                <div class="c-label">Expires</div>
-                <div class="c-val" style="font-family:'Courier New',monospace">12/27</div>
-              </div>
-            </div>
-            <div class="mc">
-              <div class="mc-c mc-red"></div>
-              <div class="mc-c mc-yel"></div>
-            </div>
-          </div>
-          <!-- Back -->
-          <div class="card-face cb">
-            <div class="cb-stripe"></div>
-            <div class="cb-cvv-row">
-              <div class="cb-cvv-lbl">CVV / Security Code</div>
-              <div class="cb-cvv-bar"><span class="cb-cvv">• • •</span></div>
-            </div>
-            <div class="cb-note">Issued by Tchipa via PayGate · Valid for online purchases worldwide</div>
-            <div class="mc" style="bottom:1rem;right:1.4rem;">
-              <div class="mc-c mc-red"></div>
-              <div class="mc-c mc-yel"></div>
-            </div>
-          </div>
-        </div>
+  <div class="hero-in">
+    <div>
+      <div class="badge">Nouvelle collection Femme disponible</div>
+      <h1>Vêtements de Chine, <span class="grad-text">livrés chez toi en Algérie</span></h1>
+      <p class="hero-ar ar" lang="ar" dir="rtl">ملابس من الصين إلى الجزائر</p>
+      <p class="hero-sub">
+        Robes, abayas, hijabs… directement des fabricants, à <strong>petits prix</strong>.
+        Tu paies en <strong>dinars via BaridiMob</strong>, on s'occupe de l'achat, de l'expédition et de la douane.
+      </p>
+      <div class="hero-btns">
+        <a href="https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
+          Télécharger l'app Android
+        </a>
+        <a href="#boutique" class="btn btn-ghost">Voir la boutique</a>
       </div>
-      <!-- Floating badges -->
-      <div class="fb fb1"><span>🟢</span> USDT · Polygon</div>
-      <div class="fb fb2"><span>⚡</span> <span data-k="badge.instant">Instant</span></div>
-      <div class="fb fb3"><span>🌍</span> <span data-k="badge.global">Worldwide</span></div>
+      <ul class="trust" aria-label="Nos garanties">
+        <li><b aria-hidden="true">✓</b> Livraison &amp; douane comprises</li>
+        <li><b aria-hidden="true">✓</b> Paiement BaridiMob</li>
+        <li><b aria-hidden="true">✓</b> Suivi de commande</li>
+      </ul>
+    </div>
+
+    <div class="hero-collage" aria-hidden="true">
+      <figure><img src="https://cbu01.alicdn.com/img/ibank/O1CN015Kiipr1Xfbu0anri5_!!2221408952951-0-cib.jpg_300x300.jpg" alt="" width="300" height="300" referrerpolicy="no-referrer" fetchpriority="high"></figure>
+      <figure><img src="https://cbu01.alicdn.com/img/ibank/O1CN01UR7qTG1a2d50bMxJd_!!2222585993272-0-cib.jpg_300x300.jpg" alt="" width="300" height="300" referrerpolicy="no-referrer"></figure>
+      <figure><img src="https://cbu01.alicdn.com/img/ibank/O1CN01VJ6XPQ21DcBsjLSGn_!!2211071956951-0-cib.jpg_300x300.jpg" alt="" width="300" height="300" referrerpolicy="no-referrer"></figure>
+      <figure><img src="https://cbu01.alicdn.com/img/ibank/O1CN01TxWMCrJUfYI2B4eA_!!2206610561633-0-cib.jpg_300x300.jpg" alt="" width="300" height="300" referrerpolicy="no-referrer"></figure>
+      <img class="hero-logo" src="/tchipa_logo.png" alt="" width="74" height="74">
     </div>
   </div>
 </section>
 
-<!-- ── STATS BAR ────────────────────────────────────────────── -->
-<div class="stats-bar reveal">
-  <div class="stat-cell">
-    <div class="stat-v grad-text">$5–$1000</div>
-    <div class="stat-l" data-k="stat1">Card Value Range</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-v" style="color:var(--cyan)">&lt;2<span style="font-size:1.1rem"> min</span></div>
-    <div class="stat-l" data-k="stat2">Activation Time</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-v" style="color:var(--purple)">0 <span style="font-size:1.1rem">KYC</span></div>
-    <div class="stat-l" data-k="stat3">No Documents Needed</div>
-  </div>
-  <div class="stat-cell" style="border-right:none">
-    <div class="stat-v" style="color:var(--gold)">Polygon</div>
-    <div class="stat-l" data-k="stat4">Fast &amp; Cheap Network</div>
-  </div>
-</div>
-
-<!-- ── FEATURES ─────────────────────────────────────────────── -->
-<section id="features" class="sec">
-  <span class="sec-tag" data-k="feat.tag">Features</span>
-  <h2 class="sec-h2"><span data-k="feat.h2a">Everything you need</span><br><span class="grad-text" data-k="feat.h2b">to pay online</span></h2>
-  <p class="sec-lead" data-k="feat.lead">Tchipa combines crypto payments with instant virtual card generation so you can shop anywhere on the internet.</p>
-
-  <div class="feat-grid">
-    <div class="feat-card reveal"><div class="f-icon fi1">⚡</div><div class="f-title" data-k="f1t">Instant Activation</div><p class="f-desc" data-k="f1d">Get your virtual Mastercard in under 2 minutes. Send USDT, receive your card details immediately.</p></div>
-    <div class="feat-card reveal reveal-d1"><div class="f-icon fi2">🔒</div><div class="f-title" data-k="f2t">Anonymous & Secure</div><p class="f-desc" data-k="f2d">No KYC required. Your card is tied to your crypto wallet, not your personal identity.</p></div>
-    <div class="feat-card reveal reveal-d2"><div class="f-icon fi3">🌐</div><div class="f-title" data-k="f3t">Pay Anywhere Online</div><p class="f-desc" data-k="f3d">Works on Amazon, AliExpress, Netflix, Temu, Shopify stores and any website accepting Mastercard.</p></div>
-    <div class="feat-card reveal"><div class="f-icon fi4">💎</div><div class="f-title" data-k="f4t">USDT on Polygon</div><p class="f-desc" data-k="f4d">Pay using USDT on the Polygon network — ultra-low fees, instant confirmation, no gas wars.</p></div>
-    <div class="feat-card reveal reveal-d1"><div class="f-icon fi5">📱</div><div class="f-title" data-k="f5t">Mobile First App</div><p class="f-desc" data-k="f5d">Premium Android app with dark &amp; light mode, biometric security, card management and real-time balance tracking.</p></div>
-    <div class="feat-card reveal reveal-d2"><div class="f-icon fi6">💳</div><div class="f-title" data-k="f6t">Real Mastercard</div><p class="f-desc" data-k="f6d">Not a gift card — a real virtual Mastercard with BIN, CVV and expiry date for full online use.</p></div>
-  </div>
-</section>
-
-<!-- ── HOW IT WORKS ──────────────────────────────────────────── -->
-<section id="how" class="sec how-sec">
-  <span class="sec-tag" data-k="how.tag">How it Works</span>
-  <h2 class="sec-h2"><span data-k="how.h2a">Three steps to your</span><br><span class="grad-text" data-k="how.h2b">virtual card</span></h2>
-  <p class="sec-lead" data-k="how.lead">The entire process takes under 2 minutes from payment to card in hand.</p>
-
-  <div class="steps-grid">
-    <div class="step reveal">
-      <div class="step-num sn1">1</div>
-      <div class="step-t" data-k="s1t">Choose Amount</div>
-      <p class="step-d" data-k="s1d">Open Tchipa, select from $5 to $1000 for your Mastercard virtual card. USDT price is auto-calculated.</p>
+<!-- ── VITRINE ────────────────────────────────────────────── -->
+<section id="boutique" class="sec sec-alt">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="sec-tag">La boutique</span>
+      <h2 class="sec-h2">Un aperçu de la <span class="grad-text">collection Femme</span></h2>
+      <p class="sec-lead">Robes longues à manches longues, abayas, tenues élégantes pour tous les jours. Prix fabricant, sans intermédiaire.</p>
     </div>
-    <div class="step reveal reveal-d2">
-      <div class="step-num sn2">2</div>
-      <div class="step-t" data-k="s2t">Scan &amp; Send</div>
-      <p class="step-d" data-k="s2d">Scan the smart QR code — it auto-fills the exact USDT amount and selects Polygon network in Binance, Trust Wallet or MetaMask. No manual entry.</p>
-    </div>
-    <div class="step reveal reveal-d4">
-      <div class="step-num sn3">3</div>
-      <div class="step-t" data-k="s3t">Get Your Card</div>
-      <p class="step-d" data-k="s3d">Your virtual Mastercard is ready. Card number, CVV and expiry shown directly in the app. Start shopping!</p>
+
+    <ul class="products">
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN015Kiipr1Xfbu0anri5_!!2221408952951-0-cib.jpg_300x300.jpg" alt="Robe chemise abaya unie moutarde à manches longues, portée avec un hijab" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe chemise Abaya unie manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01p9u4Qk1NOzOUUXP13_!!2211288331561-0-cib.jpg_300x300.jpg" alt="Abaya plissée longue à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Abaya femme noire plissée manches longues élégante</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01VJ6XPQ21DcBsjLSGn_!!2211071956951-0-cib.jpg_300x300.jpg" alt="Robe longue unie à manches longues, bordure brodée, en trois coloris" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme élégante unie manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01UR7qTG1a2d50bMxJd_!!2222585993272-0-cib.jpg_300x300.jpg" alt="Robe longue bleue à manches longues et ourlet volanté" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme unie à manches longues et ourlet volanté</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01LFeEGj7VdtI24uCu_!!2221408952951-0-cib.jpg_300x300.jpg" alt="Robe longue blanche décontractée à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme décontractée unie manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01JJbW1G21tIFYuh82H_!!2220895007042-0-cib.jpg_300x300.jpg" alt="Robe longue noire en lin, col montant, manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue ample en lin, col montant, manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01TxWMCrJUfYI2B4eA_!!2206610561633-0-cib.jpg_300x300.jpg" alt="Robe longue bordeaux ample à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme grande taille unie, ample, manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01fiyA6lwF48E1chua_!!2215645203721-0-cib.jpg_300x300.jpg" alt="Robe longue marron ample à manches longues, plusieurs coloris" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme, couleur unie, manches longues, coupe ample</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN010XYKVI2AKmizbcNiJ_!!2212321628185-0-cib.jpg_300x300.jpg" alt="Robe longue rouge plissée à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Longue robe femme élégante grande taille à manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN013okUiB2I7WAnvUS8I_!!2215546519239-0-cib.jpg_300x300.jpg" alt="Robe chemise longue à revers et manches longues, plusieurs coloris" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue ample unie à revers manches longues</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN013YFnE81RPgQx3sQnh_!!2218450382104-0-cib.jpg_300x300.jpg" alt="Robe longue prune brodée à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme unie brodée, manches longues, ample</figcaption></figure></li>
+      <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01k9uc0m2Ij4sh4WR7r_!!2222673469321-0-cib.jpg_300x300.jpg" alt="Robe longue rouge et blanche à motifs brodés, manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue élégante à manches longues, imprimé rose rouge et blanc</figcaption></figure></li>
+    </ul>
+
+    <div class="vitrine-foot reveal">
+      <p>Des centaines d'articles dans l'app, avec toutes les couleurs et toutes les tailles.</p>
+      <a href="#telecharger" class="btn btn-primary">Voir tout le catalogue dans l'app</a>
     </div>
   </div>
 </section>
 
-<!-- ── PLATFORMS ─────────────────────────────────────────────── -->
-<div class="platforms reveal">
-  <p class="plat-label" data-k="plat.label">Works on all major platforms</p>
-  <div class="plat-row">
-    <span class="plat-name">Amazon</span>
-    <span class="plat-name">AliExpress</span>
-    <span class="plat-name">Netflix</span>
-    <span class="plat-name">Spotify</span>
-    <span class="plat-name">Temu</span>
-    <span class="plat-name">PayPal</span>
-    <span class="plat-name">Shopify</span>
-    <span class="plat-name">eBay</span>
-  </div>
-</div>
-
-<!-- ── APP MOCKUP ────────────────────────────────────────────── -->
-<section class="mockup-sec sec">
-  <div class="mock-left reveal">
-    <span class="sec-tag" data-k="mock.tag">Mobile App</span>
-    <h2 class="sec-h2"><span data-k="mock.h2a">Manage your card</span><br><span class="grad-text" data-k="mock.h2b">from your pocket</span></h2>
-    <p class="sec-lead" data-k="mock.lead">The Tchipa Android app gives you full control over your virtual cards — activate, view details, check balance and recharge, all secured with biometrics.</p>
-    <br>
-    <ul style="list-style:none;display:flex;flex-direction:column;gap:.75rem;margin-top:.5rem;">
-      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li1">Biometric fingerprint protection</span></li>
-      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li2">One-tap copy for card number &amp; CVV</span></li>
-      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li3">Transaction history &amp; receipts</span></li>
-      <li style="display:flex;gap:.75rem;align-items:center;font-size:.92rem;color:var(--sub)"><span style="color:var(--cyan);font-size:1.1rem">✓</span> <span data-k="mock.li4">Smart QR auto-fills exact amount in Binance</span></li>
+<!-- ── CATEGORIES ─────────────────────────────────────────── -->
+<section id="categories" class="sec">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="sec-tag">Catégories</span>
+      <h2 class="sec-h2">Pour toute la famille</h2>
+      <p class="sec-lead">La collection Femme est déjà en ligne. Les autres rayons arrivent très bientôt.</p>
+    </div>
+    <ul class="cats">
+      <li class="cat live reveal"><div class="cat-ic" aria-hidden="true">👗</div><div class="cat-name">Femme</div><span class="pill pill-live">Disponible</span></li>
+      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">🧕</div><div class="cat-name">Hijab</div><span class="pill pill-soon">Bientôt</span></li>
+      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">✨</div><div class="cat-name">Abaya</div><span class="pill pill-soon">Bientôt</span></li>
+      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">👔</div><div class="cat-name">Homme</div><span class="pill pill-soon">Bientôt</span></li>
+      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">🧸</div><div class="cat-name">Enfants</div><span class="pill pill-soon">Bientôt</span></li>
     </ul>
   </div>
+</section>
 
-  <div class="mock-phone reveal reveal-d2">
-    <div class="phone-glow"></div>
-    <div class="phone-frame">
-      <div class="phone-notch"></div>
-      <div class="phone-screen">
-        <!-- Mini VCC card -->
-        <div class="mini-card">
-          <div class="mini-tchipa">tchipa</div>
-          <div class="mini-card-num">4716 •••• •••• 9421</div>
-          <div class="mini-mc">
-            <div class="mini-mc-c mini-mc-r"></div>
-            <div class="mini-mc-c mini-mc-y"></div>
-          </div>
-        </div>
-        <!-- Balance row -->
-        <div class="phone-row">
-          <div class="phone-row-icon" style="background:rgba(0,212,255,.15);font-size:.85rem">💳</div>
-          <div class="phone-row-text">
-            <div class="phone-row-t" data-k="app.balance">Balance</div>
-            <div class="phone-row-s">Mastercard Virtual</div>
-          </div>
-          <div class="phone-row-val" style="color:var(--cyan)">$50.00</div>
-        </div>
-        <!-- Status row -->
-        <div class="phone-row">
-          <div class="phone-row-icon" style="background:rgba(16,185,129,.15);font-size:.85rem">✅</div>
-          <div class="phone-row-text">
-            <div class="phone-row-t" data-k="app.status">Card Status</div>
-            <div class="phone-row-s">Polygon · USDT</div>
-          </div>
-          <div class="phone-row-val" style="color:var(--green);font-size:.72rem" data-k="app.active">Active</div>
-        </div>
-        <!-- Tx row -->
-        <div class="phone-row">
-          <div class="phone-row-icon" style="background:rgba(245,158,11,.15);font-size:.85rem">📦</div>
-          <div class="phone-row-text">
-            <div class="phone-row-t">Amazon.com</div>
-            <div class="phone-row-s" data-k="app.today">Today</div>
-          </div>
-          <div class="phone-row-val" style="color:var(--sub);font-size:.78rem">-$12.49</div>
-        </div>
-        <!-- CTA -->
-        <div class="phone-cta" data-k="app.btn">+ Recharge Card</div>
+<!-- ── COMMENT ÇA MARCHE ──────────────────────────────────── -->
+<section id="comment" class="sec sec-alt">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="sec-tag">Comment ça marche</span>
+      <h2 class="sec-h2">Commander en <span class="grad-text">5 étapes simples</span></h2>
+      <p class="sec-lead">Pas besoin de carte bancaire : tout se fait en dinars, avec un agent Tchipa.</p>
+    </div>
+    <ol class="steps">
+      <li class="step reveal">
+        <div class="step-num" aria-hidden="true">1</div>
+        <h3>Installe l'app Tchipa</h3>
+        <p>Télécharge l'application Android. Sur iPhone, utilise la version web depuis Safari.</p>
+      </li>
+      <li class="step reveal">
+        <div class="step-num" aria-hidden="true">2</div>
+        <h3>Recharge ton solde</h3>
+        <p>Paie un agent Tchipa en dinars via BaridiMob. L'agent crédite ton solde Tchipa dans l'app.</p>
+      </li>
+      <li class="step reveal">
+        <div class="step-num" aria-hidden="true">3</div>
+        <h3>Choisis tes articles</h3>
+        <p>Parcours le catalogue, choisis la couleur et la taille, puis paie avec ton solde.</p>
+      </li>
+      <li class="step reveal">
+        <div class="step-num" aria-hidden="true">4</div>
+        <h3>On achète et on expédie</h3>
+        <p>Tchipa achète chez le fournisseur. Ton colis passe par notre entrepôt partenaire en Chine, puis part vers l'Algérie.</p>
+      </li>
+      <li class="step reveal">
+        <div class="step-num" aria-hidden="true">5</div>
+        <h3>Suis et reçois ta commande</h3>
+        <p>Suis chaque étape dans l'app jusqu'à la livraison, en général sous 2 à 4 semaines.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ── LIVRAISON & SUIVI ──────────────────────────────────── -->
+<section id="livraison" class="sec">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="sec-tag">Livraison</span>
+      <h2 class="sec-h2">Livraison &amp; douane <span class="grad-text">comprises</span></h2>
+      <p class="sec-lead">Le prix affiché dans l'app est le prix final. Pas de frais de port ni de douane à payer en plus à l'arrivée.</p>
+    </div>
+
+    <div class="ship">
+      <div class="panel reveal">
+        <h3>Le trajet de ton colis</h3>
+        <p>On gère tout, du fabricant jusqu'à toi.</p>
+        <ol class="route">
+          <li><span class="ic" aria-hidden="true">🏭</span> Fournisseur en Chine</li>
+          <li class="line" aria-hidden="true"></li>
+          <li><span class="ic" aria-hidden="true">📦</span> Entrepôt partenaire en Chine</li>
+          <li class="line" aria-hidden="true"></li>
+          <li><span class="ic" aria-hidden="true">✈️</span> Expédition vers l'Algérie</li>
+          <li class="line" aria-hidden="true"></li>
+          <li><span class="ic" aria-hidden="true">🏠</span> Livraison chez toi</li>
+        </ol>
+        <ul class="incl" aria-label="Inclus dans le prix">
+          <li>✓ Livraison comprise</li>
+          <li>✓ Douane comprise</li>
+        </ul>
+        <p class="delay">Délai indicatif : <strong>2 à 4 semaines</strong>.</p>
+      </div>
+
+      <div class="panel reveal">
+        <h3>Suivi de commande dans l'app</h3>
+        <p>Tu vois à tout moment où en est ta commande.</p>
+        <ol class="track">
+          <li><span class="dot" aria-hidden="true">1</span><div><strong>Payée</strong><span class="d">Ta commande est réglée avec ton solde.</span></div></li>
+          <li><span class="dot" aria-hidden="true">2</span><div><strong>Achetée</strong><span class="d">Tchipa a acheté l'article chez le fournisseur.</span></div></li>
+          <li><span class="dot" aria-hidden="true">3</span><div><strong>À l'entrepôt</strong><span class="d">Le colis est arrivé à l'entrepôt partenaire en Chine.</span></div></li>
+          <li><span class="dot" aria-hidden="true">4</span><div><strong>Expédiée</strong><span class="d">Le colis est en route vers l'Algérie.</span></div></li>
+          <li><span class="dot" aria-hidden="true">✓</span><div><strong>Livrée</strong><span class="d">Tu as reçu ta commande.</span></div></li>
+        </ol>
+        <div class="note"><span aria-hidden="true">↩️</span><span><strong>Article en rupture de stock ?</strong> La commande est annulée et ton solde est remboursé automatiquement.</span></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── WALLET SHOWCASE ───────────────────────────────────────── -->
-<section id="wallet" class="wallet-sec">
-  <div class="wallet-copy reveal">
-    <span class="wallet-tag" data-k="wal.tag">👛 New · Self-Custody Wallet</span>
-    <h2 class="sec-h2"><span data-k="wal.h2a">The Tchipa Wallet</span><br><span class="grad-text" data-k="wal.h2b">your keys, your USDT</span></h2>
-    <p class="sec-lead" data-k="wal.lead">A standalone non-custodial crypto wallet for the Polygon network. Your 12-word seed never leaves your phone — Tchipa never holds your funds. Send, receive and store USDT &amp; POL, then fund your virtual cards in seconds.</p>
-    <ul class="wallet-features">
-      <li class="reveal reveal-d1"><span class="wf-ic">🔑</span><span><strong data-k="wal.f1t">Self-custody seed.</strong> <span data-k="wal.f1d">BIP39 12-word recovery phrase, encrypted in secure storage. You own your keys.</span></span></li>
-      <li class="reveal reveal-d2"><span class="wf-ic">⛽</span><span><strong data-k="wal.f2t">Gasless sending.</strong> <span data-k="wal.f2d">Out of POL? Tchipa fronts the gas so you can move USDT even with an empty gas tank.</span></span></li>
-      <li class="reveal reveal-d3"><span class="wf-ic">🔒</span><span><strong data-k="wal.f3t">PIN + biometrics.</strong> <span data-k="wal.f3d">6-digit PIN and fingerprint lock guard your wallet and your seed phrase.</span></span></li>
-      <li class="reveal reveal-d4"><span class="wf-ic">⚡</span><span><strong data-k="wal.f4t">Built for Polygon.</strong> <span data-k="wal.f4d">USDT &amp; POL balances, QR send/receive, instant low-fee transfers on chain 137.</span></span></li>
-    </ul>
-    <div class="wallet-badges">
-      <span class="wallet-pill">🟣 Polygon</span>
-      <span class="wallet-pill">💵 USDT</span>
-      <span class="wallet-pill" data-k="wal.pill3">🔐 Non-custodial</span>
-    </div>
-    <div class="hero-btns" style="margin-top:1.8rem;">
-      <a href="https://github.com/tarik9991/tchipa-wallet/releases/latest/download/app-release.apk" class="btn-primary">
-        <span>👛</span><span data-k="wal.cta">Download Wallet APK</span>
-      </a>
-    </div>
-  </div>
-
-  <div class="wallet-stage reveal reveal-d2">
-    <canvas id="fireworks" class="fx-canvas"></canvas>
-    <div class="t-halo"></div>
-    <div class="t-spin-wrap">
-      <img src="/tchipa_logo.png" alt="Tchipa T logo" class="t-logo">
+<!-- ── TAILLES ────────────────────────────────────────────── -->
+<section id="tailles" class="sec sec-alt">
+  <div class="wrap">
+    <div class="size reveal">
+      <div class="size-big">+1 à +2<small>tailles au-dessus</small></div>
+      <div>
+        <h2>Conseil taille : prends plus grand</h2>
+        <p>Les tailles chinoises taillent petit. <strong>Choisis 1 à 2 tailles au-dessus de ta taille habituelle.</strong></p>
+        <ul>
+          <li>Tu fais du M d'habitude ? Prends plutôt du L ou du XL.</li>
+          <li>Pour une coupe ample, vise plutôt 2 tailles au-dessus.</li>
+          <li>Un doute ? Demande conseil à ton agent Tchipa avant de commander.</li>
+        </ul>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- ── AFFILIATE PROGRAM ─────────────────────────────────────── -->
-<section id="affiliate" class="aff-sec">
-  <div class="aff-head reveal">
-    <span class="aff-tag" data-k="aff.tag">💸 Affiliate Program</span>
-    <h2 class="sec-h2"><span data-k="aff.h2a">Invite friends,</span> <span class="grad-text" data-k="aff.h2b">earn 1% forever</span></h2>
-    <p class="sec-lead" data-k="aff.lead">Share your referral code from inside the app. Every time someone you invite activates a Tchipa virtual card, you automatically earn 1% of the card amount — credited in USDT.</p>
-  </div>
-
-  <div class="aff-top">
-    <div class="aff-hero-num reveal">
-      <div class="aff-pct">1%</div>
-      <p class="aff-pct-sub" data-k="aff.pctsub">of every card your friends activate — yours to keep, in USDT.</p>
+<!-- ── FAQ ────────────────────────────────────────────────── -->
+<section id="faq" class="sec">
+  <div class="wrap">
+    <div class="sec-head center reveal">
+      <span class="sec-tag">FAQ</span>
+      <h2 class="sec-h2">Questions fréquentes</h2>
     </div>
-
-    <div class="aff-calc reveal reveal-d1">
-      <div class="aff-calc-title" data-k="aff.calctitle">💰 Estimate your earnings</div>
-      <div class="aff-calc-row">
-        <span class="aff-calc-label" data-k="aff.calclabel">Your friend's card amount</span>
-        <span class="aff-calc-amt" id="affAmt">$200</span>
-      </div>
-      <input type="range" min="5" max="1000" step="5" value="200" class="aff-slider" id="affSlider" aria-label="Card amount">
-      <div class="aff-earn">
-        <div class="aff-earn-lbl" data-k="aff.earnlbl">You earn</div>
-        <div class="aff-earn-val" id="affEarn">$2.00</div>
-        <div class="aff-earn-note" data-k="aff.earnnote">per activated card · 1% paid in USDT</div>
-      </div>
+    <div class="faq">
+      <details>
+        <summary>Comment je paie ?</summary>
+        <div class="a">Tu contactes un agent Tchipa et tu lui envoies le montant en <strong>dinars via BaridiMob</strong>. L'agent crédite ton <strong>solde Tchipa</strong> dans l'app. Ensuite tu paies tes commandes directement avec ce solde. Pas besoin de carte bancaire.</div>
+      </details>
+      <details>
+        <summary>Combien de temps pour la livraison ?</summary>
+        <div class="a">Compte en général <strong>2 à 4 semaines</strong> entre la commande et la livraison. Ce délai est indicatif : il dépend du fournisseur et de l'expédition.</div>
+      </details>
+      <details>
+        <summary>Est-ce que je dois payer la douane ou des frais de port ?</summary>
+        <div class="a">Non. <strong>La livraison en Algérie et la douane sont comprises dans le prix</strong> affiché dans l'app. Tu n'as rien à payer en plus à l'arrivée.</div>
+      </details>
+      <details>
+        <summary>Quelle taille choisir ?</summary>
+        <div class="a">Les tailles chinoises sont plus petites. Prends <strong>1 à 2 tailles au-dessus</strong> de ta taille habituelle. Si tu hésites, demande conseil à ton agent avant de commander.</div>
+      </details>
+      <details>
+        <summary>Comment suivre ma commande ?</summary>
+        <div class="a">Dans l'app, chaque commande affiche son statut : <strong>Payée → Achetée → À l'entrepôt → Expédiée → Livrée</strong>.</div>
+      </details>
+      <details>
+        <summary>Et si l'article n'est plus disponible ?</summary>
+        <div class="a">Si un article est en rupture de stock chez le fournisseur, la commande est annulée et <strong>ton solde est remboursé automatiquement</strong>. Tu peux alors choisir un autre article.</div>
+      </details>
+      <details>
+        <summary>Quelles catégories sont disponibles ?</summary>
+        <div class="a">La collection <strong>Femme</strong> est disponible dès maintenant. Les rayons Hijab, Abaya, Homme et Enfants arrivent très bientôt.</div>
+      </details>
+      <details>
+        <summary>J'ai un iPhone, comment faire ?</summary>
+        <div class="a">Ouvre la version web de Tchipa dans <strong>Safari</strong>, puis appuie sur Partager → <strong>Sur l'écran d'accueil</strong>. Elle s'ouvrira comme une application.</div>
+      </details>
     </div>
-  </div>
-
-  <div class="aff-steps">
-    <div class="aff-step reveal">
-      <div class="aff-step-ic">🔗</div>
-      <div class="aff-step-n" data-k="aff.s1n">Step 1</div>
-      <div class="aff-step-t" data-k="aff.s1t">Get your code</div>
-      <p class="aff-step-d" data-k="aff.s1d">Open Tchipa → Profile → Referral. Your personal code and link are generated automatically — no signup needed.</p>
-    </div>
-    <div class="aff-step reveal reveal-d1">
-      <div class="aff-step-ic">📣</div>
-      <div class="aff-step-n" data-k="aff.s2n">Step 2</div>
-      <div class="aff-step-t" data-k="aff.s2t">Share it</div>
-      <p class="aff-step-d" data-k="aff.s2d">Send it to friends on WhatsApp, Instagram, TikTok or Telegram. They install Tchipa and activate a card with your code.</p>
-    </div>
-    <div class="aff-step reveal reveal-d2">
-      <div class="aff-step-ic">🤑</div>
-      <div class="aff-step-n" data-k="aff.s3n">Step 3</div>
-      <div class="aff-step-t" data-k="aff.s3t">Earn 1%</div>
-      <p class="aff-step-d" data-k="aff.s3d">You automatically earn 1% of every card they activate, credited in USDT on Polygon. Track your earnings live in the app. No limit on referrals.</p>
-    </div>
-  </div>
-
-  <div class="aff-cta reveal">
-    <a href="#download" class="btn-primary">
-      <span>💸</span><span data-k="aff.cta">Get the app &amp; start earning</span>
-    </a>
   </div>
 </section>
 
-<!-- ── CTA SECTION ───────────────────────────────────────────── -->
-<section class="cta-sec" id="download">
+<!-- ── TÉLÉCHARGEMENT ─────────────────────────────────────── -->
+<section id="telecharger" class="sec">
   <div class="cta-card reveal">
-    <div class="badge" style="display:inline-flex;margin-bottom:1.4rem" data-k="cta.badge">📲 Available for Android & iPhone</div>
-    <h2 class="cta-h2"><span data-k="cta.h2a">Start paying online</span><br><span class="grad-text" data-k="cta.h2b">with crypto today</span></h2>
-    <p class="cta-sub" data-k="cta.sub">Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.</p>
-    <div class="update-warn"><span>⚠️</span><span data-k="cta.warn">Already have Tchipa installed? Uninstall the old app first, then reinstall this version (security update). Future updates will install normally.</span></div>
+    <div class="badge">📲 Android &amp; iPhone</div>
+    <h2 class="cta-h2">Ta prochaine tenue est <span class="grad-text">à quelques clics</span></h2>
+    <p class="cta-sub">Installe Tchipa, recharge ton solde chez un agent et commande tes vêtements à prix fabricant.</p>
+    <div class="update-warn" role="note"><span aria-hidden="true">⚠️</span><span>Tu as déjà une ancienne version de Tchipa ? Désinstalle-la d'abord, puis installe cette version (mise à jour de sécurité). Les prochaines mises à jour s'installeront normalement.</span></div>
     <div class="cta-btns">
-      <a href="https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk" class="btn-primary"><span>⬇</span><span data-k="cta.btn1">Download APK</span></a>
-      <a href="https://tarik9991.github.io/tchipa-pwa/" target="_blank" rel="noopener" class="btn-primary"><span></span><span data-k="cta.btn4">Open on iPhone</span></a>
-      <a href="https://github.com/tarik9991/tchipa-wallet/releases/latest/download/app-release.apk" class="btn-ghost"><span>👛</span><span data-k="cta.btn3">Download Wallet</span></a>
-      <a href="https://t.me/c/3983752002/1" target="_blank" class="btn-ghost"><span>💬</span><span data-k="cta.btn2">Telegram Support</span></a>
+      <a href="https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
+        Télécharger l'APK Android
+      </a>
+      <a href="https://tarik9991.github.io/tchipa-pwa/" target="_blank" rel="noopener" class="btn btn-ghost"> Ouvrir sur iPhone</a>
+      <a href="https://t.me/c/3983752002/1" target="_blank" rel="noopener" class="btn btn-ghost">💬 Support Telegram</a>
     </div>
-    <p class="cta-hint" data-k="cta.ios"> iPhone : open in Safari, then Share → Add to Home Screen.</p>
+    <p class="cta-hint"> iPhone : ouvre dans Safari, puis Partager → Sur l'écran d'accueil.</p>
   </div>
 </section>
 
-<!-- ── FOOTER ────────────────────────────────────────────────── -->
+</main>
+
+<!-- ── FOOTER ─────────────────────────────────────────────── -->
 <footer>
   <div class="footer-top">
-    <div class="footer-logo-area">
-      <div class="logo">Tchipa</div>
-      <p data-k="foot.desc">Virtual credit cards powered by crypto. Pay online worldwide without a bank account. Powered by Polygon &amp; PayGate.</p>
+    <div>
+      <a href="#home" class="logo" aria-label="Tchipa, retour en haut"><img src="/tchipa_logo.png" alt="" width="34" height="34"><span>Tchipa</span></a>
+      <p>Boutique de vêtements en ligne. Des articles de fabricants chinois, livrés en Algérie, livraison et douane comprises.</p>
     </div>
     <div class="foot-col">
-      <h4 data-k="foot.h1">Product</h4>
-      <a href="#features" data-k="foot.l1a">Features</a>
-      <a href="#how"      data-k="foot.l1b">How it Works</a>
-      <a href="#download" data-k="foot.l1c">Download</a>
+      <h4>Boutique</h4>
+      <a href="#boutique">Collection Femme</a>
+      <a href="#categories">Catégories</a>
+      <a href="#tailles">Guide des tailles</a>
     </div>
     <div class="foot-col">
-      <h4 data-k="foot.h2">Support</h4>
-      <a href="https://t.me/c/3983752002/1" target="_blank" data-k="foot.l2a">Telegram Agent</a>
-      <a href="#" data-k="foot.l2b">FAQ</a>
-    </div>
-    <div class="foot-col">
-      <h4 data-k="foot.h3">Network</h4>
-      <a href="#">Polygon USDT</a>
-      <a href="#">Mastercard</a>
-      <a href="#">PayGate</a>
+      <h4>Aide</h4>
+      <a href="#comment">Comment ça marche</a>
+      <a href="#livraison">Livraison &amp; suivi</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://t.me/c/3983752002/1" target="_blank" rel="noopener">Support Telegram</a>
     </div>
   </div>
   <div class="footer-bot">
-    <span data-k="foot.copy">© 2025 Tchipa. All rights reserved.</span>
-    <span data-k="foot.tag">Built with 💙 for digital payments</span>
+    <span>© 2026 Tchipa. Tous droits réservés.</span>
+    <span>Vêtements de Chine, livrés en Algérie.</span>
   </div>
 </footer>
 
-<!-- ── SCRIPTS ────────────────────────────────────────────────── -->
+<!-- ── SCRIPTS ────────────────────────────────────────────── -->
 <script>
-/* ── TRANSLATIONS ────────────────────────────────────────── */
-const T = {
-  en: {
-    'nav.features':'Features','nav.how':'How it Works','nav.demo':'▶ Demo','nav.wallet':'Wallet','nav.aff':'Affiliate','nav.download':'Download','nav.cta':'Get the App',
-    'hero.badge':'🔒 v4 — Client PIN · Email Verified · Theft-Proof',
-    'hero.h1a':'Your Virtual Card,','hero.h1b':'Activated Instantly',
-    'hero.sub':'Tchipa lets you generate Mastercard Virtual Credit Cards in minutes. Pay online worldwide using USDT on Polygon — no bank account needed.',
-    'hero.cta1':'Get Your Card Now','hero.cta2':'Watch Live Demo',
-    'badge.instant':'Instant','badge.global':'Worldwide',
-    'stat1':'Card Value Range','stat2':'Activation Time','stat3':'No Documents Needed','stat4':'Fast & Cheap Network',
-    'feat.tag':'Features','feat.h2a':'Everything you need','feat.h2b':'to pay online',
-    'feat.lead':'Tchipa combines crypto payments with instant virtual card generation so you can shop anywhere on the internet.',
-    'f1t':'Instant Activation','f1d':'Get your virtual Mastercard in under 2 minutes. Send USDT, receive your card details immediately.',
-    'f2t':'Anonymous & Secure','f2d':'No KYC required. Your card is tied to your crypto wallet, not your personal identity.',
-    'f3t':'Pay Anywhere Online','f3d':'Works on Amazon, AliExpress, Netflix, Temu, Shopify stores and any website accepting Mastercard.',
-    'f4t':'USDT on Polygon','f4d':'Pay using USDT on the Polygon network — ultra-low fees, instant confirmation, no gas wars.',
-    'f5t':'Mobile First App','f5d':'Premium Android app with dark &amp; light mode, biometric security, card management and real-time balance tracking.',
-    'f6t':'Real Mastercard','f6d':'Not a gift card — a real virtual Mastercard with BIN, CVV and expiry date for full online use.',
-    'how.tag':'How it Works','how.h2a':'Three steps to your','how.h2b':'virtual card',
-    'how.lead':'The entire process takes under 2 minutes from payment to card in hand.',
-    's1t':'Choose Amount','s1d':'Open Tchipa, select from $5 to $1000 for your Mastercard virtual card. USDT price is auto-calculated.',
-    's2t':'Scan & Send','s2d':'Scan the smart QR code — it auto-fills the exact USDT amount and selects Polygon network in Binance, Trust Wallet or MetaMask. No manual entry.',
-    's3t':'Get Your Card','s3d':'Your virtual Mastercard is ready. Card number, CVV and expiry shown directly in the app. Start shopping!',
-    'plat.label':'Works on all major platforms',
-    'mock.tag':'Mobile App','mock.h2a':'Manage your card','mock.h2b':'from your pocket',
-    'mock.lead':'The Tchipa Android app gives you full control over your virtual cards — activate, view details, check balance and recharge, all secured with biometrics.',
-    'mock.li1':'Biometric fingerprint protection','mock.li2':'One-tap copy for card number & CVV',
-    'mock.li3':'Transaction history & receipts','mock.li4':'Smart QR auto-fills exact amount in Binance',
-    'app.balance':'Balance','app.status':'Card Status','app.active':'Active','app.today':'Today','app.btn':'+ Recharge Card',
-    'wal.tag':'👛 New · Self-Custody Wallet',
-    'wal.h2a':'The Tchipa Wallet','wal.h2b':'your keys, your USDT',
-    'wal.lead':'A standalone non-custodial crypto wallet for the Polygon network. Your 12-word seed never leaves your phone — Tchipa never holds your funds. Send, receive and store USDT & POL, then fund your virtual cards in seconds.',
-    'wal.f1t':'Self-custody seed.','wal.f1d':'BIP39 12-word recovery phrase, encrypted in secure storage. You own your keys.',
-    'wal.f2t':'Gasless sending.','wal.f2d':'Out of POL? Tchipa fronts the gas so you can move USDT even with an empty gas tank.',
-    'wal.f3t':'PIN + biometrics.','wal.f3d':'6-digit PIN and fingerprint lock guard your wallet and your seed phrase.',
-    'wal.f4t':'Built for Polygon.','wal.f4d':'USDT & POL balances, QR send/receive, instant low-fee transfers on chain 137.',
-    'wal.pill3':'🔐 Non-custodial','wal.cta':'Download Wallet APK',
-    'aff.tag':'💸 Affiliate Program',
-    'aff.h2a':'Invite friends,','aff.h2b':'earn 1% forever',
-    'aff.lead':'Share your referral code from inside the app. Every time someone you invite activates a Tchipa virtual card, you automatically earn 1% of the card amount — credited in USDT.',
-    'aff.pctsub':'of every card your friends activate — yours to keep, in USDT.',
-    'aff.calctitle':'💰 Estimate your earnings',
-    'aff.calclabel':"Your friend's card amount",
-    'aff.earnlbl':'You earn','aff.earnnote':'per activated card · 1% paid in USDT',
-    'aff.s1n':'Step 1','aff.s1t':'Get your code','aff.s1d':'Open Tchipa → Profile → Referral. Your personal code and link are generated automatically — no signup needed.',
-    'aff.s2n':'Step 2','aff.s2t':'Share it','aff.s2d':'Send it to friends on WhatsApp, Instagram, TikTok or Telegram. They install Tchipa and activate a card with your code.',
-    'aff.s3n':'Step 3','aff.s3t':'Earn 1%','aff.s3d':'You automatically earn 1% of every card they activate, credited in USDT on Polygon. Track your earnings live in the app. No limit on referrals.',
-    'aff.cta':'Get the app & start earning',
-    'cta.badge':'📲 Available for Android & iPhone',
-    'cta.h2a':'Start paying online','cta.h2b':'with crypto today',
-    'cta.sub':'Download Tchipa for Android and get your first virtual card in under 2 minutes. No bank, no KYC, no limits.',
-    'cta.btn1':'Download APK','cta.btn2':'Telegram Support','cta.btn3':'Download Wallet','cta.btn4':' Open on iPhone',
-    'cta.ios':' iPhone: open in Safari, then Share → Add to Home Screen.',
-    'cta.warn':'Already have Tchipa installed? Uninstall the old app first, then reinstall this version (security update). Future updates will install normally.',
-    'foot.desc':'Virtual credit cards powered by crypto. Pay online worldwide without a bank account. Powered by Polygon & PayGate.',
-    'foot.h1':'Product','foot.h2':'Support','foot.h3':'Network',
-    'foot.l1a':'Features','foot.l1b':'How it Works','foot.l1c':'Download',
-    'foot.l2a':'Telegram Agent','foot.l2b':'FAQ',
-    'foot.copy':'© 2025 Tchipa. All rights reserved.','foot.tag':'Built with 💙 for digital payments',
-  },
-  ar: {
-    'nav.features':'الميزات','nav.how':'كيف يعمل','nav.demo':'▶ العرض','nav.wallet':'المحفظة','nav.aff':'الشراكة','nav.download':'تحميل','nav.cta':'حمّل التطبيق',
-    'hero.badge':'🔒 v4 — رمز PIN العميل · بريد إلكتروني موثّق · ضد السرقة',
-    'hero.h1a':'بطاقتك الافتراضية،','hero.h1b':'مُفعَّلة فوراً',
-    'hero.sub':'تشيبا تتيح لك إنشاء بطاقات ماستركارد الافتراضية في دقائق. ادفع عبر الإنترنت حول العالم بـ USDT على شبكة Polygon — دون حاجة لحساب بنكي.',
-    'hero.cta1':'احصل على بطاقتك الآن','hero.cta2':'شاهد العرض المباشر',
-    'badge.instant':'فوري','badge.global':'عالمي',
-    'stat1':'نطاق قيمة البطاقة','stat2':'وقت التفعيل','stat3':'بدون وثائق مطلوبة','stat4':'شبكة سريعة ورخيصة',
-    'feat.tag':'الميزات','feat.h2a':'كل ما تحتاجه','feat.h2b':'للدفع عبر الإنترنت',
-    'feat.lead':'تشيبا تجمع بين مدفوعات الكريبتو وإنشاء البطاقات الافتراضية الفورية حتى تتسوق من أي مكان على الإنترنت.',
-    'f1t':'تفعيل فوري','f1d':'احصل على ماستركاردك الافتراضية في أقل من دقيقتين. أرسل USDT واستلم تفاصيل بطاقتك فوراً.',
-    'f2t':'مجهول وآمن','f2d':'لا حاجة للتحقق من الهوية. بطاقتك مرتبطة بمحفظتك المشفرة وليس بهويتك الشخصية.',
-    'f3t':'ادفع في أي مكان','f3d':'يعمل على أمازون، علي إكسبريس، نتفليكس، تيمو، متاجر Shopify وأي موقع يقبل ماستركارد.',
-    'f4t':'USDT على Polygon','f4d':'ادفع بـ USDT على شبكة Polygon — رسوم منخفضة جداً، تأكيد فوري، بدون صعوبات.',
-    'f5t':'تطبيق موبايل','f5d':'تطبيق أندرويد متميز بوضعَي داكن وفاتح، حماية بيومترية، إدارة البطاقات وتتبع الرصيد في الوقت الفعلي.',
-    'f6t':'ماستركارد حقيقية','f6d':'ليست بطاقة هدية — ماستركارد افتراضية حقيقية برقم BIN وCVV وتاريخ انتهاء.',
-    'how.tag':'كيف يعمل','how.h2a':'ثلاث خطوات للحصول على','how.h2b':'بطاقتك الافتراضية',
-    'how.lead':'العملية بأكملها تستغرق أقل من دقيقتين من الدفع حتى استلام البطاقة.',
-    's1t':'اختر المبلغ','s1d':'افتح تشيبا، حدد من $5 إلى $1000 لبطاقتك الافتراضية. الأسعار بـ USDT محسوبة تلقائياً.',
-    's2t':'امسح وأرسل','s2d':'امسح رمز QR الذكي — يملأ تلقائياً المبلغ الدقيق بـ USDT ويختار شبكة Polygon في Binance أو Trust Wallet أو MetaMask. بدون إدخال يدوي.',
-    's3t':'استلم بطاقتك','s3d':'ماستركاردك الافتراضية جاهزة. رقم البطاقة والـ CVV وتاريخ الانتهاء يظهر مباشرة في التطبيق. ابدأ التسوق!',
-    'plat.label':'يعمل على جميع المنصات الكبرى',
-    'mock.tag':'التطبيق المحمول','mock.h2a':'تحكم في بطاقتك','mock.h2b':'من جيبك',
-    'mock.lead':'تطبيق تشيبا لأندرويد يمنحك تحكماً كاملاً في بطاقاتك الافتراضية — تفعيل، عرض التفاصيل، فحص الرصيد والشحن، كل ذلك محمي بالبيومترية.',
-    'mock.li1':'حماية بصمة الإصبع البيومترية','mock.li2':'نسخ رقم البطاقة والـ CVV بنقرة واحدة',
-    'mock.li3':'سجل المعاملات والإيصالات','mock.li4':'QR ذكي يملأ المبلغ تلقائياً في Binance',
-    'app.balance':'الرصيد','app.status':'حالة البطاقة','app.active':'نشطة','app.today':'اليوم','app.btn':'+ شحن البطاقة',
-    'wal.tag':'👛 جديد · محفظة بحفظ ذاتي',
-    'wal.h2a':'محفظة تشيبا','wal.h2b':'مفاتيحك، وUSDT الخاص بك',
-    'wal.lead':'محفظة كريبتو مستقلة بحفظ ذاتي لشبكة Polygon. عبارة الاسترداد المكوّنة من 12 كلمة لا تغادر هاتفك أبداً — تشيبا لا تحتفظ بأموالك. أرسل واستقبل وخزّن USDT وPOL، ثم اشحن بطاقاتك الافتراضية في ثوانٍ.',
-    'wal.f1t':'بذرة بحفظ ذاتي.','wal.f1d':'عبارة استرداد BIP39 من 12 كلمة، مشفّرة في تخزين آمن. أنت تملك مفاتيحك.',
-    'wal.f2t':'إرسال بدون رسوم غاز.','wal.f2d':'نفد رصيد POL؟ تشيبا تتقدّم برسوم الغاز لتتمكن من تحويل USDT حتى بخزان غاز فارغ.',
-    'wal.f3t':'رمز PIN + بصمة.','wal.f3d':'رمز PIN من 6 أرقام وقفل بصمة الإصبع يحميان محفظتك وعبارة البذرة.',
-    'wal.f4t':'مصمّمة لـ Polygon.','wal.f4d':'أرصدة USDT وPOL، إرسال/استقبال عبر QR، تحويلات فورية برسوم منخفضة على السلسلة 137.',
-    'wal.pill3':'🔐 بحفظ ذاتي','wal.cta':'تحميل محفظة APK',
-    'aff.tag':'💸 برنامج الشراكة',
-    'aff.h2a':'ادعُ أصدقاءك،','aff.h2b':'واربح 1% مدى الحياة',
-    'aff.lead':'شارك رمز الإحالة من داخل التطبيق. في كل مرة يفعّل فيها شخص دعوته بطاقة تشيبا الافتراضية، تربح تلقائياً 1% من قيمة البطاقة — تُضاف بـ USDT.',
-    'aff.pctsub':'من كل بطاقة يفعّلها أصدقاؤك — لك بالكامل، بـ USDT.',
-    'aff.calctitle':'💰 احسب أرباحك',
-    'aff.calclabel':'قيمة بطاقة صديقك',
-    'aff.earnlbl':'أنت تربح','aff.earnnote':'لكل بطاقة مفعّلة · 1% تُدفع بـ USDT',
-    'aff.s1n':'الخطوة 1','aff.s1t':'احصل على رمزك','aff.s1d':'افتح تشيبا ← الملف الشخصي ← الإحالة. يُنشأ رمزك ورابطك الشخصي تلقائياً — دون أي تسجيل.',
-    'aff.s2n':'الخطوة 2','aff.s2t':'شاركه','aff.s2d':'أرسله لأصدقائك على واتساب أو إنستغرام أو تيك توك أو تيليغرام. يثبّتون تشيبا ويفعّلون بطاقة برمزك.',
-    'aff.s3n':'الخطوة 3','aff.s3t':'اربح 1%','aff.s3d':'تربح تلقائياً 1% من كل بطاقة يفعّلونها، تُضاف بـ USDT على شبكة Polygon. تابع أرباحك مباشرة في التطبيق. بلا حدّ لعدد الإحالات.',
-    'aff.cta':'ابدأ الربح — حمّل التطبيق',
-    'cta.badge':'📲 متوفر لأندرويد وآيفون',
-    'cta.h2a':'ابدأ الدفع عبر الإنترنت','cta.h2b':'بالكريبتو اليوم',
-    'cta.sub':'حمّل تشيبا لأندرويد واحصل على أول بطاقة افتراضية في أقل من دقيقتين. بدون بنك، بدون KYC، بدون حدود.',
-    'cta.btn1':'تحميل APK','cta.btn2':'دعم عبر تيليغرام','cta.btn3':'تحميل المحفظة','cta.btn4':' فتح على آيفون',
-    'cta.ios':' آيفون: افتح في Safari، ثم شارك ← إضافة إلى الشاشة الرئيسية.',
-    'cta.warn':'عندك Tchipa مثبّت من قبل؟ احذف التطبيق القديم أولاً ثم أعد تثبيت هذه النسخة (تحديث أمني). التحديثات القادمة ستُثبّت تلقائياً.',
-    'foot.desc':'بطاقات ائتمان افتراضية مدعومة بالكريبتو. ادفع عبر الإنترنت حول العالم دون حساب بنكي. مدعوم بـ Polygon و PayGate.',
-    'foot.h1':'المنتج','foot.h2':'الدعم','foot.h3':'الشبكة',
-    'foot.l1a':'الميزات','foot.l1b':'كيف يعمل','foot.l1c':'تحميل',
-    'foot.l2a':'وكيل تيليغرام','foot.l2b':'الأسئلة الشائعة',
-    'foot.copy':'© 2025 تشيبا. جميع الحقوق محفوظة.','foot.tag':'مبني بـ 💙 للمدفوعات الرقمية',
+/* Apparition au défilement (désactivée si « réduire les animations ») */
+(function(){
+  const els = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window) || matchMedia('(prefers-reduced-motion:reduce)').matches) {
+    els.forEach(el => el.classList.add('in')); return;
   }
-};
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); } });
+  }, { threshold: 0.1 });
+  els.forEach(el => obs.observe(el));
+  setTimeout(() => els.forEach(el => { if (el.getBoundingClientRect().top < innerHeight) el.classList.add('in'); }), 100);
+})();
 
-let lang = 'en';
-
-function toggleLang() {
-  lang = lang === 'en' ? 'ar' : 'en';
-  const root = document.getElementById('root');
-  root.setAttribute('lang', lang);
-  root.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-  document.body.style.fontFamily = lang === 'ar' ? "'Tajawal',sans-serif" : "'Inter',sans-serif";
-  document.getElementById('lang-btn').textContent = lang === 'en' ? '🌐 عربي' : '🌐 English';
-  document.querySelectorAll('[data-k]').forEach(el => {
-    const v = T[lang][el.getAttribute('data-k')];
-    if (v) el.textContent = v;
-  });
-}
-
-/* ── PARTICLES ───────────────────────────────────────────── */
-const cv = document.getElementById('c'), cx = cv.getContext('2d');
-let pts = [];
-const N = 55, CON = 130;
-
-function resize() { cv.width = innerWidth; cv.height = innerHeight; }
-
-class P {
-  constructor() {
-    this.x = Math.random()*innerWidth; this.y = Math.random()*innerHeight;
-    this.vx = (Math.random()-.5)*.38; this.vy = (Math.random()-.5)*.38;
-    this.r = Math.random()*1.8+.5;
-    this.op = Math.random()*.45+.08;
-    this.col = ['0,212,255','139,92,246','245,158,11'][Math.floor(Math.random()*3)];
-  }
-  tick() {
-    this.x+=this.vx; this.y+=this.vy;
-    if(this.x<0||this.x>innerWidth)  this.vx*=-1;
-    if(this.y<0||this.y>innerHeight) this.vy*=-1;
-  }
-  draw() {
-    cx.beginPath(); cx.arc(this.x,this.y,this.r,0,Math.PI*2);
-    cx.fillStyle=`rgba(${this.col},${this.op})`; cx.fill();
-  }
-}
-
-function init() { pts=[]; for(let i=0;i<N;i++) pts.push(new P()); }
-
-function frame() {
-  cx.clearRect(0,0,cv.width,cv.height);
-  for(let i=0;i<N;i++) {
-    pts[i].tick(); pts[i].draw();
-    for(let j=i+1;j<N;j++) {
-      const dx=pts[i].x-pts[j].x, dy=pts[i].y-pts[j].y;
-      const d=Math.sqrt(dx*dx+dy*dy);
-      if(d<CON) {
-        cx.beginPath(); cx.moveTo(pts[i].x,pts[i].y); cx.lineTo(pts[j].x,pts[j].y);
-        cx.strokeStyle=`rgba(0,212,255,${(1-d/CON)*.14})`; cx.lineWidth=.7; cx.stroke();
-      }
-    }
-  }
-  requestAnimationFrame(frame);
-}
-
-/* ── SCROLL REVEAL ───────────────────────────────────────── */
-const obs = new IntersectionObserver(entries => {
-  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('in'); });
-}, { threshold: 0.12 });
-document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
-
-/* ── NAV SCROLL ──────────────────────────────────────────── */
-window.addEventListener('scroll',()=>{
-  document.getElementById('nav').classList.toggle('scrolled', scrollY > 60);
+/* Image produit introuvable : on masque la carte plutôt que d'afficher une image cassée */
+document.querySelectorAll('.products img').forEach(img => {
+  img.addEventListener('error', () => { const li = img.closest('li'); if (li) li.style.display = 'none'; });
 });
-
-/* ── SMOOTH SCROLL ───────────────────────────────────────── */
-document.querySelectorAll('a[href^="#"]').forEach(a=>{
-  a.addEventListener('click',e=>{
-    const t=document.querySelector(a.getAttribute('href'));
-    if(t){ e.preventDefault(); t.scrollIntoView({behavior:'smooth'}); }
-  });
-});
-
-/* ── TYPEWRITER on hero badge (subtle) ──────────────────── */
-const badge = document.querySelector('.badge');
-const badgeOriginal = badge ? badge.getAttribute('data-k') : null;
-
-/* ── CARD PARALLAX on mouse ─────────────────────────────── */
-const scene = document.querySelector('.card-scene');
-if(scene) {
-  document.addEventListener('mousemove', e => {
-    if(document.querySelector('.card-inner').style.transform.includes('180')) return;
-    const cx2 = innerWidth/2, cy2 = innerHeight/2;
-    const rx = (e.clientY - cy2) / cy2 * 6;
-    const ry = (e.clientX - cx2) / cx2 * -6;
-    document.querySelector('.card-inner').style.animation = 'none';
-    document.querySelector('.card-inner').style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
-  });
-  scene.addEventListener('mouseleave', () => {
-    const ci = document.querySelector('.card-inner');
-    if(!ci.style.transform.includes('180')) {
-      ci.style.animation = 'card-float 7s ease-in-out infinite';
-      ci.style.transform = '';
-    }
-  });
-}
-
-/* ── FIREWORKS (shared engine: rockets, flash, twinkle, willow) ── */
-function initFireworks(canvas){
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
-  if(reduce) return;                       // honour reduced-motion: stay still
-  const fx = canvas.getContext('2d');
-  const palette = ['0,212,255','139,92,246','245,158,11','16,185,129','236,72,153','255,255,255'];
-  let parts = [], rockets = [];
-  let running = false, raf = null, spawnTimer = 0, W = 0, H = 0;
-  const rand = (a,b)=> a + Math.random()*(b-a);
-
-  function size(){
-    const r = canvas.parentElement.getBoundingClientRect();
-    W = canvas.width = r.width; H = canvas.height = r.height;
-  }
-  function explode(x, y, col){
-    parts.push({ flash:true, x, y, r:rand(26,42), life:1, decay:.06 });   // bright core flash
-    const n = 54 + Math.floor(Math.random()*40);
-    const ring = Math.random() < .45;                                     // crisp ring vs scatter
-    const baseSp = rand(2.2, 4.2);
-    for(let i=0;i<n;i++){
-      const a  = (Math.PI*2*i)/n + rand(-.12,.12);
-      const sp = ring ? baseSp*rand(.9,1.1) : rand(1.2,4.8);
-      parts.push({ px:x, py:y, x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
-        life:1, decay:rand(.006,.014), col, r:rand(1,2.6), tw:rand(0,6.28) });
-    }
-    if(Math.random() < .5){                                              // slow golden willow drips
-      for(let i=0;i<14;i++){
-        const a=rand(0,6.28), sp=rand(.6,1.8);
-        parts.push({ px:x, py:y, x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
-          life:1, decay:rand(.004,.008), col:'245,158,11', r:rand(1,2), tw:rand(0,6.28), willow:true });
-      }
-    }
-  }
-  function launch(){
-    const x = rand(W*.15, W*.85);
-    rockets.push({ x, y:H+4, vy:-rand(6.5,9.5),
-      col:palette[Math.floor(Math.random()*(palette.length-1))], target:rand(H*.12, H*.45) });
-  }
-  function tick(){
-    fx.clearRect(0,0,W,H);
-    fx.globalCompositeOperation = 'lighter';
-    for(let i=rockets.length-1;i>=0;i--){
-      const rk = rockets[i];
-      rk.y += rk.vy; rk.vy += .12;
-      fx.beginPath(); fx.moveTo(rk.x, rk.y); fx.lineTo(rk.x, rk.y+12);
-      fx.strokeStyle = `rgba(${rk.col},.45)`; fx.lineWidth = 2; fx.stroke();
-      fx.beginPath(); fx.arc(rk.x, rk.y, 2.2, 0, Math.PI*2);
-      fx.fillStyle = `rgba(${rk.col},1)`; fx.fill();
-      if(rk.y <= rk.target || rk.vy >= 0){ explode(rk.x, rk.y, rk.col); rockets.splice(i,1); }
-    }
-    for(let i=parts.length-1;i>=0;i--){
-      const p = parts[i];
-      if(p.flash){
-        p.life -= p.decay;
-        if(p.life <= 0){ parts.splice(i,1); continue; }
-        fx.beginPath(); fx.arc(p.x, p.y, p.r*p.life, 0, Math.PI*2);
-        fx.fillStyle = `rgba(255,255,255,${p.life*.8})`; fx.fill();
-        continue;
-      }
-      p.px=p.x; p.py=p.y;
-      p.vy += p.willow ? .015 : .035; p.vx *= .986; p.vy *= .986;
-      p.x += p.vx; p.y += p.vy; p.life -= p.decay; p.tw += .3;
-      if(p.life <= 0){ parts.splice(i,1); continue; }
-      const tw = .65 + .35*Math.sin(p.tw);                               // twinkle
-      fx.beginPath(); fx.moveTo(p.px, p.py); fx.lineTo(p.x, p.y);
-      fx.strokeStyle = `rgba(${p.col},${p.life*tw*.5})`; fx.lineWidth = p.r; fx.stroke();
-      fx.beginPath(); fx.arc(p.x, p.y, p.r, 0, Math.PI*2);
-      fx.fillStyle = `rgba(${p.col},${p.life*tw})`; fx.fill();
-    }
-    fx.globalCompositeOperation = 'source-over';
-    if(--spawnTimer <= 0){ launch(); spawnTimer = 26 + Math.floor(Math.random()*34); }
-    if(running) raf = requestAnimationFrame(tick);
-  }
-  function start(){ if(running) return; running = true; size(); spawnTimer = 0; tick(); }
-  function stop(){ running = false; if(raf) cancelAnimationFrame(raf); parts = []; rockets = []; fx.clearRect(0,0,W,H); }
-  window.addEventListener('resize', ()=>{ if(running) size(); });
-  new IntersectionObserver(es=>{
-    es.forEach(e=> e.isIntersecting ? start() : stop());
-  }, {threshold:.05}).observe(canvas.parentElement);
-}
-document.querySelectorAll('.fx-canvas').forEach(initFireworks);
-
-/* ── AFFILIATE EARNINGS CALCULATOR ──────────────────────── */
-const affSlider = document.getElementById('affSlider');
-if (affSlider) {
-  const affAmt = document.getElementById('affAmt');
-  const affEarn = document.getElementById('affEarn');
-  const updateAff = () => {
-    const amt = +affSlider.value;
-    affAmt.textContent = '$' + amt;
-    affEarn.textContent = '$' + (amt * 0.01).toFixed(2);
-  };
-  affSlider.addEventListener('input', updateAff);
-  updateAff();
-}
-
-/* ── INIT ────────────────────────────────────────────────── */
-window.addEventListener('resize', resize);
-resize(); init(); frame();
-
-// Flash-in elements already in viewport
-setTimeout(()=>{
-  document.querySelectorAll('.reveal').forEach(el=>{
-    if(el.getBoundingClientRect().top < innerHeight) el.classList.add('in');
-  });
-},100);
 </script>
 
 <!-- ── AI ASSISTANT WIDGET ──────────────────────────────────── -->
@@ -1509,17 +738,17 @@ setTimeout(()=>{
   .ai-disc{color:var(--sub);font-size:.68rem;margin-top:7px;text-align:center;opacity:.8}
 </style>
 
-<button id="ai-fab" aria-label="assistant">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.4 4.8L3 21l4.4-1.3A9 9 0 1 0 12 3z"/><path d="M8 11h8M8 14h5" stroke-linecap="round"/></svg>
+<button id="ai-fab" aria-label="Assistant Tchipa">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><path d="M12 3a9 9 0 0 0-9 9 8.9 8.9 0 0 0 1.4 4.8L3 21l4.4-1.3A9 9 0 1 0 12 3z"/><path d="M8 11h8M8 14h5" stroke-linecap="round"/></svg>
   <span class="lbl"></span>
 </button>
 
-<div id="ai-panel" role="dialog" aria-modal="false">
-  <div class="ai-head"><span class="dot"></span><h4></h4><button id="ai-close" aria-label="close">×</button></div>
-  <div class="ai-body" id="ai-body"></div>
+<div id="ai-panel" role="dialog" aria-modal="false" aria-label="Assistant Tchipa">
+  <div class="ai-head"><span class="dot"></span><h4></h4><button id="ai-close" aria-label="Fermer">×</button></div>
+  <div class="ai-body" id="ai-body" aria-live="polite"></div>
   <div class="ai-foot">
     <div class="ai-inrow">
-      <textarea id="ai-input" rows="1"></textarea>
+      <textarea id="ai-input" rows="1" aria-label="Ta question"></textarea>
       <button id="ai-send"></button>
     </div>
     <div class="ai-disc"></div>
@@ -1530,22 +759,15 @@ setTimeout(()=>{
 (function(){
   const API = "https://api.tchipa.co.uk/assistant/ask";
   const T = {
-    en:{ fab:"Ask Tchipa", head:"Tchipa Assistant",
-      intro:"Hi! Ask me anything about Tchipa — how to get a virtual card, prices, the wallet, or the 1% affiliate program.",
-      ph:"Type your question…", send:"Send",
-      sugg:["How do I get a card?","How much does it cost?","What is Tchipa Wallet?","How does the 1% affiliate work?"],
-      disc:"AI assistant · answers based on the Tchipa docs.",
-      err:"Something went wrong. Please try again.", think:"typing…" },
-    ar:{ fab:"اسأل تشيبا", head:"مساعد تشيبا",
-      intro:"مرحباً! اسألني أي شيء عن تشيبا — كيف تحصل على بطاقة افتراضية، الأسعار، المحفظة، أو برنامج الشراكة 1%.",
-      ph:"اكتب سؤالك…", send:"إرسال",
-      sugg:["كيف أحصل على بطاقة؟","كم التكلفة؟","ما هي محفظة تشيبا؟","كيف تعمل الشراكة 1%؟"],
-      disc:"مساعد ذكي · الأجوبة مبنية على وثائق تشيبا.",
-      err:"حدث خطأ. أعد المحاولة.", think:"يكتب…" }
+    fr:{ fab:"Une question ?", head:"Assistant Tchipa",
+      intro:"Salut ! Pose-moi tes questions sur Tchipa : comment commander, payer via BaridiMob, les délais de livraison, les tailles ou le suivi de commande.",
+      ph:"Écris ta question…", send:"Envoyer",
+      sugg:["Comment je commande ?","Comment je paie ?","Combien de temps pour la livraison ?","Quelle taille choisir ?"],
+      disc:"Assistant IA · réponses basées sur les informations Tchipa.",
+      err:"Une erreur s'est produite. Réessaie.", think:"en train d'écrire…" }
   };
-  // Le site expose une variable globale `lang` ('en'|'ar') + toggleLang(). On suit notre
-  // propre état et on s'accroche à toggleLang pour réagir au changement de langue.
-  let curLang = (typeof lang !== "undefined" && T[lang]) ? lang : "en";
+  // Le site est en français uniquement : plus de bascule de langue (toggleLang supprimé).
+  let curLang = "fr";
   const $id = id => document.getElementById(id);
   const fab=$id("ai-fab"), panel=$id("ai-panel"), body=$id("ai-body"),
         input=$id("ai-input"), send=$id("ai-send"), closeBtn=$id("ai-close");
@@ -1600,12 +822,8 @@ setTimeout(()=>{
   send.addEventListener("click",()=>ask(input.value));
   input.addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask(input.value);} });
   input.addEventListener("input",()=>{ input.style.height="auto"; input.style.height=Math.min(input.scrollHeight,110)+"px"; });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&panel.classList.contains("open")){ toggle(false); fab.focus(); } });
 
-  // s'accrocher au switch de langue global du site
-  if(typeof window.toggleLang==="function"){
-    const orig=window.toggleLang;
-    window.toggleLang=function(){ orig.apply(this,arguments); curLang=(curLang==="en"?"ar":"en"); applyLang(); };
-  }
   applyLang();
 })();
 </script>

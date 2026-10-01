@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tchipa — Vêtements de Chine livrés en Algérie</title>
-  <meta name="description" content="Tchipa, la boutique de vêtements en ligne : robes, abayas, hijabs à prix fabricant, livrés en Algérie. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi de commande dans l'app.">
+  <meta name="description" content="Tchipa, la boutique de vêtements en ligne : femme, homme et enfant à prix fabricant, livrés en Algérie. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi de commande dans l'app.">
   <meta name="theme-color" content="#0D1117">
   <link rel="canonical" href="https://tchipa.co.uk/">
   <link rel="icon" type="image/png" href="/tchipa_logo.png">
@@ -16,11 +16,11 @@
   <meta property="og:locale" content="fr_FR">
   <meta property="og:url" content="https://tchipa.co.uk/">
   <meta property="og:title" content="Tchipa — Vêtements de Chine livrés en Algérie">
-  <meta property="og:description" content="Robes, abayas, hijabs à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi dans l'app.">
+  <meta property="og:description" content="Vêtements femme, homme et enfant à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises, suivi dans l'app.">
   <meta property="og:image" content="https://tchipa.co.uk/tchipa_logo.png">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Tchipa — Vêtements de Chine livrés en Algérie">
-  <meta name="twitter:description" content="Robes, abayas, hijabs à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises.">
+  <meta name="twitter:description" content="Vêtements femme, homme et enfant à prix fabricant. Paiement en dinars via BaridiMob, livraison et douane comprises.">
   <meta name="twitter:image" content="https://tchipa.co.uk/tchipa_logo.png">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -194,6 +194,71 @@
     .product img { width:100%; height:100%; object-fit:cover; }
     .product figcaption { padding:.75rem .85rem .9rem; font-size:.86rem; font-weight:600; line-height:1.4; color:var(--text); }
     .product figcaption small { display:block; margin-top:.3rem; font-size:.74rem; font-weight:700; color:var(--gold); text-transform:uppercase; letter-spacing:.06em; }
+    .product { cursor:pointer; position:relative; }
+    .product:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
+    .product .price { display:block; margin-top:.35rem; font-size:.95rem; font-weight:800; color:var(--cyan); }
+    .product .price em { font-style:normal; font-size:.72rem; font-weight:600; color:var(--sub); margin-right:.2rem; }
+    .product .sold { display:block; margin-top:.15rem; font-size:.72rem; font-weight:600; color:var(--sub); }
+    .product figcaption .t { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .vtabs { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin:-0.6rem 0 1.6rem; }
+    .vtabs button {
+      font:inherit; font-size:.88rem; font-weight:700; color:var(--text); cursor:pointer;
+      background:var(--surface); border:1px solid var(--border); border-radius:100px; padding:.5rem 1.1rem;
+    }
+    .vtabs button[aria-selected="true"] { background:linear-gradient(135deg,var(--cyan),var(--purple)); color:#04121a; border-color:transparent; }
+    .vsubs { display:flex; gap:.45rem; justify-content:center; flex-wrap:wrap; margin:-0.8rem 0 1.6rem; }
+    .vsubs button {
+      font:inherit; font-size:.8rem; font-weight:600; color:var(--sub); cursor:pointer;
+      background:transparent; border:1px solid var(--border); border-radius:100px; padding:.32rem .8rem;
+    }
+    .vsubs button[aria-pressed="true"] { color:var(--text); border-color:var(--purple); background:rgba(139,92,246,.14); }
+    .vmore { display:flex; justify-content:center; margin-top:1.4rem; }
+    .btn-ghost-sm { font:inherit; font-weight:700; font-size:.9rem; color:var(--text); cursor:pointer;
+      background:var(--surface); border:1px solid var(--border); border-radius:100px; padding:.6rem 1.4rem; }
+    .btn-ghost-sm:disabled { opacity:.5; cursor:default; }
+
+    /* ── FICHE PRODUIT (modale) ─────────────────────────────── */
+    #pdlg { border:none; padding:0; margin:auto; background:transparent; color:var(--text);
+      width:min(920px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); }
+    #pdlg::backdrop { background:rgba(4,8,14,.78); backdrop-filter:blur(4px); }
+    .pd { position:relative; display:grid; grid-template-columns:1.05fr 1fr; gap:0; background:var(--surface);
+      border:1px solid var(--border); border-radius:22px; overflow:hidden; max-height:calc(100dvh - 32px); }
+    .pd-close { position:absolute; top:10px; right:10px; z-index:3; width:38px; height:38px; border-radius:50%;
+      border:1px solid var(--border); background:rgba(13,17,23,.85); color:var(--text); font-size:1.3rem; cursor:pointer; line-height:1; }
+    .pd-media { background:var(--card); display:flex; flex-direction:column; min-height:0; }
+    .pd-main { aspect-ratio:1/1; width:100%; background:var(--card); }
+    .pd-main img, .pd-main video { width:100%; height:100%; object-fit:cover; display:block; }
+    .pd-thumbs { display:flex; gap:.4rem; padding:.55rem; overflow-x:auto; scrollbar-width:thin; }
+    .pd-thumbs button { flex:0 0 auto; width:54px; height:54px; padding:0; border-radius:10px; overflow:hidden; cursor:pointer;
+      border:2px solid transparent; background:var(--bg); }
+    .pd-thumbs button[aria-current="true"] { border-color:var(--cyan); }
+    .pd-thumbs img { width:100%; height:100%; object-fit:cover; }
+    .pd-info { padding:1.4rem 1.4rem 1.2rem; overflow-y:auto; display:flex; flex-direction:column; gap:.9rem; }
+    .pd-cat { font-size:.74rem; font-weight:800; text-transform:uppercase; letter-spacing:.14em; color:var(--cyan); }
+    .pd-title { font-size:1.2rem; font-weight:800; line-height:1.3; }
+    .pd-price { font-size:1.7rem; font-weight:900; }
+    .pd-price small { font-size:.85rem; font-weight:600; color:var(--sub); margin-left:.4rem; }
+    .pd-opt h4 { font-size:.9rem; font-weight:800; margin-bottom:.45rem; }
+    .pd-opt h4 span { font-weight:500; color:var(--sub); }
+    .pd-chips { display:flex; flex-wrap:wrap; gap:.4rem; }
+    .pd-chips button { font:inherit; font-size:.82rem; font-weight:600; color:var(--text); cursor:pointer;
+      background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:.42rem .75rem; text-align:left; }
+    .pd-chips button[aria-pressed="true"] { border-color:var(--purple); background:rgba(139,92,246,.16); font-weight:800; }
+    .pd-chips button.off { color:var(--sub); text-decoration:line-through; opacity:.6; }
+    .pd-warn { font-size:.82rem; background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3);
+      border-radius:12px; padding:.6rem .75rem; }
+    .pd-na { font-size:.82rem; color:#FCA5A5; }
+    .pd-perks { display:flex; flex-wrap:wrap; gap:.4rem; list-style:none; font-size:.78rem; font-weight:600; color:var(--sub); }
+    .pd-perks li { border:1px solid var(--border); border-radius:100px; padding:.25rem .65rem; }
+    .pd-cta { margin-top:auto; display:flex; flex-direction:column; gap:.45rem; }
+    .pd-cta .btn { width:100%; justify-content:center; }
+    .pd-cta p { font-size:.76rem; color:var(--sub); text-align:center; }
+    .pd-load { padding:4rem 1rem; text-align:center; color:var(--sub); grid-column:1 / -1; }
+    @media (max-width:760px){
+      #pdlg { width:100vw; max-width:100vw; max-height:100dvh; margin:auto 0 0; }
+      .pd { grid-template-columns:1fr; border-radius:22px 22px 0 0; max-height:92dvh; overflow-y:auto; }
+      .pd-info { overflow:visible; }
+    }
     .vitrine-foot { margin-top:2rem; display:flex; flex-direction:column; align-items:center; gap:.8rem; text-align:center; }
     .vitrine-foot p { color:var(--sub); font-size:.92rem; }
 
@@ -362,7 +427,6 @@
       .products { grid-template-columns:repeat(2,1fr); gap:.75rem; }
       .product figcaption { font-size:.8rem; padding:.6rem .65rem .75rem; }
       .cats { grid-template-columns:repeat(2,1fr); }
-      .cats .cat.live { grid-column:1 / -1; }
       .steps { grid-template-columns:1fr; }
       .size { grid-template-columns:1fr; padding:1.6rem; gap:1rem; }
       .panel { padding:1.5rem; }
@@ -398,11 +462,11 @@
 <section id="home" class="hero">
   <div class="hero-in">
     <div>
-      <div class="badge">Nouvelle collection Femme disponible</div>
+      <div class="badge">Femme · Homme · Enfants : plus de 7 700 modèles</div>
       <h1>Vêtements de Chine, <span class="grad-text">livrés chez toi en Algérie</span></h1>
       <p class="hero-ar ar" lang="ar" dir="rtl">ملابس من الصين إلى الجزائر</p>
       <p class="hero-sub">
-        Robes, abayas, hijabs… directement des fabricants, à <strong>petits prix</strong>.
+        Robes, t-shirts, pyjamas, chaussures enfant… directement des fabricants, à <strong>petits prix</strong>.
         Tu paies en <strong>dinars via BaridiMob</strong>, on s'occupe de l'achat, de l'expédition et de la douane.
       </p>
       <div class="hero-btns">
@@ -434,11 +498,13 @@
   <div class="wrap">
     <div class="sec-head center reveal">
       <span class="sec-tag">La boutique</span>
-      <h2 class="sec-h2">Un aperçu de la <span class="grad-text">collection Femme</span></h2>
-      <p class="sec-lead">Robes longues à manches longues, abayas, tenues élégantes pour tous les jours. Prix fabricant, sans intermédiaire.</p>
+      <h2 class="sec-h2">Les <span class="grad-text">plus vendus</span> du moment</h2>
+      <p class="sec-lead">Plus de 7 700 vêtements pour femme, homme et enfant. Touche un modèle pour voir ses photos, ses couleurs, ses tailles et son prix livré en Algérie.</p>
     </div>
 
-    <ul class="products">
+    <div class="vtabs" role="tablist" aria-label="Rayons" hidden></div>
+    <div class="vsubs" hidden></div>
+    <ul class="products" id="vitrine">
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN015Kiipr1Xfbu0anri5_!!2221408952951-0-cib.jpg_300x300.jpg" alt="Robe chemise abaya unie moutarde à manches longues, portée avec un hijab" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe chemise Abaya unie manches longues</figcaption></figure></li>
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01p9u4Qk1NOzOUUXP13_!!2211288331561-0-cib.jpg_300x300.jpg" alt="Abaya plissée longue à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Abaya femme noire plissée manches longues élégante</figcaption></figure></li>
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01VJ6XPQ21DcBsjLSGn_!!2211071956951-0-cib.jpg_300x300.jpg" alt="Robe longue unie à manches longues, bordure brodée, en trois coloris" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue femme élégante unie manches longues</figcaption></figure></li>
@@ -453,8 +519,10 @@
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01k9uc0m2Ij4sh4WR7r_!!2222673469321-0-cib.jpg_300x300.jpg" alt="Robe longue rouge et blanche à motifs brodés, manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe longue élégante à manches longues, imprimé rose rouge et blanc</figcaption></figure></li>
     </ul>
 
+    <div class="vmore" hidden><button type="button" class="btn-ghost-sm" id="vmore">Voir plus de modèles</button></div>
+
     <div class="vitrine-foot reveal">
-      <p>Des centaines d'articles dans l'app, avec toutes les couleurs et toutes les tailles.</p>
+      <p>Pour commander, installe l'app : tu paies avec ton solde Tchipa et tu suis ta commande jusqu'à chez toi.</p>
       <a href="#telecharger" class="btn btn-primary">Voir tout le catalogue dans l'app</a>
     </div>
   </div>
@@ -466,14 +534,14 @@
     <div class="sec-head center reveal">
       <span class="sec-tag">Catégories</span>
       <h2 class="sec-h2">Pour toute la famille</h2>
-      <p class="sec-lead">La collection Femme est déjà en ligne. Les autres rayons arrivent très bientôt.</p>
+      <p class="sec-lead">Femme, Homme et Enfants sont en ligne. Le rayon hijab et abaya arrive très bientôt.</p>
     </div>
     <ul class="cats">
       <li class="cat live reveal"><div class="cat-ic" aria-hidden="true">👗</div><div class="cat-name">Femme</div><span class="pill pill-live">Disponible</span></li>
+      <li class="cat live reveal"><div class="cat-ic" aria-hidden="true">👔</div><div class="cat-name">Homme</div><span class="pill pill-live">Disponible</span></li>
+      <li class="cat live reveal"><div class="cat-ic" aria-hidden="true">🧸</div><div class="cat-name">Enfants</div><span class="pill pill-live">Disponible</span></li>
       <li class="cat reveal"><div class="cat-ic" aria-hidden="true">🧕</div><div class="cat-name">Hijab</div><span class="pill pill-soon">Bientôt</span></li>
       <li class="cat reveal"><div class="cat-ic" aria-hidden="true">✨</div><div class="cat-name">Abaya</div><span class="pill pill-soon">Bientôt</span></li>
-      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">👔</div><div class="cat-name">Homme</div><span class="pill pill-soon">Bientôt</span></li>
-      <li class="cat reveal"><div class="cat-ic" aria-hidden="true">🧸</div><div class="cat-name">Enfants</div><span class="pill pill-soon">Bientôt</span></li>
     </ul>
   </div>
 </section>
@@ -613,7 +681,7 @@
       </details>
       <details>
         <summary>Quelles catégories sont disponibles ?</summary>
-        <div class="a">La collection <strong>Femme</strong> est disponible dès maintenant. Les rayons Hijab, Abaya, Homme et Enfants arrivent très bientôt.</div>
+        <div class="a">Les rayons <strong>Femme</strong>, <strong>Homme</strong> et <strong>Enfants</strong> sont disponibles dès maintenant. Le rayon hijab et abaya arrive très bientôt.</div>
       </details>
       <details>
         <summary>J'ai un iPhone, comment faire ?</summary>
@@ -653,7 +721,7 @@
     </div>
     <div class="foot-col">
       <h4>Boutique</h4>
-      <a href="#boutique">Collection Femme</a>
+      <a href="#boutique">Les plus vendus</a>
       <a href="#categories">Catégories</a>
       <a href="#tailles">Guide des tailles</a>
     </div>
@@ -690,6 +758,178 @@
 document.querySelectorAll('.products img').forEach(img => {
   img.addEventListener('error', () => { const li = img.closest('li'); if (li) li.style.display = 'none'; });
 });
+</script>
+
+<!-- ── VITRINE EN DIRECT + FICHE PRODUIT ─────────────────────── -->
+<dialog id="pdlg" aria-label="Fiche produit"><div class="pd" id="pd"></div></dialog>
+<script>
+(() => {
+  const API = 'https://api.tchipa.co.uk';
+  const APK = 'https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk';
+  const PWA = 'https://tarik9991.github.io/tchipa-pwa/';
+  const grid = document.getElementById('vitrine');
+  const tabs = document.querySelector('.vtabs'), subs = document.querySelector('.vsubs');
+  const more = document.querySelector('.vmore'), moreBtn = document.getElementById('vmore');
+  const dlg = document.getElementById('pdlg'), pd = document.getElementById('pd');
+  if (!grid || !dlg) return;
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const usd = n => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',') + ' $';
+  // alicdn sert des miniatures : image.jpg_300x300.jpg
+  const thumb = (u, px) => /alicdn\.com\/.+\.(jpe?g|png)$/i.test(u || '') ? `${u}_${px}x${px}.jpg` : (u || '');
+  const sold = n => n >= 1000 ? `${Math.floor(n / 1000).toLocaleString('fr-FR')} 000+ vendus` : (n > 0 ? `${n} vendus` : '');
+  const optLabel = k => { const l = k.toLowerCase();
+    if (l.includes('colo')) return 'Couleur'; if (l.includes('height')) return "Taille (hauteur de l'enfant)";
+    if (l.includes('size')) return 'Taille'; if (l.includes('length')) return 'Longueur'; return k; };
+  const getJson = async url => { const r = await fetch(API + url); if (!r.ok) throw new Error(r.status); return r.json(); };
+
+  // ── Vitrine ───────────────────────────────────────────────
+  let cats = [], cat = null, sub = null, page = 1, busy = false;
+
+  function card(p) {
+    const li = document.createElement('li');
+    li.innerHTML = `<figure class="product in" tabindex="0" role="button" data-id="${p.id}" aria-label="Voir ${esc(p.title)}">
+      <div class="ph"><img src="${esc(thumb(p.image, 300))}" alt="${esc(p.title)}" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div>
+      <figcaption><span class="t">${esc(p.title)}</span>
+        <span class="price">${p.priceTo > p.priceFrom ? '<em>dès</em>' : ''}${usd(p.priceFrom)}</span>
+        ${sold(p.sold) ? `<span class="sold">${sold(p.sold)}</span>` : ''}</figcaption></figure>`;
+    li.querySelector('img').addEventListener('error', () => { li.style.display = 'none'; });
+    return li;
+  }
+
+  async function load(reset) {
+    if (busy) return; busy = true; moreBtn.disabled = true;
+    try {
+      if (reset) page = 1;
+      const q = new URLSearchParams({ category: cat, sort: 'pop', page });
+      if (sub) q.set('sub', sub);
+      const d = await getJson('/shop/products?' + q);
+      if (reset) grid.replaceChildren();
+      d.items.forEach(p => grid.appendChild(card(p)));
+      more.hidden = !d.hasMore; page++;
+    } catch (e) { more.hidden = true; }
+    busy = false; moreBtn.disabled = false;
+  }
+
+  function renderSubs() {
+    const c = cats.find(x => x.name === cat);
+    const list = (c?.subs || []).slice(0, 8);
+    subs.hidden = !list.length;
+    subs.innerHTML = [`<button type="button" aria-pressed="${!sub}" data-s="">Tout</button>`]
+      .concat(list.map(s => `<button type="button" aria-pressed="${sub === s.name}" data-s="${esc(s.name)}">${esc(s.name)}</button>`)).join('');
+  }
+
+  function selectCat(name) {
+    cat = name; sub = null;
+    tabs.querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.c === name));
+    renderSubs(); load(true);
+  }
+
+  tabs.addEventListener('click', e => { const b = e.target.closest('button'); if (b) selectCat(b.dataset.c); });
+  subs.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return;
+    sub = b.dataset.s || null; renderSubs(); load(true); });
+  moreBtn.addEventListener('click', () => load(false));
+
+  getJson('/shop/categories').then(d => {
+    cats = d.categories || [];
+    if (!cats.length) return;          // serveur sans catalogue : on garde la vitrine fixe
+    tabs.innerHTML = cats.map(c => `<button type="button" role="tab" data-c="${esc(c.name)}">${esc(c.name)} <span style="opacity:.6;font-weight:600">${c.count.toLocaleString('fr-FR')}</span></button>`).join('');
+    tabs.hidden = false;
+    selectCat(cats[0].name);
+  }).catch(() => {});
+
+  // ── Fiche produit ─────────────────────────────────────────
+  let P = null, variants = [], sel = {}, media = [], cur = 0;
+
+  const options = () => { const o = {};
+    variants.forEach(v => Object.entries(v.props).forEach(([k, val]) => {
+      (o[k] ||= []).includes(val) || o[k].push(val); }));
+    return o; };
+  const current = () => variants.find(v => Object.entries(sel).every(([k, val]) => v.props[k] === val)) || null;
+  const available = (key, val) => variants.some(v => v.props[key] === val &&
+    Object.entries(sel).every(([k, s]) => k === key || v.props[k] === s));
+  function pick(key, val) {
+    sel[key] = val;
+    if (!current()) { const v = variants.find(v => v.props[key] === val); if (v) sel = { ...v.props }; }
+    renderInfo();
+  }
+
+  function renderMedia() {
+    const m = media[cur] || {};
+    pd.querySelector('.pd-main').innerHTML = m.video
+      ? `<video src="${esc(m.video)}" controls playsinline autoplay muted poster="${esc(thumb(media[0]?.img, 600))}"></video>`
+      : `<img src="${esc(thumb(m.img, 600))}" alt="${esc(P.title)}" referrerpolicy="no-referrer">`;
+    pd.querySelectorAll('.pd-thumbs button').forEach((b, i) => b.setAttribute('aria-current', i === cur));
+  }
+
+  function renderInfo() {
+    const v = current(), opts = options();
+    const hasSize = Object.keys(opts).some(k => /size|height/i.test(k));
+    const price = v ? v.priceUsd : P.priceFrom;
+    pd.querySelector('.pd-info').innerHTML = `
+      <div class="pd-cat">${esc(P.category)}${P.sub ? ' · ' + esc(P.sub) : ''}</div>
+      <h3 class="pd-title">${esc(P.title)}</h3>
+      <div class="pd-price">${v ? '' : '<small style="margin:0 .3rem 0 0">dès</small>'}${usd(price)}<small>livré en Algérie, douane comprise</small></div>
+      ${sold(P.sold) ? `<div style="font-size:.82rem;color:var(--sub);margin-top:-.5rem">${sold(P.sold)} sur 1688</div>` : ''}
+      ${Object.entries(opts).map(([k, vals]) => `
+        <div class="pd-opt"><h4>${esc(optLabel(k))}${sel[k] ? ` <span>· ${esc(sel[k])}</span>` : ''}</h4>
+          <div class="pd-chips">${vals.map(val => `<button type="button" data-k="${esc(k)}" data-v="${esc(val)}"
+            aria-pressed="${sel[k] === val}" class="${available(k, val) ? '' : 'off'}">${esc(val)}</button>`).join('')}</div></div>`).join('')}
+      ${v ? '' : `<div class="pd-na">${variants.length ? "Cette combinaison n'est pas disponible." : 'Ce modèle est en rupture de stock.'}</div>`}
+      ${hasSize ? '<div class="pd-warn">📏 Tailles chinoises : elles taillent petit. Prends 1 à 2 tailles au-dessus de ta taille habituelle.</div>' : ''}
+      <ul class="pd-perks"><li>🚚 Livré en Algérie</li><li>🛃 Douane comprise</li><li>💳 Payé en dinars (BaridiMob)</li></ul>
+      <div class="pd-cta">
+        <a class="btn btn-primary" href="${APK}">Commander dans l'app Android</a>
+        <a class="btn btn-ghost" href="${PWA}" target="_blank" rel="noopener">Commander sur iPhone</a>
+        <p>Cherche « ${esc(P.title.split(' ').slice(0, 4).join(' '))} » dans la boutique de l'app, choisis ta variante et paie avec ton solde Tchipa.</p>
+      </div>`;
+  }
+
+  pd.addEventListener('click', e => {
+    if (e.target.closest('.pd-close')) return dlg.close();
+    const chip = e.target.closest('.pd-chips button'); if (chip) return pick(chip.dataset.k, chip.dataset.v);
+    const t = e.target.closest('.pd-thumbs button'); if (t) { cur = +t.dataset.i; renderMedia(); }
+  });
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });   // clic sur le fond
+  dlg.addEventListener('close', () => {
+    document.documentElement.style.overflow = '';
+    pd.querySelector('video')?.pause();
+    if (location.hash.startsWith('#produit-')) history.replaceState(null, '', location.pathname + location.search);
+  });
+
+  async function openProduct(id) {
+    pd.innerHTML = '<button type="button" class="pd-close" aria-label="Fermer">×</button><div class="pd-load">Chargement…</div>';
+    if (!dlg.open) dlg.showModal();
+    document.documentElement.style.overflow = 'hidden';
+    history.replaceState(null, '', '#produit-' + id);
+    try {
+      P = await getJson('/shop/products/' + id);
+    } catch (e) {
+      pd.querySelector('.pd-load').textContent = "Ce modèle n'est plus disponible.";
+      return;
+    }
+    variants = P.variants || [];
+    sel = variants[0] ? { ...variants[0].props } : {};
+    media = (P.images || []).slice(0, 12).map(img => ({ img }));
+    if (P.video) media.push({ video: P.video });
+    cur = 0;
+    pd.innerHTML = `<button type="button" class="pd-close" aria-label="Fermer">×</button>
+      <div class="pd-media"><div class="pd-main"></div>
+        <div class="pd-thumbs">${media.map((m, i) => `<button type="button" data-i="${i}" aria-label="${m.video ? 'Vidéo' : 'Photo ' + (i + 1)}">${m.video
+          ? '<span style="display:grid;place-items:center;height:100%;font-size:1.2rem">▶</span>'
+          : `<img src="${esc(thumb(m.img, 100))}" alt="" loading="lazy" referrerpolicy="no-referrer">`}</button>`).join('')}</div></div>
+      <div class="pd-info"></div>`;
+    renderMedia(); renderInfo();
+  }
+
+  grid.addEventListener('click', e => { const f = e.target.closest('.product[data-id]'); if (f) openProduct(f.dataset.id); });
+  grid.addEventListener('keydown', e => { if (e.key !== 'Enter' && e.key !== ' ') return;
+    const f = e.target.closest('.product[data-id]'); if (f) { e.preventDefault(); openProduct(f.dataset.id); } });
+
+  // Lien partageable : tchipa.co.uk/#produit-123456
+  const m = location.hash.match(/^#produit-(\d+)$/);
+  if (m) openProduct(m[1]);
+})();
 </script>
 
 <!-- ── AI ASSISTANT WIDGET ──────────────────────────────────── -->

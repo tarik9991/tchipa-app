@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -1399,8 +1400,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   trackColor: WidgetStateProperty.all(const Color(0xFF00D4FF).withValues(alpha: 0.3)),
                 ),
               ),
+              // — Biométrique (native only: local_auth has no web plugin, and
+              // an app-lock toggle that can never actually lock would mislead)
+              if (!kIsWeb) ...[
               const SizedBox(height: 10),
-              // — Biométrique
               _SettingsTile(
                 icon: Icons.fingerprint_rounded,
                 title: L.biometric,
@@ -1419,6 +1422,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   trackColor: WidgetStateProperty.all(const Color(0xFF00D4FF).withValues(alpha: 0.3)),
                 ),
               ),
+              ],
               const SizedBox(height: 10),
               // — PIN de réception carte (gate /cards/claim-with-pin)
               _SettingsTile(

@@ -327,16 +327,33 @@ async function sendMagicLinkEmail(toEmail, token) {
   return { ok: true, transport: 'log', link };
 }
 
-// Normalize a phone for stable lookup: keep leading '+', strip everything non-digit.
-// '+213 555-12 34 56' → '+213555123456'. Used by both write (agent) and read (client).
+// Normalize a phone for stable lookup. Used by both write (agent) and read
+// (client) paths, so every format a person may type must land on ONE key:
+// clients and agents wrote 0555…, 555…, 213555…, 00213555… and +213555… for
+// the same Algerian mobile (seen in prod 2026-10-03), and an agent credit was
+// refused whenever the two sides didn't type it the same way.
+// - '+' or '00' prefix → international: '+' + digits ('+213 0555…' drops the 0)
+// - Algerian mobile without country code (0[5-7]XXXXXXXX, [5-7]XXXXXXXX,
+//   213[5-7]XXXXXXXX) → '+213…'
+// - anything else without a prefix stays digits-only, as before (we can't
+//   guess the country of a foreign number written locally).
+// Idempotent: normalizePhone(normalizePhone(x)) === normalizePhone(x).
 function normalizePhone(raw) {
   if (raw == null) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  const hasPlus = s.startsWith('+');
-  const digits  = s.replace(/\D/g, '');
+  let digits = s.replace(/\D/g, '');
+  let intl = s.startsWith('+');
+  if (!intl && digits.startsWith('00')) { digits = digits.slice(2); intl = true; }
   if (digits.length < 6) return null;
-  return (hasPlus ? '+' : '') + digits;
+  if (intl) {
+    if (/^2130[5-7]\d{8}$/.test(digits)) digits = '213' + digits.slice(4);
+    return '+' + digits;
+  }
+  if (/^0[5-7]\d{8}$/.test(digits))     return '+213' + digits.slice(1);
+  if (/^[5-7]\d{8}$/.test(digits))      return '+213' + digits;
+  if (/^213[5-7]\d{8}$/.test(digits))   return '+' + digits;
+  return digits;
 }
 console.log('[db] Orders DB ready at', DB_PATH);
 
@@ -2702,6 +2719,48 @@ app.post('/admin/shop/orders/:id/status', (req, res) => {
   })();
   res.json({ ok: true, order: orderView(db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(id)) });
 });
+
+// One-time (idempotent) rewrite of every stored phone to normalizePhone()'s
+// current output, run after all tables exist. Rows keyed by phone that now
+// collide are the same person registered under two formats (same email_hash
+// in prod): for user_pins keep the verified row, then the most recent; other
+// phone-keyed tables are left untouched on collision and logged.
+(function migratePhones() {
+  const tx = db.transaction(() => {
+    let changed = 0;
+    // user_pins: merge duplicates first.
+    const groups = new Map();
+    for (const r of db.prepare('SELECT phone, verified, updated_at FROM user_pins').all()) {
+      const k = normalizePhone(r.phone);
+      if (k) (groups.get(k) || groups.set(k, []).get(k)).push(r);
+    }
+    for (const [k, rows] of groups) {
+      if (rows.length === 1 && rows[0].phone === k) continue;
+      rows.sort((a, b) => (b.verified - a.verified) || String(b.updated_at).localeCompare(String(a.updated_at)));
+      const [keep, ...drop] = rows;
+      for (const r of drop) {
+        db.prepare('DELETE FROM user_pins WHERE phone = ?').run(r.phone);
+        console.log(`[migration] user_pins: ${r.phone} merged into ${k} (kept ${keep.phone})`);
+      }
+      if (keep.phone !== k) { db.prepare('UPDATE user_pins SET phone = ? WHERE phone = ?').run(k, keep.phone); changed++; }
+    }
+    // Every other phone column.
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(t => t.name);
+    for (const t of tables) {
+      if (t === 'user_pins') continue;
+      for (const c of db.prepare(`PRAGMA table_info(${t})`).all().filter(c => /phone/.test(c.name))) {
+        for (const { v } of db.prepare(`SELECT DISTINCT ${c.name} AS v FROM ${t} WHERE ${c.name} IS NOT NULL`).all()) {
+          const k = normalizePhone(v);
+          if (!k || k === v) continue;
+          try { changed += db.prepare(`UPDATE ${t} SET ${c.name} = ? WHERE ${c.name} = ?`).run(k, v).changes; }
+          catch (e) { console.error(`[migration] ${t}.${c.name} ${v} -> ${k} skipped: ${e.message}`); }
+        }
+      }
+    }
+    if (changed) console.log(`[migration] phones normalized: ${changed} row(s)`);
+  });
+  try { tx(); } catch (e) { console.error('[migration] phones:', e.message); }
+})();
 
 app.listen(PORT, () => {
   console.log(`Tchipa API actif sur http://localhost:${PORT}`);

@@ -982,14 +982,18 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
                 // Rotating + breathing Tchipa "T" mark, centered inside the
                 // electric-arc painter. The arcs spin in their own frame; the
-                // logo spins on itself at a slower cadence with a gentle pulse.
+                // logo turns on its vertical axis (like a coin) at a slower
+                // cadence with a gentle pulse.
                 AnimatedBuilder(
                   animation: Listenable.merge([_logoSpinCtrl, _logoPulseCtrl]),
                   builder: (_, __) {
                     return Transform.scale(
                       scale: _logoPulse.value,
-                      child: Transform.rotate(
-                        angle: _logoSpinCtrl.value * 2 * pi,
+                      child: Transform(
+                        alignment: Alignment.center,
+                        transform: Matrix4.identity()
+                          ..setEntry(3, 2, 0.001)
+                          ..rotateY(_logoSpinCtrl.value * 2 * pi),
                         child: Container(
                           decoration: const BoxDecoration(
                             shape: BoxShape.circle,
@@ -1134,8 +1138,11 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       extendBody: true,
       body: IndexedStack(index: _idx, children: _screens),
+      // Android 15 draws the app edge-to-edge: lift the bar above the
+      // system navigation bar instead of letting it overlap.
       bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        padding: EdgeInsets.fromLTRB(
+            20, 0, 20, max(20.0, MediaQuery.viewPaddingOf(context).bottom + 12)),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(32),
           child: BackdropFilter(
@@ -2258,7 +2265,7 @@ class _ShopScreenState extends State<ShopScreen> {
             ),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.only(top: 18, bottom: 130),
+                padding: EdgeInsets.only(top: 18, bottom: 130 + MediaQuery.viewPaddingOf(context).bottom),
                 child: Center(
                   child: (!_hasMore && _items.isEmpty && _err == null && !_loading)
                       ? Column(children: [
@@ -3436,7 +3443,7 @@ class _WalletScreenState extends State<WalletScreen> {
             ? _loginPrompt()
             : RefreshIndicator(
                 onRefresh: _load,
-                child: ListView(padding: const EdgeInsets.fromLTRB(20, 16, 20, 120), children: [
+                child: ListView(padding: EdgeInsets.fromLTRB(20, 16, 20, 120 + MediaQuery.viewPaddingOf(context).bottom), children: [
                   Text('Mon solde',
                       style: TextStyle(color: AppColors.label, fontSize: 28, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 14),
@@ -3599,7 +3606,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               onRefresh: _load,
               child: _orders!.isEmpty
                   ? ListView(children: [
-                      const SizedBox(height: 120),
+                      SizedBox(height: 120 + MediaQuery.viewPaddingOf(context).bottom),
                       Center(child: Text('Pas encore de commande', style: TextStyle(color: AppColors.sublabel))),
                     ])
                   : ListView(padding: const EdgeInsets.all(16), children: [

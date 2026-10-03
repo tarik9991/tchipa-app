@@ -1300,7 +1300,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: AppColors.label, fontWeight: FontWeight.bold)),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
+        // Clear the floating bottom nav (extendBody): with 40 the last item,
+        // the Espace agent button, stayed hidden behind it.
+        padding: EdgeInsets.fromLTRB(
+            20, 8, 20, 130 + MediaQuery.viewPaddingOf(context).bottom),
         child: Form(
           key: _formKey,
           child: Column(

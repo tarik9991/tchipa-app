@@ -26,6 +26,7 @@ dependencies:
   shared_preferences: ^2.3.0
   webview_flutter: ^4.4.0
   local_auth: ^2.3.0
+  video_player: ^2.9.2
 
 dev_dependencies:
   flutter_test:
@@ -46,3 +47,4 @@ flutter:
 
   assets:
     - assets/
+    - assets/intro/

@@ -12,6 +12,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:video_player/video_player.dart';
 
 // ============================================
 // CONFIGURATION
@@ -881,6 +882,127 @@ class TchipaApp extends StatelessWidget {
 }
 
 // ============================================
+// INTRO VIDEO — after the spinning T: full film (city → TCHIPA DZ tower →
+// Mena at the reception) on first launch, then only Mena's 6 s greeting.
+// ============================================
+const String kIntroFullAsset  = 'assets/intro/intro.mp4';
+const String kIntroShortAsset = 'assets/intro/intro_court.mp4';
+const String kIntroSeenKey    = 'intro_seen';
+
+class IntroVideoScreen extends StatefulWidget {
+  final String asset;
+  final Widget next;
+  const IntroVideoScreen({super.key, required this.asset, required this.next});
+
+  @override
+  State<IntroVideoScreen> createState() => _IntroVideoScreenState();
+}
+
+class _IntroVideoScreenState extends State<IntroVideoScreen> {
+  late final VideoPlayerController _ctrl;
+  bool _done = false;
+  // Browsers (PWA) refuse to autoplay with sound: start muted there and
+  // offer a sound button instead of failing.
+  bool _muted = kIsWeb;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = VideoPlayerController.asset(widget.asset);
+    // Never leave the user on a black screen if the decoder doesn't start.
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && !_ctrl.value.isInitialized) _finish();
+    });
+    _ctrl.initialize().then((_) async {
+      if (!mounted) return;
+      await _ctrl.setVolume(_muted ? 0 : 1);
+      setState(() {});
+      await _ctrl.play();
+    }).catchError((Object _) { _finish(); });
+    _ctrl.addListener(() {
+      final v = _ctrl.value;
+      if (v.hasError) _finish();
+      if (v.isInitialized && !v.isPlaying && v.duration > Duration.zero &&
+          v.position >= v.duration) {
+        _finish();
+      }
+    });
+  }
+
+  Future<void> _finish() async {
+    if (_done) return;
+    _done = true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kIntroSeenKey, true);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(PageRouteBuilder(
+      pageBuilder: (_, __, ___) => widget.next,
+      transitionDuration: const Duration(milliseconds: 600),
+      transitionsBuilder: (_, anim, __, child) =>
+          FadeTransition(opacity: anim, child: child),
+    ));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Widget _pill(String label, VoidCallback onTap) => Material(
+        color: Colors.black.withValues(alpha: 0.45),
+        shape: const StadiumBorder(
+            side: BorderSide(color: Color(0x40FFFFFF))),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Text(label,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14)),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final v = _ctrl.value;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(fit: StackFit.expand, children: [
+        if (v.isInitialized)
+          FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: v.size.width,
+              height: v.size.height,
+              child: VideoPlayer(_ctrl),
+            ),
+          ),
+        Positioned(
+          right: 16,
+          bottom: 16 + MediaQuery.of(context).padding.bottom,
+          child: Row(children: [
+            if (_muted) ...[
+              _pill('🔊 Son', () {
+                setState(() => _muted = false);
+                _ctrl.setVolume(1);
+              }),
+              const SizedBox(width: 10),
+            ],
+            _pill('Passer ›', _finish),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ============================================
 // SPLASH SCREEN
 // ============================================
 class SplashScreen extends StatefulWidget {
@@ -940,10 +1062,20 @@ class _SplashScreenState extends State<SplashScreen>
     Future.delayed(const Duration(milliseconds: 3200), () async {
       if (!mounted) return;
       final lockEnabled = await AppLock.isEnabled();
+      final prefs = await SharedPreferences.getInstance();
+      final introSeen = prefs.getBool(kIntroSeenKey) ?? false;
       if (!mounted) return;
+      final Widget next =
+          lockEnabled ? const LockScreen() : const MainScreen();
       Navigator.of(context).pushReplacement(PageRouteBuilder(
-        pageBuilder: (_, __, ___) =>
-            lockEnabled ? const LockScreen() : const MainScreen(),
+        // The website plays its own intro, and the video never showed up in
+        // the Flutter web build (PWA) during testing: native only.
+        pageBuilder: (_, __, ___) => kIsWeb
+            ? next
+            : IntroVideoScreen(
+                asset: introSeen ? kIntroShortAsset : kIntroFullAsset,
+                next: next,
+              ),
         transitionDuration: const Duration(milliseconds: 600),
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),

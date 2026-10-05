@@ -435,9 +435,82 @@
       .logo { font-size:1.3rem; }
       .logo img { width:30px; height:30px; }
     }
+
+    /* ── INTRO (ville → tour TCHIPA DZ → Mena à la réception) ── */
+    .intro { position:fixed; inset:0; z-index:9999; background:#000; display:none;
+             align-items:center; justify-content:center; transition:opacity .6s ease; }
+    .intro.on { display:flex; }
+    .intro.out { opacity:0; pointer-events:none; }
+    .intro video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#000; }
+    .intro-gate { position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; gap:18px;
+                  padding:32px 16px; text-align:center; }
+    .intro-gate img { width:84px; height:84px; filter:drop-shadow(0 0 24px rgba(0,212,255,.45)); }
+    .intro-enter { font:700 1.05rem var(--font-en); color:#0D1117; border:0; border-radius:999px; cursor:pointer;
+                   padding:15px 30px; background:linear-gradient(135deg,#F7E7B4,var(--gold));
+                   box-shadow:0 10px 40px rgba(245,158,11,.35); }
+    .intro-enter:hover { transform:translateY(-1px); }
+    .intro-gate .ar { font-family:var(--font-ar); color:rgba(255,255,255,.8); font-size:1.05rem; }
+    .intro-gate::before { content:""; position:absolute; inset:-40vh -40vw; z-index:-1;
+                          background:radial-gradient(closest-side,rgba(0,0,0,.55),transparent); }
+    .intro-ctl { position:absolute; z-index:3; right:16px; bottom:max(16px,env(safe-area-inset-bottom)); display:flex; gap:10px; }
+    .intro-ctl button { font:600 .9rem var(--font-en); color:#fff; cursor:pointer; padding:10px 16px; border-radius:999px;
+                        background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.25); backdrop-filter:blur(6px); }
+    .intro-ctl button:hover { background:rgba(0,0,0,.65); }
+    .intro-ctl .intro-son[hidden] { display:none; }
   </style>
 </head>
 <body>
+<!-- ── INTRO : 1re visite = écran « Entrer » puis film complet avec le son
+     (les navigateurs bloquent le son sans clic) ; visites suivantes = Mena seule, muette, en lecture auto. -->
+<div id="intro" class="intro" role="dialog" aria-label="Intro Tchipa DZ">
+  <video id="intro-v" playsinline preload="metadata"></video>
+  <div class="intro-gate" id="intro-gate">
+    <img src="/tchipa_logo.png" alt="">
+    <button class="intro-enter" id="intro-enter" type="button">Entrer chez Tchipa DZ</button>
+    <div class="ar" lang="ar" dir="rtl">مرحبا بيك</div>
+  </div>
+  <div class="intro-ctl">
+    <button class="intro-son" id="intro-son" type="button" hidden>🔊 Son</button>
+    <button id="intro-skip" type="button">Passer ›</button>
+  </div>
+</div>
+<script>
+(function(){
+  var KEY = "tchipa_intro_vu", vu = false;
+  try { vu = localStorage.getItem(KEY) === "1"; } catch(e) {}
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  var box = document.getElementById("intro"), v = document.getElementById("intro-v"),
+      gate = document.getElementById("intro-gate"), son = document.getElementById("intro-son");
+  var fmt = innerHeight > innerWidth ? "9x16" : "16x9";
+  box.classList.add("on");
+  document.documentElement.style.overflow = "hidden";
+  v.poster = "/intro/poster_" + fmt + ".jpg";
+  function fin(){
+    if (box.classList.contains("out")) return;
+    try { localStorage.setItem(KEY, "1"); } catch(e) {}
+    v.pause(); box.classList.add("out");
+    document.documentElement.style.overflow = "";
+    setTimeout(function(){ box.remove(); }, 700);
+  }
+  v.addEventListener("ended", fin);
+  v.addEventListener("error", fin);
+  document.getElementById("intro-skip").addEventListener("click", fin);
+  document.addEventListener("keydown", function(e){ if (e.key === "Escape") fin(); });
+  son.addEventListener("click", function(){ v.muted = false; son.hidden = true; });
+  if (!vu) {
+    v.src = "/intro/intro_" + fmt + ".mp4";
+    document.getElementById("intro-enter").addEventListener("click", function(){
+      gate.remove(); v.muted = false;
+      v.play().catch(fin);
+    });
+  } else {
+    gate.remove();
+    v.src = "/intro/intro_court_" + fmt + ".mp4";
+    v.muted = true; son.hidden = false;
+    v.play().catch(fin);
+  }
+})();
+</script>
 <a href="#main" class="skip">Aller au contenu</a>
 
 <!-- ── NAVBAR ─────────────────────────────────────────────── -->

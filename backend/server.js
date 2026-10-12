@@ -2485,6 +2485,8 @@ let catalogue = null;
 function cat() {
   if (!catalogue && require('fs').existsSync(CATALOGUE_PATH)) {
     catalogue = new Database(CATALOGUE_PATH, { readonly: true });
+    // Sheets bought on demand live in orders.db (shop_fiches) so they survive a catalogue copy.
+    catalogue.prepare('ATTACH DATABASE ? AS o').run(DB_PATH);
   }
   return catalogue;
 }
@@ -2525,10 +2527,150 @@ db.exec(`
   );
 `);
 
+// ---------------------------------------------------------------------------
+// Vitrine large (2026-10-12): rows with estime = 1 come from 1688 SEARCH pages only
+// (~1 TMAPI credit per product instead of 20): photo, Chinese title, sales and a
+// price "from" ESTIMATED with a prudent weight (~/tchipa-boutique/import_vitrine.py).
+// The full sheet (variants, real weight, stock) is bought from TMAPI the first time
+// someone opens the product and kept in shop_fiches; from then on its exact price
+// replaces the estimate everywhere (list, sheet, order). Unsellable products found
+// that way (sold out, sold by lots, no weight) are hidden from the list for everyone.
+// Price formula = prix() in ~/tchipa-boutique/echantillon.py — keep both in sync.
+// ---------------------------------------------------------------------------
+const TMAPI_ITEM_URL = 'http://api.tmapi.top/1688/item_detail';
+const SHOP_FRET_USD_KG = 10.0;         // agent: freight to Algeria, customs included
+const SHOP_COMMISSION_AGENT = 0.10;
+const SHOP_MARGE = 0.25;
+const SHOP_POIDS_MIN_KG = 0.10;
+const FICHE_MAX_AGE_DAYS = 30;         // older sheets are bought again on open (price/stock drift)
+const FICHE_DAILY_MAX = 1500;          // new sheets per day (x 20 credits) — caps a scraping bot
+const FICHE_IP_HOURLY = 40;            // new sheets per IP per hour
+const TMAPI_PARALLEL = 3;              // TMAPI limit: 3 calls/s, a sheet takes 2-3 s
+const CNY_USD_FALLBACK = 0.14;
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shop_fiches (
+    item_id        INTEGER PRIMARY KEY,
+    status         TEXT NOT NULL,          -- 'ok' | 'indispo'
+    titre_en       TEXT,
+    images         TEXT,
+    video          TEXT,
+    variantes      TEXT,
+    variantes_prix TEXT,
+    poids_kg       REAL,
+    prix_des_usd   REAL,
+    prix_max_usd   REAL,
+    stock          INTEGER,
+    fetched_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
 function productRow(id) {
-  return cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
+  const p = cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
+  if (!p || !p.estime) return p;
+  const f = db.prepare('SELECT * FROM shop_fiches WHERE item_id = ?').get(id) || null;
+  if (!f || f.status !== 'ok') return { ...p, fiche: f, variantes_prix: null };
+  const { item_id, status, fetched_at, ...sheet } = f;
+  return { ...p, ...sheet, fiche: f };
 }
-function productTitle(p) { return p.titre_fr || p.titre_en; }
+function productTitle(p) { return p.titre_fr || p.titre_en || p.titre_cn; }
+
+let cnyUsd = { rate: CNY_USD_FALLBACK, at: 0 };
+async function cnyToUsd() {
+  if (Date.now() - cnyUsd.at > 12 * 3600_000) {
+    cnyUsd.at = Date.now();            // also on failure: keep the last rate, retry in 12 h
+    try {
+      const r = await fetch('https://open.er-api.com/v6/latest/CNY', { signal: AbortSignal.timeout(10_000) });
+      const rate = (await r.json())?.rates?.USD;
+      if (rate > 0) cnyUsd.rate = rate;
+    } catch (e) { console.error('[shop] taux CNY:', e.message); }
+  }
+  return cnyUsd.rate;
+}
+
+function shopPrice(cny, fraisCn, poids, fx) {
+  const r2 = x => Math.round(x * 100) / 100;
+  const achat = (cny + fraisCn) * fx;
+  const fret = Math.max(poids, SHOP_POIDS_MIN_KG) * SHOP_FRET_USD_KG;
+  const revient = achat * (1 + SHOP_COMMISSION_AGENT) + fret;
+  return { achat_usd: r2(achat), fret_usd: r2(fret), revient_usd: r2(revient),
+           prix_client_usd: r2(revient * (1 + SHOP_MARGE)) };
+}
+
+// TMAPI item_detail -> shop_fiches row (same filters as echantillon.fiche()).
+function sheetFromTmapi(d, fx) {
+  const tp = d.tiered_price_info || {};
+  const firstTier = (tp.prices || [])[0]?.beginAmount;
+  const byUnit = [d.moq, tp.begin_num, firstTier].every(x => x == null || String(x) === '1');
+  const skus = (d.skus || []).filter(s => s.stock && s.sale_price);
+  const poidsMax = Math.max(0, ...skus.map(s => s.package_info?.weight || 0));
+  if (d.is_sold_out || !d.stock || !byUnit || !skus.length || poidsMax < 0.05) return { status: 'indispo' };
+  const fraisCn = parseFloat(d.delivery_info?.delivery_fee) || 0;
+  const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock,
+    ...shopPrice(parseFloat(s.sale_price), fraisCn, s.package_info?.weight || poidsMax, fx) }));
+  // A cheap "accessory" variant (5 ¥ crown on a 49 ¥ dress) stays buyable but is not the "from" price.
+  const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
+  const ref = px[Math.floor(px.length / 2)];
+  return {
+    status: 'ok', titre_en: d.title, images: JSON.stringify((d.main_imgs || []).slice(0, 5)),
+    video: d.video_url || null,
+    variantes: JSON.stringify(Object.fromEntries((d.sku_props || []).map(v => [v.prop_name, v.values.map(x => x.name)]))),
+    variantes_prix: JSON.stringify(vp), poids_kg: poidsMax,
+    prix_des_usd: Math.min(...px.filter(x => x >= ref / 3)), prix_max_usd: px[px.length - 1], stock: d.stock,
+  };
+}
+
+function httpError(status, message) { return Object.assign(new Error(message), { status }); }
+const sheetInflight = new Map();       // item_id -> Promise (two clients opening it = one purchase)
+const sheetIpHits = new Map();         // ip -> timestamps of sheets bought in the last hour
+let sheetDay = '', sheetDayCount = 0, tmapiActive = 0;
+const tmapiWaiters = [];
+
+async function tmapiSlot(fn) {
+  while (tmapiActive >= TMAPI_PARALLEL) await new Promise(r => tmapiWaiters.push(r));
+  tmapiActive++;
+  try { return await fn(); } finally { tmapiActive--; tmapiWaiters.shift()?.(); }
+}
+
+function buySheet(id, ip) {
+  if (sheetInflight.has(id)) return sheetInflight.get(id);
+  if (!process.env.TMAPI_KEY) return Promise.reject(httpError(503, 'Fiche indisponible pour le moment'));
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== sheetDay) { sheetDay = day; sheetDayCount = 0; }
+  const hits = (sheetIpHits.get(ip) || []).filter(t => Date.now() - t < 3600_000);
+  if (sheetDayCount >= FICHE_DAILY_MAX || hits.length >= FICHE_IP_HOURLY) {
+    return Promise.reject(httpError(429, 'Trop de demandes, réessayez plus tard'));
+  }
+  sheetDayCount++;
+  sheetIpHits.set(ip, [...hits, Date.now()]);
+  const job = tmapiSlot(async () => {
+    const fx = await cnyToUsd();
+    const url = `${TMAPI_ITEM_URL}?${new URLSearchParams({ item_id: String(id), language: 'en' })}`;
+    let j = null;
+    try {
+      const r = await fetch(url, { headers: { apikey: process.env.TMAPI_KEY }, signal: AbortSignal.timeout(40_000) });
+      j = await r.json();
+    } catch (e) { console.error('[shop] TMAPI', id, e.message); }
+    let sheet;
+    if (j?.code === 200 && j.data) sheet = sheetFromTmapi(j.data, fx);
+    else if (j?.code === 404) sheet = { status: 'indispo' };               // removed from 1688
+    else {
+      console.error('[shop] TMAPI', id, j?.code, j?.msg || j?.message);  // 439 = credits exhausted
+      throw httpError(503, 'Fiche indisponible pour le moment, réessayez dans un instant');
+    }
+    const cols = ['item_id', ...Object.keys(sheet), 'fetched_at'];
+    db.prepare(`INSERT OR REPLACE INTO shop_fiches (${cols.join(', ')})
+                VALUES (${cols.map(c => c === 'fetched_at' ? "datetime('now')" : '@' + c).join(', ')})`)
+      .run({ item_id: id, ...sheet });
+    console.log(`[shop] fiche ${id} achetée : ${sheet.status}${sheet.prix_des_usd ? ' dès ' + sheet.prix_des_usd + ' $' : ''}`);
+  }).finally(() => sheetInflight.delete(id));
+  sheetInflight.set(id, job);
+  return job;
+}
+
+function sheetIsFresh(f) {
+  return f && (f.status !== 'ok' || Date.now() - Date.parse(f.fetched_at + 'Z') < FICHE_MAX_AGE_DAYS * 86400_000);
+}
 function parseVariant(name) {
   // "Color:White leopard print;Size:L" -> { Color: 'White leopard print', Size: 'L' }
   const o = {};
@@ -2541,7 +2683,7 @@ function parseVariant(name) {
 const productCard = p => ({
   id: p.item_id, title: productTitle(p), category: p.categorie, sub: p.sous_categorie || null,
   image: (JSON.parse(p.images || '[]')[0]) || null,
-  priceFrom: p.prix_des_usd, priceTo: p.prix_max_usd, sold: p.ventes_n || 0,
+  priceFrom: p.f_des ?? p.prix_des_usd, priceTo: p.f_max ?? p.prix_max_usd, sold: p.ventes_n || 0,
 });
 // Sub-categories (sous_categorie) and 1688 sales (ventes_n) are computed offline by
 // ~/tchipa-boutique/classer.py. Older catalogue files may lack them: checked once.
@@ -2553,8 +2695,9 @@ function hasSubs() {
   return !!catHasSubs;
 }
 const SHOP_MIN_SUB = 12;   // smaller sub-categories stay reachable under "Tout"
+const SHOP_PRICE = 'COALESCE(f.prix_des_usd, p.prix_des_usd)';   // exact once the sheet was bought
 const SHOP_SORTS = {
-  pop: 'ventes_n DESC, rowid', price_asc: 'prix_des_usd ASC, rowid', price_desc: 'prix_des_usd DESC, rowid',
+  pop: 'p.ventes_n DESC, p.rowid', price_asc: `${SHOP_PRICE} ASC, p.rowid`, price_desc: `${SHOP_PRICE} DESC, p.rowid`,
 };
 
 // GET /shop/categories → [{name, count, image, subs:[{name, count, image}]}]
@@ -2580,27 +2723,43 @@ app.get('/shop/categories', (req, res) => {
 app.get('/shop/products', (req, res) => {
   if (!cat()) return res.json({ items: [], hasMore: false });
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const where = [], args = [];
-  if (req.query.category) { where.push('categorie = ?'); args.push(String(req.query.category)); }
-  if (req.query.sub && hasSubs()) { where.push('sous_categorie = ?'); args.push(String(req.query.sub)); }
+  const where = ["(f.status IS NULL OR f.status = 'ok')"], args = [];
+  if (req.query.category) { where.push('p.categorie = ?'); args.push(String(req.query.category)); }
+  if (req.query.sub && hasSubs()) { where.push('p.sous_categorie = ?'); args.push(String(req.query.sub)); }
   const max = parseFloat(req.query.max);
-  if (max > 0) { where.push('prix_des_usd <= ?'); args.push(max); }
+  if (max > 0) { where.push(`${SHOP_PRICE} <= ?`); args.push(max); }
   const q = String(req.query.q || '').trim().slice(0, 60);
   if (q) {
     for (const w of q.split(/\s+/).slice(0, 5)) {
-      where.push('(titre_fr LIKE ? OR titre_en LIKE ?)'); args.push(`%${w}%`, `%${w}%`);
+      where.push('(p.titre_fr LIKE ? OR p.titre_en LIKE ?)'); args.push(`%${w}%`, `%${w}%`);
     }
   }
-  const order = hasSubs() ? (SHOP_SORTS[req.query.sort] || SHOP_SORTS.pop) : 'rowid';
-  const rows = cat().prepare(`SELECT * FROM produits ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+  const order = hasSubs() ? (SHOP_SORTS[req.query.sort] || SHOP_SORTS.pop) : 'p.rowid';
+  const rows = cat().prepare(`SELECT p.*, f.prix_des_usd AS f_des, f.prix_max_usd AS f_max
+                              FROM produits p LEFT JOIN o.shop_fiches f ON f.item_id = p.item_id
+                              WHERE ${where.join(' AND ')}
                               ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, SHOP_PAGE + 1, (page - 1) * SHOP_PAGE);
   res.json({ items: rows.slice(0, SHOP_PAGE).map(productCard), hasMore: rows.length > SHOP_PAGE, page });
 });
 
 // GET /shop/products/:id → full sheet with every variant and its price
-app.get('/shop/products/:id', (req, res) => {
-  const p = productRow(parseInt(req.params.id, 10));
+// (vitrine products: the sheet is bought from TMAPI on first open, 2-3 s)
+app.get('/shop/products/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  let p = productRow(id);
   if (!p) return res.status(404).json({ error: 'Produit introuvable' });
+  if (p.estime && !sheetIsFresh(p.fiche)) {
+    try {
+      await buySheet(id, req.headers['x-real-ip'] || req.socket.remoteAddress);
+      p = productRow(id);
+    } catch (e) {
+      if (p.fiche?.status !== 'ok') return res.status(e.status || 503).json({ error: e.message });
+      // A stale sheet is still better than nothing.
+    }
+  }
+  if (p.estime && p.fiche?.status !== 'ok') {
+    return res.status(410).json({ error: "Ce modèle n'est plus disponible" });
+  }
   const variants = JSON.parse(p.variantes_prix || '[]').filter(v => v.stock > 0).map(v => ({
     name: v.nom, props: parseVariant(v.nom), priceUsd: v.prix_client_usd, stock: v.stock,
   }));

@@ -104,8 +104,20 @@ class Shop extends ChangeNotifier {
   final Set<String> favorites = {};
   final List<CartLine> cart = [];
   bool loaded = false;
+  String? error;
 
   Future<void> load() async {
+    error = null;
+    notifyListeners();
+    try {
+      await _load();
+    } catch (e) {
+      error = '$e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> _load() async {
     final raw = await rootBundle.loadString('assets/catalog/products.json');
     products = await compute(_parseCatalog, raw);
     final counts = <String, int>{};
@@ -328,7 +340,18 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // The tabs are const children of an IndexedStack, so they don't rebuild
+    // with RootScreen: listen to the shop directly.
+    Shop.i.addListener(_onShop);
+  }
+
+  void _onShop() => setState(() {});
+
+  @override
   void dispose() {
+    Shop.i.removeListener(_onShop);
     _search.dispose();
     super.dispose();
   }
@@ -336,6 +359,13 @@ class _ShopScreenState extends State<ShopScreen> {
   @override
   Widget build(BuildContext context) {
     final shop = Shop.i;
+    if (shop.error != null) {
+      return _Empty(
+        icon: Icons.error_outline,
+        text: 'Catalogue indisponible.\n${shop.error}',
+        action: TextButton(onPressed: shop.load, child: const Text('Réessayer')),
+      );
+    }
     if (!shop.loaded) {
       return const Center(child: CircularProgressIndicator(color: kCyan));
     }
@@ -808,7 +838,10 @@ class FavoritesScreen extends StatelessWidget {
   const FavoritesScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: Shop.i, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final items = Shop.i.favorites.map(Shop.i.byId).whereType<Product>().toList();
     return SafeArea(
       bottom: false,
@@ -841,7 +874,10 @@ class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: Shop.i, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final shop = Shop.i;
     return SafeArea(
       bottom: false,
@@ -948,7 +984,8 @@ class _ScreenTitle extends StatelessWidget {
 class _Empty extends StatelessWidget {
   final IconData icon;
   final String text;
-  const _Empty({required this.icon, required this.text});
+  final Widget? action;
+  const _Empty({required this.icon, required this.text, this.action});
 
   @override
   Widget build(BuildContext context) => Center(
@@ -958,6 +995,7 @@ class _Empty extends StatelessWidget {
             Icon(icon, size: 48, color: Colors.white24),
             const SizedBox(height: 12),
             Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54)),
+            if (action != null) ...[const SizedBox(height: 12), action!],
           ]),
         ),
       );

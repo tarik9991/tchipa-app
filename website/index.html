@@ -102,6 +102,19 @@
     .nav-mid { display:flex; gap:1.8rem; align-items:center; }
     .nav-mid a { color:var(--sub); text-decoration:none; font-size:.92rem; font-weight:500; transition:color .2s; }
     .nav-mid a:hover { color:var(--text); }
+    /* Tchipa 2 shortcut: the nav-mid links are hidden on phones */
+    .nav-t2 {
+      display:none; margin-left:auto; margin-right:8px; padding:.45rem .8rem; border-radius:999px;
+      border:1px solid rgba(0,212,255,.45); color:var(--cyan); text-decoration:none;
+      font-size:.85rem; font-weight:700; white-space:nowrap;
+    }
+    @media (max-width:860px){ .nav-t2 { display:inline-flex; } }
+    @media (max-width:400px){
+      .nav-in { gap:.4rem; }
+      .nav-in .logo span { display:none; }   /* icon only: room for Tchipa 2 + download */
+      .nav-t2 { margin-right:0; padding:.35rem .6rem; font-size:.78rem; }
+      .btn-nav { padding:.5rem .75rem; font-size:.78rem; }
+    }
     .btn-nav {
       padding:.55rem 1.1rem; border-radius:100px;
       background:linear-gradient(135deg,var(--cyan),var(--purple));
@@ -514,6 +527,7 @@
       <a href="#faq">FAQ</a>
       <a href="/tchipa2/">Tchipa 2</a>
     </div>
+    <a href="/tchipa2/" class="nav-t2">Tchipa 2</a>
     <a href="#telecharger" class="btn-nav">Télécharger l'app</a>
   </div>
 </nav>
@@ -792,6 +806,7 @@
       <a href="#comment">Comment ça marche</a>
       <a href="#livraison">Livraison &amp; suivi</a>
       <a href="#faq">FAQ</a>
+      <a href="/tchipa2/">Tchipa 2</a>
       <a href="https://t.me/c/3983752002/1" target="_blank" rel="noopener">Support Telegram</a>
     </div>
   </div>

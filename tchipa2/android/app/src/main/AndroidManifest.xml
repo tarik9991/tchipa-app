@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Photos and order links need the network; Flutter only adds this to debug/profile. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Tchipa 2"
         android:name="${applicationName}"

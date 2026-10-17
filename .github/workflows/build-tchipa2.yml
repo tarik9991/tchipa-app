@@ -1,0 +1,88 @@
+name: Build Tchipa 2 APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['tchipa2/**', '.github/workflows/build-tchipa2.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tchipa2
+
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.6'
+          channel: stable
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Set up release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD:  ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD:    ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS:       ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64 secret set — release will use the debug key."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/tchipa-release.jks
+          cat > android/key.properties <<EOT
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=tchipa-release.jks
+          EOT
+          echo "Release keystore installed — building with the stable key."
+
+      - name: Test
+        run: flutter test
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/tchipa2.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tchipa2
+          path: tchipa2/build/app/outputs/flutter-apk/tchipa2.apk
+
+      - name: Delete existing tchipa2-latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete tchipa2-latest --yes --cleanup-tag --repo ${{ github.repository }} || true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: tchipa2-latest
+          name: Tchipa 2 Latest
+          make_latest: false
+          files: tchipa2/build/app/outputs/flutter-apk/tchipa2.apk

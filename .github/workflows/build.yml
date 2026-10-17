@@ -3,6 +3,7 @@ name: Build Flutter APK
 on:
   push:
     branches: [main]
+    paths-ignore: ['tchipa2/**', '.github/workflows/build-tchipa2.yml']
   workflow_dispatch:
 
 permissions:

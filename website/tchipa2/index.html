@@ -319,7 +319,12 @@ function img(p, i, size, onFail) {
   el.alt = '';
   el.loading = 'lazy';
   el.decoding = 'async';
-  el.onerror = onFail;
+  // One retry after a pause: the relay's first fetch of a photo can time out.
+  el.onerror = e => {
+    if (el.dataset.retried) return onFail(e);
+    el.dataset.retried = '1';
+    setTimeout(() => { el.src = photo(p, i, size) + '?r=1'; }, 1500);
+  };
   return el;
 }
 

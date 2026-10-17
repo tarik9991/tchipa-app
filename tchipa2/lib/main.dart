@@ -15,6 +15,9 @@ import 'package:url_launcher/url_launcher.dart';
 // with the order text copied to the clipboard.
 const String kAgentTelegram = 'https://t.me/c/3983752002/1';
 const String kAgentWhatsapp = '';
+// Photos go through the nginx relay on the VPS (backend/deploy/yupoo-proxy.conf),
+// which adds Yupoo's Referer and caches; direct Yupoo is the fallback.
+const String kPhotoRelay = 'https://api.tchipa.co.uk/yupoo';
 
 const Color kCyan = Color(0xFF00D4FF);
 const Color kViolet = Color(0xFF8B5CF6);
@@ -60,8 +63,8 @@ class Product {
   String get priceLabel => formatUsd(price);
 
   // small.jpg ≈ 300 px for the grid, medium.jpg ≈ 800 px for the detail page.
-  String photoUrl(int i, {bool large = false}) =>
-      'https://photo.yupoo.com/$store/${photos[i]}/${large ? 'medium' : 'small'}.jpg';
+  String photoUrl(int i, {bool large = false, bool direct = false}) =>
+      '${direct ? 'https://photo.yupoo.com' : kPhotoRelay}/$store/${photos[i]}/${large ? 'medium' : 'small'}.jpg';
 
   // Yupoo refuses hotlinked images without a Referer from the store.
   Map<String, String> get imageHeaders => {'Referer': 'https://$store.x.yupoo.com/'};
@@ -537,20 +540,25 @@ class YupooImage extends StatelessWidget {
   const YupooImage({super.key, required this.product, this.index = 0, this.large = false, this.fit = BoxFit.cover});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => _image(context, direct: false);
+
+  // Relay first; on failure retry straight from Yupoo, then show a placeholder.
+  Widget _image(BuildContext context, {required bool direct}) {
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return CachedNetworkImage(
-      imageUrl: product.photoUrl(index, large: large),
-      httpHeaders: product.imageHeaders,
+      imageUrl: product.photoUrl(index, large: large, direct: direct),
+      httpHeaders: direct ? product.imageHeaders : null,
       fit: fit,
       memCacheWidth: large ? null : (220 * dpr).round(),
       fadeInDuration: const Duration(milliseconds: 150),
       placeholder: (_, __) => Container(color: kCard),
-      errorWidget: (_, __, ___) => Container(
-        color: kCard,
-        alignment: Alignment.center,
-        child: const Icon(Icons.image_not_supported_outlined, color: Colors.white24),
-      ),
+      errorWidget: (context, __, ___) => direct
+          ? Container(
+              color: kCard,
+              alignment: Alignment.center,
+              child: const Icon(Icons.image_not_supported_outlined, color: Colors.white24),
+            )
+          : _image(context, direct: true),
     );
   }
 }

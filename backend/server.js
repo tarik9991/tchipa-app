@@ -2491,6 +2491,18 @@ function cat() {
   return catalogue;
 }
 const SHOP_CATEGORIES = ['Femme', 'Homme', 'Hijab', 'Abaya', 'Enfants'];
+// Products pulled from the shop entirely (listings, search, sheet, orders) —
+// photos not acceptable for a family audience in Algeria.
+const SHOP_HIDDEN_ITEMS = [
+  564750788956,   // short de compression : best-seller, so it was the Homme cover + first "meilleure vente"
+];
+// Hand-picked category covers ("Catégorie" or "Catégorie/Sous-catégorie" → item_id).
+// Without one, the cover is the best seller whose title doesn't match SHOP_COVER_SKIP.
+const SHOP_COVERS = {
+  'Homme': 674751419567,             // doudoune à capuche
+  'Homme/Pantalons': 685481482336,   // pantalon doublé polaire
+};
+const SHOP_COVER_SKIP = /compression|cale[cç]on|boxer|slip|culotte|lingerie|soutien|string|bikini|maillot de bain|sous-v[eê]tement|underwear|brief|panties|thong|legging|collant/i;
 const SHOP_PAGE = 20;
 const SHOP_MAX_QTY = 10;
 const SHOP_STATUSES = ['payee', 'achetee', 'entrepot', 'expediee', 'livree', 'annulee'];
@@ -2566,6 +2578,7 @@ db.exec(`
 `);
 
 function productRow(id) {
+  if (SHOP_HIDDEN_ITEMS.includes(id)) return undefined;
   const p = cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
   if (!p || !p.estime) return p;
   const f = db.prepare('SELECT * FROM shop_fiches WHERE item_id = ?').get(id) || null;
@@ -2705,16 +2718,24 @@ app.get('/shop/categories', (req, res) => {
   if (!cat()) return res.json({ categories: [] });
   const counts = Object.fromEntries(cat().prepare('SELECT categorie c, COUNT(*) n FROM produits GROUP BY 1').all()
                                       .map(r => [r.c, r.n]));
-  const cover = (where, args) => {
-    const r = cat().prepare(`SELECT images FROM produits WHERE ${where} ORDER BY ${hasSubs() ? 'ventes_n DESC' : 'rowid'} LIMIT 1`).get(...args);
-    return r ? (JSON.parse(r.images || '[]')[0] || null) : null;
+  const firstImage = r => (r && JSON.parse(r.images || '[]')[0]) || null;
+  const cover = (key, where, args) => {
+    if (SHOP_COVERS[key]) {
+      const img = firstImage(cat().prepare('SELECT images FROM produits WHERE item_id = ?').get(SHOP_COVERS[key]));
+      if (img) return img;
+    }
+    const rows = cat().prepare(`SELECT item_id, images, titre_fr, titre_en FROM produits WHERE ${where}
+                                ORDER BY ${hasSubs() ? 'ventes_n DESC' : 'rowid'} LIMIT 30`).all(...args);
+    const ok = rows.find(r => !SHOP_HIDDEN_ITEMS.includes(r.item_id)
+                              && !SHOP_COVER_SKIP.test(`${r.titre_fr || ''} ${r.titre_en || ''}`));
+    return firstImage(ok || rows[0]);
   };
   res.json({ categories: SHOP_CATEGORIES.filter(c => counts[c]).map(c => ({
-    name: c, count: counts[c], image: cover('categorie = ?', [c]),
+    name: c, count: counts[c], image: cover(c, 'categorie = ?', [c]),
     subs: hasSubs()
       ? cat().prepare(`SELECT sous_categorie s, COUNT(*) n FROM produits WHERE categorie = ? AND sous_categorie IS NOT NULL
                        GROUP BY 1 HAVING n >= ? ORDER BY n DESC`).all(c, SHOP_MIN_SUB)
-          .map(r => ({ name: r.s, count: r.n, image: cover('categorie = ? AND sous_categorie = ?', [c, r.s]) }))
+          .map(r => ({ name: r.s, count: r.n, image: cover(`${c}/${r.s}`, 'categorie = ? AND sous_categorie = ?', [c, r.s]) }))
       : [],
   })) });
 });
@@ -2723,7 +2744,7 @@ app.get('/shop/categories', (req, res) => {
 app.get('/shop/products', (req, res) => {
   if (!cat()) return res.json({ items: [], hasMore: false });
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const where = ["(f.status IS NULL OR f.status = 'ok')"], args = [];
+  const where = ["(f.status IS NULL OR f.status = 'ok')", `p.item_id NOT IN (${SHOP_HIDDEN_ITEMS.join(',') || 0})`], args = [];
   if (req.query.category) { where.push('p.categorie = ?'); args.push(String(req.query.category)); }
   if (req.query.sub && hasSubs()) { where.push('p.sous_categorie = ?'); args.push(String(req.query.sub)); }
   const max = parseFloat(req.query.max);

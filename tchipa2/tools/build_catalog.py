@@ -26,6 +26,7 @@ MAX_PHOTOS = 5
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT.parent / 'scraper' / 'yupoo' / 'apify_csv'
 OUT = ROOT / 'assets' / 'catalog' / 'products.json'
+SITE_OUT = ROOT.parent / 'website' / 'tchipa2' / 'products.json'   # tchipa.co.uk/tchipa2/
 
 # store -> fallback category when no keyword matches. Stores not listed are
 # skipped (samluxuryfactory albums are mixed-product category albums whose
@@ -82,6 +83,8 @@ GLOSSARY = {
 GLOSSARY_RE = re.compile('|'.join(sorted(map(re.escape, GLOSSARY), key=len, reverse=True)))
 COLORS = 'noir|blanc|gris|rouge|bleu|vert|rose|jaune|violet|marron|beige|orange|argent|or|café|sable|marine|bordeaux|kaki|crème'
 COLOR_RUN = re.compile(rf'\b(?:{COLORS})(?:\s+(?:{COLORS})\b)+')
+
+CATEGORY_NAMES = {name for name, _ in CATEGORY_KEYWORDS} | set(STORES.values())
 
 CJK = re.compile(r'[　-〿㐀-鿿＀-￯]+')
 PRICE_IN_TITLE = re.compile(r'【\s*(\d+)\s*(?:RMB|Y|yuan|元)[^】]*】|^\s*P?(\d+)\s*(?:Y|RMB|yuan)?\b', re.I)
@@ -175,7 +178,12 @@ def main():
             raw = strip_count((item.get('title') or '').strip(), item.get('photoCount'))
             if not aid or aid in seen:
                 continue
-            if re.search(r'\d+\s*Y\s*-\s*\d+\s*Y|whatsapp|payment|how to order|hoobuy|superbuy', raw, re.I):
+            if re.search(r'\d+\s*Y\s*-\s*\d+\s*Y|whatsapp|payment|how to order|hoobuy|superbuy|feedback|review|\bQC\b', raw, re.I):
+                continue
+            # The album's own photo count is glued to the title; 61+ photos
+            # ("DUNK566", "GUCCI 65") means a whole-collection album, not a product.
+            m = re.search(r'(?<![\d-])(\d{2,3})$', (item.get('title') or '').strip())
+            if m and int(m.group(1)) > 60:
                 continue
             cny = parse_cny({'priceCny': item.get('priceCny'), 'title': raw})
             name = clean_title(raw)
@@ -199,8 +207,13 @@ def main():
             kept += 1
         print(f'{store}: {kept} produits')
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(products, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    # Named products first ("Jordan 12 noir/rouge" before a bare "Sneakers"),
+    # store order kept otherwise (sort is stable).
+    products.sort(key=lambda p: p['t'] in CATEGORY_NAMES or p['t'].split()[0] in CATEGORY_NAMES)
+    data = json.dumps(products, ensure_ascii=False, separators=(',', ':'))
+    for out in (OUT, SITE_OUT):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(data, encoding='utf-8')
     cats = {}
     for p in products:
         cats[p['c']] = cats.get(p['c'], 0) + 1

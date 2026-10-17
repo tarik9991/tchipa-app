@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="fr" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tchipa 2 — Sneakers, doudounes et streetwear</title>
+  <meta name="description" content="Tchipa 2 : près de 10 000 sneakers, doudounes, vêtements et articles enfants. Prix en dollars, commande via l'app Tchipa 2.">
+  <meta name="theme-color" content="#0D1117">
+  <link rel="canonical" href="https://tchipa.co.uk/tchipa2/">
+  <link rel="icon" type="image/png" href="/tchipa_logo.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Tchipa">
+  <meta property="og:url" content="https://tchipa.co.uk/tchipa2/">
+  <meta property="og:title" content="Tchipa 2 — Sneakers, doudounes et streetwear">
+  <meta property="og:description" content="Près de 10 000 articles. Téléchargez l'app Tchipa 2 pour commander.">
+  <meta property="og:image" content="https://tchipa.co.uk/tchipa_logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://api.tchipa.co.uk">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    /* ── VARIABLES (charte Tchipa) ───────────────────────────── */
+    :root {
+      --bg:       #0D1117;
+      --surface:  #161B22;
+      --card:     #21262D;
+      --border:   rgba(255,255,255,0.08);
+      --cyan:     #00D4FF;
+      --purple:   #8B5CF6;
+      --gold:     #F59E0B;
+      --text:     #F0F6FC;
+      --sub:      rgba(240,246,252,0.68);
+      --dim:      rgba(240,246,252,0.42);
+      --font-en:  'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      --radius:   18px;
+      --maxw:     1180px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-en);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    img { max-width: 100%; display: block; }
+    a { color: inherit; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    [hidden] { display: none !important; }
+    ::selection { background: rgba(0,212,255,.28); color: #fff; }
+    :focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; border-radius: 8px; }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 16px; }
+    .grad-text {
+      background: linear-gradient(135deg,var(--cyan) 0%,var(--purple) 55%,var(--gold) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+      padding: .85rem 1.4rem; border-radius: 14px; font-weight: 700; text-decoration: none;
+      border: 1px solid transparent; transition: transform .15s ease, opacity .15s ease;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn-primary { background: linear-gradient(135deg,var(--cyan),var(--purple)); color: #fff; }
+    .btn-ghost { border-color: var(--border); background: var(--surface); }
+
+    /* ── NAV ─────────────────────────────────────────────────── */
+    nav {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(13,17,23,.88); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-in { display: flex; align-items: center; gap: 12px; height: 62px; }
+    .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 800; font-size: 1.1rem; }
+    .logo img { border-radius: 9px; }
+    .logo b { font-weight: 900; }
+    .nav-back { margin-left: auto; color: var(--sub); text-decoration: none; font-size: .9rem; }
+    .nav-back:hover { color: var(--text); }
+    .btn-nav { padding: .55rem 1rem; font-size: .9rem; white-space: nowrap; }
+    @media (max-width: 520px) { .nav-back { display: none; } .btn-nav { margin-left: auto; } }
+
+    /* ── HERO ────────────────────────────────────────────────── */
+    .hero { padding-top: 44px; padding-bottom: 18px; }
+    .hero h1 { font-size: clamp(1.9rem, 5vw, 3rem); line-height: 1.12; font-weight: 900; letter-spacing: -.02em; }
+    .hero p { color: var(--sub); max-width: 620px; margin-top: 12px; font-size: 1.05rem; }
+    .hero-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    .facts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; color: var(--dim); font-size: .88rem; }
+    .facts span::before { content: '✓ '; color: var(--cyan); font-weight: 700; }
+
+    /* ── TOOLBAR ─────────────────────────────────────────────── */
+    .toolbar {
+      position: sticky; top: 62px; z-index: 10; background: var(--bg);
+      padding: 12px 0 10px; border-bottom: 1px solid var(--border);
+    }
+    .row { display: flex; gap: 8px; }
+    .search {
+      flex: 1; min-width: 0; height: 48px; padding: 0 16px 0 44px; border-radius: 14px;
+      border: 1px solid var(--border); background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%23768390' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='m17 17-4.5-4.5'/%3E%3C/svg%3E") no-repeat 15px center;
+      color: var(--text); font: inherit; font-size: 1rem;
+    }
+    .search::placeholder { color: var(--dim); }
+    .search:focus { outline: none; border-color: var(--cyan); }
+    .sort {
+      height: 48px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font: inherit; font-size: .9rem;
+    }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-top: 10px; scrollbar-width: none; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chip {
+      flex: none; padding: .45rem .95rem; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--sub); font-size: .85rem; font-weight: 500; white-space: nowrap;
+    }
+    .chip[aria-pressed="true"] {
+      background: linear-gradient(135deg,var(--cyan),var(--purple)); color: #fff; border-color: transparent; font-weight: 700;
+    }
+    .chip small { opacity: .7; font-weight: 500; margin-left: 4px; }
+    .count { color: var(--dim); font-size: .85rem; padding: 14px 0 4px; }
+
+    /* ── GRID ────────────────────────────────────────────────── */
+    .grid {
+      display: grid; gap: 12px; padding: 8px 0 24px;
+      grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+    }
+    @media (min-width: 640px) { .grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; } }
+    .card {
+      display: flex; flex-direction: column; text-align: left; padding: 0;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      transition: transform .15s ease, border-color .15s ease;
+    }
+    .card:hover { transform: translateY(-2px); border-color: rgba(0,212,255,.35); }
+    .thumb { aspect-ratio: 1; background: var(--card); position: relative; }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb .ph {
+      position: absolute; inset: 0; display: grid; place-items: center;
+      color: var(--dim); font-size: .78rem; text-align: center; padding: 10px;
+    }
+    .card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+    .card-title {
+      font-size: .88rem; font-weight: 500; line-height: 1.35; color: var(--text);
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .price { margin-top: auto; color: var(--cyan); font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+    .more { display: flex; justify-content: center; padding: 0 0 40px; }
+    .empty { text-align: center; color: var(--sub); padding: 60px 0; }
+
+    /* ── MODAL PRODUIT ───────────────────────────────────────── */
+    .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 40; }
+    .sheet {
+      position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-height: 92vh; overflow-y: auto;
+      background: var(--bg); border-radius: 20px 20px 0 0; border: 1px solid var(--border);
+      animation: up .22s ease-out;
+    }
+    @keyframes up { from { transform: translateY(30px); opacity: .6; } }
+    @media (min-width: 760px) {
+      .sheet { left: 50%; right: auto; bottom: auto; top: 50%; width: 720px; max-height: 88vh;
+               transform: translate(-50%,-50%); border-radius: 20px; animation: none; }
+    }
+    .sheet-close {
+      position: sticky; top: 10px; float: right; margin: 10px 10px 0 0; z-index: 2;
+      width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); font-size: 1rem;
+    }
+    .gallery { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; background: var(--card); }
+    .gallery::-webkit-scrollbar { display: none; }
+    .gallery img { flex: none; width: 100%; aspect-ratio: 1; object-fit: contain; scroll-snap-align: center; }
+    @media (min-width: 760px) { .gallery img { width: 60%; } }
+    .dots { display: flex; justify-content: center; gap: 6px; padding: 10px 0 0; }
+    .dots i { width: 7px; height: 7px; border-radius: 4px; background: rgba(255,255,255,.3); transition: width .2s; }
+    .dots i.on { width: 18px; background: var(--cyan); }
+    .sheet-body { padding: 16px 20px 26px; }
+    .cat { color: var(--cyan); font-size: .75rem; letter-spacing: .1em; font-weight: 700; text-transform: uppercase; }
+    .sheet h2 { font-size: 1.35rem; line-height: 1.3; margin-top: 4px; }
+    .ref { color: var(--dim); font-size: .85rem; margin-top: 4px; }
+    .big-price { font-size: 2rem; font-weight: 900; margin-top: 12px; }
+    .big-price small { font-size: .85rem; color: var(--dim); font-weight: 500; margin-left: 6px; -webkit-text-fill-color: var(--dim); }
+    .sheet-cta { display: grid; gap: 10px; margin-top: 18px; }
+    .note { color: var(--dim); font-size: .85rem; margin-top: 12px; }
+
+    /* ── APK BAND + FOOTER ───────────────────────────────────── */
+    .band {
+      margin: 10px 0 40px; padding: 26px; border-radius: 22px; border: 1px solid var(--border);
+      background: linear-gradient(135deg, rgba(0,212,255,.12), rgba(139,92,246,.12));
+      display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between;
+    }
+    .band h2 { font-size: 1.3rem; }
+    .band p { color: var(--sub); font-size: .95rem; }
+    footer { border-top: 1px solid var(--border); padding: 24px 0 36px; color: var(--dim); font-size: .85rem; }
+    footer a { color: var(--sub); }
+  </style>
+</head>
+<body>
+
+<nav aria-label="Navigation principale">
+  <div class="wrap nav-in">
+    <a href="/tchipa2/" class="logo" aria-label="Tchipa 2, accueil">
+      <img src="/tchipa_logo.png" alt="" width="34" height="34"><span>Tchipa <b class="grad-text">2</b></span>
+    </a>
+    <a href="/" class="nav-back">← tchipa.co.uk</a>
+    <a class="btn btn-primary btn-nav" data-apk>Télécharger l'app</a>
+  </div>
+</nav>
+
+<main>
+  <header class="wrap hero">
+    <h1>Sneakers, doudounes &amp; streetwear<br><span class="grad-text">près de 10 000 articles</span></h1>
+    <p>Jordan, New Balance, Asics, doudounes, vêtements enfants… Parcourez le catalogue ici, puis commandez dans l'app Tchipa 2.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" data-apk>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        Télécharger Tchipa 2 (Android)
+      </a>
+      <a href="#catalogue" class="btn btn-ghost">Voir le catalogue</a>
+    </div>
+    <div class="facts">
+      <span>Prix en dollars (USDT)</span>
+      <span>Commande confirmée par un agent</span>
+      <span>Paiement en USDT ou en dinars</span>
+    </div>
+  </header>
+
+  <section id="catalogue" aria-label="Catalogue">
+    <div class="toolbar">
+      <div class="wrap">
+        <div class="row">
+          <input id="q" class="search" type="search" placeholder="Rechercher : Jordan, Moncler, CT8012…" aria-label="Rechercher un article" autocomplete="off">
+          <select id="sort" class="sort" aria-label="Trier">
+            <option value="">Pertinence</option>
+            <option value="asc">Prix ↑</option>
+            <option value="desc">Prix ↓</option>
+          </select>
+        </div>
+        <div id="chips" class="chips" role="group" aria-label="Catégories"></div>
+      </div>
+    </div>
+    <div class="wrap">
+      <div id="count" class="count">Chargement du catalogue…</div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty" hidden>Aucun article ne correspond à la recherche.</div>
+      <div class="more"><button id="more" class="btn btn-ghost" hidden>Voir plus d'articles</button></div>
+
+      <div class="band">
+        <div>
+          <h2>Commandez dans l'app Tchipa 2</h2>
+          <p>Favoris, panier et commande en un clic auprès de l'agent.</p>
+        </div>
+        <a class="btn btn-primary" data-apk>Télécharger l'APK</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">Tchipa 2 · <a href="/">tchipa.co.uk</a> · Android : téléchargez l'APK puis autorisez l'installation depuis votre navigateur.</div>
+</footer>
+
+<div id="backdrop" class="backdrop" hidden></div>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-title" hidden>
+  <button id="close" class="sheet-close" aria-label="Fermer">✕</button>
+  <div id="gallery" class="gallery"></div>
+  <div id="dots" class="dots"></div>
+  <div class="sheet-body">
+    <div id="sh-cat" class="cat"></div>
+    <h2 id="sh-title"></h2>
+    <div id="sh-ref" class="ref"></div>
+    <div class="big-price"><span id="sh-price" class="grad-text"></span><small>USDT / $</small></div>
+    <div class="sheet-cta">
+      <a class="btn btn-primary" data-apk>Commander dans l'app Tchipa 2</a>
+      <button id="sh-copy" class="btn btn-ghost" type="button">Copier la référence</button>
+    </div>
+    <p class="note">Dans l'app, recherchez la référence pour retrouver l'article, choisissez votre taille et envoyez la commande à l'agent.</p>
+  </div>
+</div>
+
+<script>
+/* ============ RÉGLAGES ============ */
+const APK = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/tchipa2.apk';
+// Yupoo refuses browser hotlinks: photos go through the nginx relay on the VPS
+// (backend/deploy/yupoo-proxy.conf).
+const PHOTO_BASE = 'https://api.tchipa.co.uk/yupoo/';
+const PAGE = 60;
+
+document.querySelectorAll('[data-apk]').forEach(a => { a.href = APK; });
+
+/* ============ ÉTAT ============ */
+let ALL = [];
+let list = [];
+let shown = 0;
+let cat = '';
+
+const $ = id => document.getElementById(id);
+const fold = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const usd = v => '$' + v.toFixed(2);
+const photo = (p, i, size) => `${PHOTO_BASE}${p.s}/${p.i[i]}/${size}.jpg`;
+
+/* ============ RENDU ============ */
+function filter() {
+  const terms = fold($('q').value.trim()).split(/\s+/).filter(Boolean);
+  list = ALL.filter(p => (!cat || p.c === cat) && terms.every(t => p._h.includes(t)));
+  const sort = $('sort').value;
+  if (sort === 'asc') list.sort((a, b) => a.p - b.p);
+  if (sort === 'desc') list.sort((a, b) => b.p - a.p);
+  shown = 0;
+  $('grid').replaceChildren();
+  more();
+  $('count').textContent = list.length.toLocaleString('fr-FR') + ' articles';
+  $('empty').hidden = list.length > 0;
+}
+
+function more() {
+  const frag = document.createDocumentFragment();
+  for (const p of list.slice(shown, shown + PAGE)) frag.appendChild(card(p));
+  shown = Math.min(list.length, shown + PAGE);
+  $('grid').appendChild(frag);
+  $('more').hidden = shown >= list.length;
+}
+
+function img(p, i, size, onFail) {
+  const el = document.createElement('img');
+  el.src = photo(p, i, size);
+  el.alt = '';
+  el.loading = 'lazy';
+  el.decoding = 'async';
+  el.onerror = onFail;
+  return el;
+}
+
+function card(p) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'card';
+  const t = document.createElement('div');
+  t.className = 'thumb';
+  t.appendChild(img(p, 0, 'small', e => {
+    e.target.remove();
+    const ph = document.createElement('div');
+    ph.className = 'ph';
+    ph.textContent = p.c;
+    t.appendChild(ph);
+  }));
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  const title = document.createElement('div');
+  title.className = 'card-title';
+  title.textContent = p.t;
+  const price = document.createElement('div');
+  price.className = 'price';
+  price.textContent = usd(p.p);
+  body.append(title, price);
+  b.append(t, body);
+  b.onclick = () => openSheet(p);
+  return b;
+}
+
+function renderChips() {
+  const counts = {};
+  ALL.forEach(p => { counts[p.c] = (counts[p.c] || 0) + 1; });
+  const cats = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  const box = $('chips');
+  box.replaceChildren();
+  const mk = (label, val, n) => {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'chip';
+    c.setAttribute('aria-pressed', String(cat === val));
+    c.textContent = label;
+    if (n) { const s = document.createElement('small'); s.textContent = n.toLocaleString('fr-FR'); c.appendChild(s); }
+    c.onclick = () => { cat = val; renderChips(); filter(); };
+    box.appendChild(c);
+  };
+  mk('Tout', '', ALL.length);
+  cats.forEach(c => mk(c, c, counts[c]));
+}
+
+/* ============ FICHE PRODUIT ============ */
+function openSheet(p) {
+  const g = $('gallery');
+  g.replaceChildren(...p.i.map((_, i) => img(p, i, 'medium', e => e.target.remove())));
+  g.scrollLeft = 0;
+  const dots = $('dots');
+  dots.replaceChildren(...p.i.map((_, i) => { const d = document.createElement('i'); if (!i) d.className = 'on'; return d; }));
+  dots.hidden = p.i.length < 2;
+  g.onscroll = () => {
+    const k = Math.round(g.scrollLeft / (g.firstElementChild?.clientWidth || 1));
+    [...dots.children].forEach((d, i) => d.classList.toggle('on', i === k));
+  };
+  $('sh-cat').textContent = p.c;
+  $('sh-title').textContent = p.t;
+  const ref = (p.code ? p.code + ' · ' : '') + 'Réf ' + p.id;
+  $('sh-ref').textContent = ref;
+  $('sh-price').textContent = usd(p.p);
+  $('sh-copy').textContent = 'Copier la référence';
+  $('sh-copy').onclick = () => {
+    navigator.clipboard?.writeText(p.code || p.id).then(() => { $('sh-copy').textContent = '✓ Référence copiée'; });
+  };
+  $('backdrop').hidden = false;
+  $('sheet').hidden = false;
+  $('sheet').scrollTop = 0;
+  $('close').focus();
+}
+function closeSheet() {
+  $('backdrop').hidden = true;
+  $('sheet').hidden = true;
+}
+$('close').onclick = closeSheet;
+$('backdrop').onclick = closeSheet;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+/* ============ INIT ============ */
+let timer;
+$('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(filter, 150); });
+$('sort').addEventListener('change', filter);
+$('more').addEventListener('click', more);
+new IntersectionObserver(es => { if (es[0].isIntersecting && !$('more').hidden) more(); }, { rootMargin: '600px' })
+  .observe($('more'));
+
+fetch('products.json')
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(data => {
+    ALL = data.map(p => ({ ...p, _h: fold(`${p.t} ${p.code || ''} ${p.id} ${p.c}`) }));
+    renderChips();
+    filter();
+  })
+  .catch(e => { $('count').textContent = 'Catalogue indisponible (' + e.message + ').'; });
+</script>
+</body>
+</html>

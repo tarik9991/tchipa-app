@@ -5,9 +5,11 @@ Input : scraper/yupoo/apify_csv/<store>.json — Apify yupoo-catalog datasets
         (refresh with tools/fetch_apify.py).
 Output: assets/catalog/products.json
 
-Photos are NOT bundled: the app loads them from photo.yupoo.com
-(`https://photo.yupoo.com/<store>/<hash>/{small,medium}.jpg`, Referer
-required). Only the final USD price ships in the APK — never the supplier
+Photos are NOT bundled: the app loads them from the VPS
+(`https://api.tchipa.co.uk/t2/<store>/<albumId>/{s,1..n}.webp`, built by
+tools/vps_photos.cjs) and falls back to photo.yupoo.com through the relay.
+Only albums whose photos are on the VPS are kept: refresh the manifest with
+  scp root@76.13.255.239:/var/www/tchipa2-photos/manifest.json ../scraper/yupoo/t2_manifest.json Only the final USD price ships in the APK — never the supplier
 CNY price (an APK is a zip, anyone can read its assets).
 
 Usage (from tchipa2/):  python3 tools/build_catalog.py
@@ -18,13 +20,15 @@ from pathlib import Path
 
 # ============ PRICING ============
 CNY_PER_USD = 7     # 1 USD = ~7 CNY
-FIXED_FEE = 17      # $ added to the converted price
-MULTIPLIER = 2      # price_usd = (cny / CNY_PER_USD + FIXED_FEE) * MULTIPLIER
+MULTIPLIER = 2      # price_usd = cny / CNY_PER_USD * MULTIPLIER + FIXED_FEE
+FIXED_FEE = 17      # $ added after the multiplier (e.g. $20 → $57)
 
-MAX_PHOTOS = 5
+MAX_PHOTOS = 5        # Yupoo hashes kept for the fallback
+MAX_OWN_PHOTOS = 15   # photos shown from the VPS
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT.parent / 'scraper' / 'yupoo' / 'apify_csv'
+MANIFEST = ROOT.parent / 'scraper' / 'yupoo' / 't2_manifest.json'   # { store: { albumId: photo count } }
 OUT = ROOT / 'assets' / 'catalog' / 'products.json'
 SITE_OUT = ROOT.parent / 'website' / 'tchipa2' / 'products.json'   # tchipa.co.uk/tchipa2/
 
@@ -93,7 +97,7 @@ PHOTO = re.compile(r'https://photo\.yupoo\.com/[^/]+/([0-9a-f]+)/')
 
 
 def price_usd(cny: float) -> float:
-    return round((cny / CNY_PER_USD + FIXED_FEE) * MULTIPLIER, 2)
+    return round(cny / CNY_PER_USD * MULTIPLIER + FIXED_FEE, 2)
 
 
 def parse_cny(item) -> float | None:
@@ -167,6 +171,7 @@ def photo_hashes(photos) -> list[str]:
 
 def main():
     products, seen = [], set()
+    on_vps = json.loads(MANIFEST.read_text(encoding='utf-8'))
     for store in STORES:
         path = SRC / f'{store}.json'
         if not path.exists():
@@ -192,7 +197,8 @@ def main():
             if not re.search(r'[A-Za-zÀ-ÿ]{3}', COLOR_RUN.sub('', re.sub(rf'\\b(?:{COLORS})\\b', '', name))):  # nothing but colors/numbers left
                 name = f'{STORES[store] if store != "cutykids" else "Enfants"} {name}'.strip()
             photos = photo_hashes(item.get('photos'))
-            if not cny or cny < 20 or not name or not photos:
+            own = on_vps.get(store, {}).get(aid, 0)
+            if not cny or cny < 20 or not name or not own:
                 continue
             seen.add(aid)
             products.append({
@@ -201,6 +207,7 @@ def main():
                 'c': category(store, raw),
                 'p': price_usd(cny),
                 's': store,
+                'n': min(own, MAX_OWN_PHOTOS),
                 'i': photos,
                 **({'code': code} if code else {}),
             })

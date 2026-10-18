@@ -273,9 +273,10 @@
 <script>
 /* ============ RÉGLAGES ============ */
 const APK = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/tchipa2.apk';
-// Yupoo refuses browser hotlinks: photos go through the nginx relay on the VPS
-// (backend/deploy/yupoo-proxy.conf).
-const PHOTO_BASE = 'https://api.tchipa.co.uk/yupoo/';
+// Photos are stored on the VPS (backend/deploy/t2-photos.conf); the nginx Yupoo
+// relay (backend/deploy/yupoo-proxy.conf) is the fallback.
+const PHOTO_BASE = 'https://api.tchipa.co.uk/t2/';
+const RELAY_BASE = 'https://api.tchipa.co.uk/yupoo/';
 const PAGE = 60;
 
 document.querySelectorAll('[data-apk]').forEach(a => { a.href = APK; });
@@ -289,7 +290,9 @@ let cat = '';
 const $ = id => document.getElementById(id);
 const fold = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const usd = v => '$' + v.toFixed(2);
-const photo = (p, i, size) => `${PHOTO_BASE}${p.s}/${p.i[i]}/${size}.jpg`;
+// size 'small' = grid cover (s.webp, 400 px), 'medium' = full photo.
+const photo = (p, i, size) => `${PHOTO_BASE}${p.s}/${p.id}/${size === 'small' && !i ? 's' : i + 1}.webp`;
+const relay = (p, i, size) => p.i[i] ? `${RELAY_BASE}${p.s}/${p.i[i]}/${size}.jpg` : null;
 
 /* ============ RENDU ============ */
 function filter() {
@@ -319,11 +322,12 @@ function img(p, i, size, onFail) {
   el.alt = '';
   el.loading = 'lazy';
   el.decoding = 'async';
-  // One retry after a pause: the relay's first fetch of a photo can time out.
+  // VPS photo missing → Yupoo relay once, after a pause (its first fetch can time out).
   el.onerror = e => {
-    if (el.dataset.retried) return onFail(e);
+    const r = relay(p, i, size);
+    if (el.dataset.retried || !r) return onFail(e);
     el.dataset.retried = '1';
-    setTimeout(() => { el.src = photo(p, i, size) + '?r=1'; }, 1500);
+    setTimeout(() => { el.src = r; }, 1500);
   };
   return el;
 }
@@ -378,11 +382,12 @@ function renderChips() {
 /* ============ FICHE PRODUIT ============ */
 function openSheet(p) {
   const g = $('gallery');
-  g.replaceChildren(...p.i.map((_, i) => img(p, i, 'medium', e => e.target.remove())));
+  const n = Array.from({ length: p.n }, (_, i) => i);
+  g.replaceChildren(...n.map(i => img(p, i, 'medium', e => e.target.remove())));
   g.scrollLeft = 0;
   const dots = $('dots');
-  dots.replaceChildren(...p.i.map((_, i) => { const d = document.createElement('i'); if (!i) d.className = 'on'; return d; }));
-  dots.hidden = p.i.length < 2;
+  dots.replaceChildren(...n.map(i => { const d = document.createElement('i'); if (!i) d.className = 'on'; return d; }));
+  dots.hidden = p.n < 2;
   g.onscroll = () => {
     const k = Math.round(g.scrollLeft / (g.firstElementChild?.clientWidth || 1));
     [...dots.children].forEach((d, i) => d.classList.toggle('on', i === k));

@@ -8,6 +8,7 @@ void main() {
     category: 'Sneakers',
     price: 142.57,
     store: 'tmf001',
+    photoCount: 1,
     photos: ['abc'],
     code: 'CT8013-002',
   );

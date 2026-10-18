@@ -15,8 +15,9 @@ import 'package:url_launcher/url_launcher.dart';
 // with the order text copied to the clipboard.
 const String kAgentTelegram = 'https://t.me/c/3983752002/1';
 const String kAgentWhatsapp = '';
-// Photos go through the nginx relay on the VPS (backend/deploy/yupoo-proxy.conf),
-// which adds Yupoo's Referer and caches; direct Yupoo is the fallback.
+// Photos are stored on the VPS (tools/vps_photos.cjs, backend/deploy/t2-photos.conf).
+// Fallbacks: the nginx Yupoo relay (backend/deploy/yupoo-proxy.conf), then direct Yupoo.
+const String kPhotos = 'https://api.tchipa.co.uk/t2';
 const String kPhotoRelay = 'https://api.tchipa.co.uk/yupoo';
 
 const Color kCyan = Color(0xFF00D4FF);
@@ -36,7 +37,8 @@ class Product {
   final String category;
   final double price;
   final String store;
-  final List<String> photos; // photo.yupoo.com hashes
+  final int photoCount; // photos on the VPS
+  final List<String> photos; // photo.yupoo.com hashes (fallback, first few only)
   final String code;
   final String _search;
 
@@ -46,6 +48,7 @@ class Product {
     required this.category,
     required this.price,
     required this.store,
+    required this.photoCount,
     required this.photos,
     required this.code,
   }) : _search = _fold('$title $code $category');
@@ -56,15 +59,21 @@ class Product {
         category: j['c'] as String,
         price: (j['p'] as num).toDouble(),
         store: j['s'] as String,
+        photoCount: j['n'] as int,
         photos: (j['i'] as List).cast<String>(),
         code: (j['code'] as String?) ?? '',
       );
 
   String get priceLabel => formatUsd(price);
 
-  // small.jpg ≈ 300 px for the grid, medium.jpg ≈ 800 px for the detail page.
-  String photoUrl(int i, {bool large = false, bool direct = false}) =>
-      '${direct ? 'https://photo.yupoo.com' : kPhotoRelay}/$store/${photos[i]}/${large ? 'medium' : 'small'}.jpg';
+  // source 0 = VPS (s.webp = 400 px cover for the grid, n.webp ≤ 1200 px),
+  // 1 = Yupoo relay, 2 = direct Yupoo (small.jpg ≈ 300 px, medium.jpg ≈ 800 px).
+  // Returns null when that source doesn't have photo i.
+  String? photoUrl(int i, {bool large = false, int source = 0}) {
+    if (source == 0) return '$kPhotos/$store/$id/${large || i > 0 ? i + 1 : 's'}.webp';
+    if (i >= photos.length) return null;
+    return '${source == 2 ? 'https://photo.yupoo.com' : kPhotoRelay}/$store/${photos[i]}/${large ? 'medium' : 'small'}.jpg';
+  }
 
   // Yupoo refuses hotlinked images without a Referer from the store.
   Map<String, String> get imageHeaders => {'Referer': 'https://$store.x.yupoo.com/'};
@@ -540,25 +549,27 @@ class YupooImage extends StatelessWidget {
   const YupooImage({super.key, required this.product, this.index = 0, this.large = false, this.fit = BoxFit.cover});
 
   @override
-  Widget build(BuildContext context) => _image(context, direct: false);
+  Widget build(BuildContext context) => _image(context, 0);
 
-  // Relay first; on failure retry straight from Yupoo, then show a placeholder.
-  Widget _image(BuildContext context, {required bool direct}) {
+  // VPS first; on failure the Yupoo relay, then straight from Yupoo, then a placeholder.
+  Widget _image(BuildContext context, int source) {
+    final url = source > 2 ? null : product.photoUrl(index, large: large, source: source);
+    if (url == null) {
+      return Container(
+        color: kCard,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported_outlined, color: Colors.white24),
+      );
+    }
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return CachedNetworkImage(
-      imageUrl: product.photoUrl(index, large: large, direct: direct),
-      httpHeaders: direct ? product.imageHeaders : null,
+      imageUrl: url,
+      httpHeaders: source == 2 ? product.imageHeaders : null,
       fit: fit,
       memCacheWidth: large ? null : (220 * dpr).round(),
       fadeInDuration: const Duration(milliseconds: 150),
       placeholder: (_, __) => Container(color: kCard),
-      errorWidget: (context, __, ___) => direct
-          ? Container(
-              color: kCard,
-              alignment: Alignment.center,
-              child: const Icon(Icons.image_not_supported_outlined, color: Colors.white24),
-            )
-          : _image(context, direct: true),
+      errorWidget: (context, __, ___) => _image(context, source + 1),
     );
   }
 }
@@ -700,7 +711,7 @@ class _ProductScreenState extends State<ProductScreen> {
               flexibleSpace: FlexibleSpaceBar(
                 background: Stack(fit: StackFit.expand, children: [
                   PageView.builder(
-                    itemCount: p.photos.length,
+                    itemCount: p.photoCount,
                     onPageChanged: (i) => setState(() => _page = i),
                     itemBuilder: (_, i) => GestureDetector(
                       onTap: () => _openZoom(i),
@@ -709,13 +720,13 @@ class _ProductScreenState extends State<ProductScreen> {
                           : YupooImage(product: p, index: i, large: true),
                     ),
                   ),
-                  if (p.photos.length > 1)
+                  if (p.photoCount > 1)
                     Positioned(
                       bottom: 12,
                       left: 0,
                       right: 0,
                       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        for (var i = 0; i < p.photos.length; i++)
+                        for (var i = 0; i < p.photoCount; i++)
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
                             margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -829,7 +840,7 @@ class PhotoViewerScreen extends StatelessWidget {
       appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
       body: PageView.builder(
         controller: PageController(initialPage: initial),
-        itemCount: product.photos.length,
+        itemCount: product.photoCount,
         itemBuilder: (_, i) => InteractiveViewer(
           maxScale: 5,
           child: Center(child: YupooImage(product: product, index: i, large: true, fit: BoxFit.contain)),

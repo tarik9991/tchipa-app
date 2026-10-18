@@ -213,7 +213,7 @@ db.exec("CREATE INDEX IF NOT EXISTS idx_agent_token ON agent_orders(agent_order_
 // Cryptographically random UUID v4 — used as the agent's opaque order handle
 // so the agent's app never sees the underlying redeem_id (which would let
 // them call /paygate/check-status directly and bypass the claim-code gate).
-const { randomUUID, scryptSync, randomBytes, createHash, timingSafeEqual } = require('crypto');
+const { randomUUID, scryptSync, randomBytes, randomInt, createHash, timingSafeEqual } = require('crypto');
 
 // PIN hashing: scrypt with per-row salt. Stored as hex; verifyPin uses
 // timing-safe compare so wrong-PIN response time doesn't leak structure.
@@ -2229,9 +2229,24 @@ db.exec(`
   );
 `);
 
+// Agent activation PIN: Tarik hands a one-time 4-digit PIN to the agent, who
+// types phone + PIN in the app and receives the agt_ token without ever seeing it.
+{
+  const cols = db.prepare("PRAGMA table_info(agents)").all().map(c => c.name);
+  for (const [col, type] of [['invite_pin_hash', 'TEXT'], ['invite_pin_salt', 'TEXT'],
+                             ['invite_expires', 'TEXT'], ['invite_attempts', 'INTEGER NOT NULL DEFAULT 0']]) {
+    if (!cols.includes(col)) {
+      db.exec(`ALTER TABLE agents ADD COLUMN ${col} ${type}`);
+      console.log(`[db] migrated: agents.${col} added`);
+    }
+  }
+}
+
 const WALLET_SESSION_DAYS = 30;
 const WALLET_PIN_MAX_ATTEMPTS = 5;         // same counter as user_pins.pin_attempts
 const AGENT_CREDIT_MAX_CENTS = 50000;      // 500 $ max per single credit (typo guard)
+const AGENT_PIN_TTL_HOURS = 48;            // activation PIN validity
+const AGENT_PIN_MAX_ATTEMPTS = 5;          // then Tarik must issue a new PIN
 
 const sha256 = s => createHash('sha256').update(String(s)).digest('hex');
 
@@ -2401,16 +2416,67 @@ app.get('/agent/credits', requireAgent, (req, res) => {
   res.json({ credits: rows.map(r => ({ ...ledgerView(r), phone: r.phone })) });
 });
 
-// POST /admin/agents { name, phone?, maxOutstandingUsd? } → token (shown ONCE)
+// New activation PIN for an agent. Also rotates token_hash to a token nobody
+// knows, so a lost/old phone stops working as soon as a new PIN is issued.
+function issueAgentPin(agentId) {
+  const pin = String(randomInt(0, 10000)).padStart(4, '0');
+  const salt = randomBytes(16).toString('hex');
+  const expires = new Date(Date.now() + AGENT_PIN_TTL_HOURS * 3600e3).toISOString();
+  db.prepare(`UPDATE agents SET token_hash = ?, invite_pin_hash = ?, invite_pin_salt = ?,
+              invite_expires = ?, invite_attempts = 0 WHERE id = ?`)
+    .run(sha256('agt_' + randomBytes(24).toString('hex')), hashPin(pin, salt), salt, expires, agentId);
+  return { pin, expiresAt: expires };
+}
+
+// POST /admin/agents { name, phone, maxOutstandingUsd? } → activation PIN (the agt_ token goes to the app)
 app.post('/admin/agents', (req, res) => {
   const name = String(req.body?.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'name requis' });
+  const phone = normalizePhone(req.body?.phone);
+  if (!name || !phone) return res.status(400).json({ error: 'name et phone requis' });
   const max = req.body?.maxOutstandingUsd != null ? toCents(req.body.maxOutstandingUsd) : 0;
   if (max === null) return res.status(400).json({ error: 'maxOutstandingUsd invalide' });
-  const token = 'agt_' + randomBytes(24).toString('hex');
   const info = db.prepare('INSERT INTO agents (name, phone, token_hash, max_outstanding_cents) VALUES (?, ?, ?, ?)')
-    .run(name, normalizePhone(req.body?.phone) || null, sha256(token), max);
-  res.json({ id: info.lastInsertRowid, name, token, note: "Donne ce code à l'agent : il ne sera plus jamais affiché." });
+    .run(name, phone, sha256('agt_' + randomBytes(24).toString('hex')), max);
+  const { pin, expiresAt } = issueAgentPin(info.lastInsertRowid);
+  res.json({ id: info.lastInsertRowid, name, phone, pin, expiresAt,
+             note: `Donne ce PIN à l'agent : il l'entre dans l'app avec son numéro ${phone} (valable ${AGENT_PIN_TTL_HOURS} h, une seule fois).` });
+});
+
+// POST /admin/agents/:id/pin → new activation PIN (new phone, PIN expired or blocked).
+// The agent's current phone is logged out immediately.
+app.post('/admin/agents/:id/pin', (req, res) => {
+  const a = db.prepare('SELECT id, name, phone FROM agents WHERE id = ?').get(parseInt(req.params.id, 10));
+  if (!a) return res.status(404).json({ error: 'Agent introuvable' });
+  if (!a.phone) return res.status(409).json({ error: 'Agent sans téléphone : impossible de lier un PIN' });
+  const { pin, expiresAt } = issueAgentPin(a.id);
+  res.json({ id: a.id, name: a.name, phone: a.phone, pin, expiresAt });
+});
+
+// POST /agent/activate { phone, pin } → { token, name }
+// One-time exchange of the activation PIN for the agt_ token, stored by the app.
+app.post('/agent/activate', (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const pin = String(req.body?.pin ?? '');
+  if (!phone || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'Numéro et PIN à 4 chiffres requis' });
+  const a = db.prepare(`SELECT * FROM agents WHERE phone = ? AND active = 1 AND invite_pin_hash IS NOT NULL
+                        ORDER BY id DESC LIMIT 1`).get(phone);
+  if (!a) return res.status(404).json({ error: 'Aucune activation en attente pour ce numéro. Demande un PIN à Tchipa.' });
+  if (a.invite_attempts >= AGENT_PIN_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'PIN bloqué après trop d\'essais. Demande un nouveau PIN à Tchipa.' });
+  }
+  if (new Date(a.invite_expires).getTime() < Date.now()) {
+    return res.status(410).json({ error: 'PIN expiré. Demande un nouveau PIN à Tchipa.' });
+  }
+  if (!verifyPin(pin, a.invite_pin_salt, a.invite_pin_hash)) {
+    db.prepare('UPDATE agents SET invite_attempts = invite_attempts + 1 WHERE id = ?').run(a.id);
+    return res.status(403).json({ error: 'PIN incorrect',
+                                  attemptsRemaining: Math.max(0, AGENT_PIN_MAX_ATTEMPTS - a.invite_attempts - 1) });
+  }
+  const token = 'agt_' + randomBytes(24).toString('hex');
+  db.prepare(`UPDATE agents SET token_hash = ?, invite_pin_hash = NULL, invite_pin_salt = NULL,
+              invite_expires = NULL, invite_attempts = 0 WHERE id = ?`).run(sha256(token), a.id);
+  console.log(`[agent] ${a.id} (${a.name}) activé sur un téléphone`);
+  res.json({ token, name: a.name });
 });
 
 // GET /admin/agents → every agent with what they owe

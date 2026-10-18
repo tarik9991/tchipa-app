@@ -38,11 +38,22 @@ async function main() {
       const out = path.join(DST, store, id);
       fs.mkdirSync(out, { recursive: true });
       // Renumber 1..n so gaps left by failed downloads don't break the gallery.
-      files.forEach((f, i) => {
-        const dst = path.join(out, `${i + 1}.webp`);
-        if (!fs.existsSync(dst)) { fs.linkSync(path.join(sdir, d, f), dst); links++; }
-      });
+      // A gap filled later shifts the numbering: relink any n.webp that no longer
+      // points at the right source file, and drop numbers past the end.
       const thumb = path.join(out, 's.webp');
+      files.forEach((f, i) => {
+        const src = path.join(sdir, d, f);
+        const dst = path.join(out, `${i + 1}.webp`);
+        if (fs.existsSync(dst) && fs.statSync(dst).ino === fs.statSync(src).ino) return;
+        fs.rmSync(dst, { force: true });
+        fs.linkSync(src, dst);
+        links++;
+        if (i === 0) fs.rmSync(thumb, { force: true });   // cover changed
+      });
+      for (const f of fs.readdirSync(out)) {
+        const m = /^(\d+)\.webp$/.exec(f);
+        if (m && parseInt(m[1], 10) > files.length) fs.rmSync(path.join(out, f));
+      }
       if (!fs.existsSync(thumb)) {
         try {
           await sharp(path.join(out, '1.webp')).resize({ width: THUMB_WIDTH, withoutEnlargement: true })

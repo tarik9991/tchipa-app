@@ -211,9 +211,9 @@
       <a href="#catalogue" class="btn btn-ghost">Voir le catalogue</a>
     </div>
     <div class="facts">
-      <span>Prix en dollars (USDT)</span>
+      <span>Prix en dollars</span>
       <span>Commande confirmée par un agent</span>
-      <span>Paiement en USDT ou en dinars</span>
+      <span>Paiement en dinars ou en dollars</span>
     </div>
   </header>
 
@@ -261,7 +261,7 @@
     <div id="sh-cat" class="cat"></div>
     <h2 id="sh-title"></h2>
     <div id="sh-ref" class="ref"></div>
-    <div class="big-price"><span id="sh-price" class="grad-text"></span><small>USDT / $</small></div>
+    <div class="big-price"><span id="sh-price" class="grad-text"></span><small>USD</small></div>
     <div class="sheet-cta">
       <a class="btn btn-primary" data-apk>Commander dans l'app Tchipa 2</a>
       <button id="sh-copy" class="btn btn-ghost" type="button">Copier la référence</button>
@@ -276,6 +276,7 @@ const APK = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-l
 // Photos are stored on the VPS (backend/deploy/t2-photos.conf); the nginx Yupoo
 // relay (backend/deploy/yupoo-proxy.conf) is the fallback.
 const PHOTO_BASE = 'https://api.tchipa.co.uk/t2/';
+const PHOTO_VERSION = '2';   // bump when photos are rewritten on the VPS, so caches refetch
 const RELAY_BASE = 'https://api.tchipa.co.uk/yupoo/';
 const PAGE = 60;
 
@@ -291,7 +292,7 @@ const $ = id => document.getElementById(id);
 const fold = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const usd = v => '$' + v.toFixed(2);
 // size 'small' = grid cover (s.webp, 400 px), 'medium' = full photo.
-const photo = (p, i, size) => `${PHOTO_BASE}${p.s}/${p.id}/${size === 'small' && !i ? 's' : i + 1}.webp`;
+const photo = (p, i, size) => `${PHOTO_BASE}${p.s}/${p.id}/${size === 'small' && !i ? 's' : i + 1}.webp?v=${PHOTO_VERSION}`;
 const relay = (p, i, size) => p.i[i] ? `${RELAY_BASE}${p.s}/${p.i[i]}/${size}.jpg` : null;
 
 /* ============ RENDU ============ */

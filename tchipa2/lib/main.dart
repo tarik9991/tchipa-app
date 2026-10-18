@@ -18,6 +18,8 @@ const String kAgentWhatsapp = '';
 // Photos are stored on the VPS (tools/vps_photos.cjs, backend/deploy/t2-photos.conf).
 // Fallbacks: the nginx Yupoo relay (backend/deploy/yupoo-proxy.conf), then direct Yupoo.
 const String kPhotos = 'https://api.tchipa.co.uk/t2';
+// Bump when photos are rewritten on the VPS (e.g. tools/jmdy_patch.py) so caches refetch.
+const String kPhotosVersion = '2';
 const String kPhotoRelay = 'https://api.tchipa.co.uk/yupoo';
 
 const Color kCyan = Color(0xFF00D4FF);
@@ -70,7 +72,7 @@ class Product {
   // 1 = Yupoo relay, 2 = direct Yupoo (small.jpg ≈ 300 px, medium.jpg ≈ 800 px).
   // Returns null when that source doesn't have photo i.
   String? photoUrl(int i, {bool large = false, int source = 0}) {
-    if (source == 0) return '$kPhotos/$store/$id/${large || i > 0 ? i + 1 : 's'}.webp';
+    if (source == 0) return '$kPhotos/$store/$id/${large || i > 0 ? i + 1 : 's'}.webp?v=$kPhotosVersion';
     if (i >= photos.length) return null;
     return '${source == 2 ? 'https://photo.yupoo.com' : kPhotoRelay}/$store/${photos[i]}/${large ? 'medium' : 'small'}.jpg';
   }
@@ -763,7 +765,7 @@ class _ProductScreenState extends State<ProductScreen> {
                   const SizedBox(width: 8),
                   const Padding(
                     padding: EdgeInsets.only(bottom: 6),
-                    child: Text('USDT / \$', style: TextStyle(color: Colors.white38, fontSize: 13)),
+                    child: Text('USD', style: TextStyle(color: Colors.white38, fontSize: 13)),
                   ),
                 ]),
                 const SizedBox(height: 22),
@@ -802,7 +804,7 @@ class _ProductScreenState extends State<ProductScreen> {
                 const SizedBox(height: 24),
                 const _InfoRow(icon: Icons.photo_library_outlined, text: 'Touchez une photo pour l\'agrandir.'),
                 const _InfoRow(icon: Icons.support_agent, text: 'Un agent confirme la taille, la disponibilité et la livraison avant paiement.'),
-                const _InfoRow(icon: Icons.currency_bitcoin, text: 'Paiement en USDT ou en dinars via l\'agent.'),
+                const _InfoRow(icon: Icons.payments_outlined, text: 'Paiement en dinars ou en dollars via l\'agent.'),
               ]),
             ),
           ]),

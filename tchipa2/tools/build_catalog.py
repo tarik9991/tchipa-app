@@ -21,6 +21,7 @@ from pathlib import Path
 # ============ PRICING ============
 CNY_PER_USD = 7     # 1 USD = ~7 CNY
 MULTIPLIER = 2      # price_usd = cny / CNY_PER_USD * MULTIPLIER + FIXED_FEE
+MIN_CNY, MAX_CNY = 20, 5000   # outside = not a real price (e.g. oraclothing "P20518" is a code)
 FIXED_FEE = 17      # $ added after the multiplier (e.g. $20 → $57)
 
 MAX_PHOTOS = 5        # Yupoo hashes kept for the fallback
@@ -198,7 +199,7 @@ def main():
                 name = f'{STORES[store] if store != "cutykids" else "Enfants"} {name}'.strip()
             photos = photo_hashes(item.get('photos'))
             own = on_vps.get(store, {}).get(aid, 0)
-            if not cny or cny < 20 or not name or not own:
+            if not cny or not MIN_CNY <= cny <= MAX_CNY or not name or not own:
                 continue
             seen.add(aid)
             products.append({

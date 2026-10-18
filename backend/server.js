@@ -24,7 +24,8 @@ app.use(express.json());
 // needs the ADMIN_TOKEN header; without ADMIN_TOKEN in .env they are all closed.
 // The two routes the app itself calls stay open until per-agent accounts exist.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const ADMIN_APP_ROUTES = [/^\/admin\/client-cards\b/, /^\/admin\/threeds\//];
+// /admin/agents* checks its own access (Tarik's token OR a manager session): requireAgentAdmin.
+const ADMIN_APP_ROUTES = [/^\/admin\/client-cards\b/, /^\/admin\/threeds\//, /^\/admin\/agents\b/];
 app.use('/admin', (req, res, next) => {
   if (ADMIN_APP_ROUTES.some(r => r.test(req.originalUrl))) return next();
   const given = String(req.get('x-admin-token') || '');
@@ -2234,13 +2235,29 @@ db.exec(`
 {
   const cols = db.prepare("PRAGMA table_info(agents)").all().map(c => c.name);
   for (const [col, type] of [['invite_pin_hash', 'TEXT'], ['invite_pin_salt', 'TEXT'],
-                             ['invite_expires', 'TEXT'], ['invite_attempts', 'INTEGER NOT NULL DEFAULT 0']]) {
+                             ['invite_expires', 'TEXT'], ['invite_attempts', 'INTEGER NOT NULL DEFAULT 0'],
+                             ['created_by', 'TEXT']]) {
     if (!cols.includes(col)) {
       db.exec(`ALTER TABLE agents ADD COLUMN ${col} ${type}`);
       console.log(`[db] migrated: agents.${col} added`);
     }
   }
 }
+// Managers: people Tarik trusts to recruit and run agents (the /gestion page).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS admin_users (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL,
+    phone            TEXT NOT NULL,
+    token_hash       TEXT NOT NULL UNIQUE,    -- sha256(adm_ token), received once via /manager/activate
+    active           INTEGER NOT NULL DEFAULT 1,
+    invite_pin_hash  TEXT,
+    invite_pin_salt  TEXT,
+    invite_expires   TEXT,
+    invite_attempts  INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
 
 const WALLET_SESSION_DAYS = 30;
 const WALLET_PIN_MAX_ATTEMPTS = 5;         // same counter as user_pins.pin_attempts
@@ -2416,93 +2433,189 @@ app.get('/agent/credits', requireAgent, (req, res) => {
   res.json({ credits: rows.map(r => ({ ...ledgerView(r), phone: r.phone })) });
 });
 
-// New activation PIN for an agent. Also rotates token_hash to a token nobody
-// knows, so a lost/old phone stops working as soon as a new PIN is issued.
-function issueAgentPin(agentId) {
+// ── Activation by one-time PIN (agents and managers) ────────────────────────
+// Tarik (or a manager) creates the account with a phone number and gets a 4-digit
+// PIN; the person types phone + PIN once and their app/browser receives a long
+// token it keeps. Issuing a new PIN rotates token_hash to a token nobody knows,
+// so a lost/old phone stops working at once. `table` is always a constant.
+function issueActivationPin(table, id) {
   const pin = String(randomInt(0, 10000)).padStart(4, '0');
   const salt = randomBytes(16).toString('hex');
   const expires = new Date(Date.now() + AGENT_PIN_TTL_HOURS * 3600e3).toISOString();
-  db.prepare(`UPDATE agents SET token_hash = ?, invite_pin_hash = ?, invite_pin_salt = ?,
+  db.prepare(`UPDATE ${table} SET token_hash = ?, invite_pin_hash = ?, invite_pin_salt = ?,
               invite_expires = ?, invite_attempts = 0 WHERE id = ?`)
-    .run(sha256('agt_' + randomBytes(24).toString('hex')), hashPin(pin, salt), salt, expires, agentId);
+    .run(sha256(randomBytes(24).toString('hex')), hashPin(pin, salt), salt, expires, id);
   return { pin, expiresAt: expires };
 }
 
-// POST /admin/agents { name, phone, maxOutstandingUsd? } → activation PIN (the agt_ token goes to the app)
-app.post('/admin/agents', (req, res) => {
-  const name = String(req.body?.name || '').trim();
+// Exchanges phone + PIN for a fresh token. Sends the HTTP error itself and
+// returns null on failure.
+function activateWithPin(table, prefix, req, res) {
   const phone = normalizePhone(req.body?.phone);
-  if (!name || !phone) return res.status(400).json({ error: 'name et phone requis' });
+  const pin = String(req.body?.pin ?? '');
+  if (!phone || !/^\d{4}$/.test(pin)) { res.status(400).json({ error: 'Numéro et PIN à 4 chiffres requis' }); return null; }
+  const a = db.prepare(`SELECT * FROM ${table} WHERE phone = ? AND active = 1 AND invite_pin_hash IS NOT NULL
+                        ORDER BY id DESC LIMIT 1`).get(phone);
+  if (!a) { res.status(404).json({ error: 'Aucune activation en attente pour ce numéro. Demande un PIN à Tchipa.' }); return null; }
+  if (a.invite_attempts >= AGENT_PIN_MAX_ATTEMPTS) {
+    res.status(429).json({ error: 'PIN bloqué après trop d\'essais. Demande un nouveau PIN à Tchipa.' }); return null;
+  }
+  if (new Date(a.invite_expires).getTime() < Date.now()) {
+    res.status(410).json({ error: 'PIN expiré. Demande un nouveau PIN à Tchipa.' }); return null;
+  }
+  if (!verifyPin(pin, a.invite_pin_salt, a.invite_pin_hash)) {
+    db.prepare(`UPDATE ${table} SET invite_attempts = invite_attempts + 1 WHERE id = ?`).run(a.id);
+    res.status(403).json({ error: 'PIN incorrect',
+                           attemptsRemaining: Math.max(0, AGENT_PIN_MAX_ATTEMPTS - a.invite_attempts - 1) });
+    return null;
+  }
+  const token = prefix + randomBytes(24).toString('hex');
+  db.prepare(`UPDATE ${table} SET token_hash = ?, invite_pin_hash = NULL, invite_pin_salt = NULL,
+              invite_expires = NULL, invite_attempts = 0 WHERE id = ?`).run(sha256(token), a.id);
+  console.log(`[${table}] ${a.id} (${a.name}) activé sur un téléphone`);
+  return { token, name: a.name };
+}
+
+const pendingView = r => r.invite_pin_hash
+  ? { pending: true, pinExpired: new Date(r.invite_expires).getTime() < Date.now(),
+      pinBlocked: r.invite_attempts >= AGENT_PIN_MAX_ATTEMPTS, pinExpiresAt: r.invite_expires }
+  : { pending: false };
+
+// Agent routes accept Tarik's ADMIN_TOKEN or a manager session (Bearer adm_…).
+// The global /admin guard lets /admin/agents* through (ADMIN_APP_ROUTES) to here.
+function requireAgentAdmin(req, res, next) {
+  const given = String(req.get('x-admin-token') || '');
+  if (ADMIN_TOKEN.length >= 24 && given.length === ADMIN_TOKEN.length &&
+      timingSafeEqual(Buffer.from(given), Buffer.from(ADMIN_TOKEN))) {
+    req.adminName = 'Tarik'; req.isMaster = true; return next();
+  }
+  const t = bearer(req);
+  const m = t && db.prepare('SELECT id, name FROM admin_users WHERE token_hash = ? AND active = 1').get(sha256(t));
+  if (!m) return res.status(401).json({ error: 'Accès gestion refusé' });
+  req.adminName = m.name; req.isMaster = false;
+  next();
+}
+
+// GET /gestion → the agents admin page (Tarik + managers), same origin as the API
+app.get('/gestion', (req, res) => res.sendFile(path.join(__dirname, 'gestion.html')));
+
+// POST /manager/activate { phone, pin } → { token, name } for the /gestion page
+app.post('/manager/activate', (req, res) => {
+  const r = activateWithPin('admin_users', 'adm_', req, res);
+  if (r) res.json(r);
+});
+
+// GET /manager/me → who is logged in on /gestion
+app.get('/manager/me', requireAgentAdmin, (req, res) => res.json({ name: req.adminName, master: req.isMaster }));
+
+// POST /admin/agents { name, phone, maxOutstandingUsd? } → activation PIN (the agt_ token goes to the app)
+app.post('/admin/agents', requireAgentAdmin, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  const phone = normalizePhone(req.body?.phone);
+  if (!name || !phone) return res.status(400).json({ error: 'Nom et téléphone requis' });
   const max = req.body?.maxOutstandingUsd != null ? toCents(req.body.maxOutstandingUsd) : 0;
   if (max === null) return res.status(400).json({ error: 'maxOutstandingUsd invalide' });
-  const info = db.prepare('INSERT INTO agents (name, phone, token_hash, max_outstanding_cents) VALUES (?, ?, ?, ?)')
-    .run(name, phone, sha256('agt_' + randomBytes(24).toString('hex')), max);
-  const { pin, expiresAt } = issueAgentPin(info.lastInsertRowid);
+  if (max && !req.isMaster) return res.status(403).json({ error: 'Seul Tarik peut accorder un découvert' });
+  if (db.prepare('SELECT 1 FROM agents WHERE phone = ? AND active = 1').get(phone)) {
+    return res.status(409).json({ error: 'Un agent actif existe déjà avec ce numéro' });
+  }
+  const info = db.prepare('INSERT INTO agents (name, phone, token_hash, max_outstanding_cents, created_by) VALUES (?, ?, ?, ?, ?)')
+    .run(name, phone, sha256(randomBytes(24).toString('hex')), max, req.adminName);
+  const { pin, expiresAt } = issueActivationPin('agents', info.lastInsertRowid);
+  console.log(`[agents] ${info.lastInsertRowid} (${name}) créé par ${req.adminName}`);
   res.json({ id: info.lastInsertRowid, name, phone, pin, expiresAt,
              note: `Donne ce PIN à l'agent : il l'entre dans l'app avec son numéro ${phone} (valable ${AGENT_PIN_TTL_HOURS} h, une seule fois).` });
 });
 
 // POST /admin/agents/:id/pin → new activation PIN (new phone, PIN expired or blocked).
 // The agent's current phone is logged out immediately.
-app.post('/admin/agents/:id/pin', (req, res) => {
+app.post('/admin/agents/:id/pin', requireAgentAdmin, (req, res) => {
   const a = db.prepare('SELECT id, name, phone FROM agents WHERE id = ?').get(parseInt(req.params.id, 10));
   if (!a) return res.status(404).json({ error: 'Agent introuvable' });
   if (!a.phone) return res.status(409).json({ error: 'Agent sans téléphone : impossible de lier un PIN' });
-  const { pin, expiresAt } = issueAgentPin(a.id);
+  const { pin, expiresAt } = issueActivationPin('agents', a.id);
+  console.log(`[agents] ${a.id} (${a.name}) nouveau PIN par ${req.adminName}`);
   res.json({ id: a.id, name: a.name, phone: a.phone, pin, expiresAt });
 });
 
 // POST /agent/activate { phone, pin } → { token, name }
 // One-time exchange of the activation PIN for the agt_ token, stored by the app.
 app.post('/agent/activate', (req, res) => {
-  const phone = normalizePhone(req.body?.phone);
-  const pin = String(req.body?.pin ?? '');
-  if (!phone || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'Numéro et PIN à 4 chiffres requis' });
-  const a = db.prepare(`SELECT * FROM agents WHERE phone = ? AND active = 1 AND invite_pin_hash IS NOT NULL
-                        ORDER BY id DESC LIMIT 1`).get(phone);
-  if (!a) return res.status(404).json({ error: 'Aucune activation en attente pour ce numéro. Demande un PIN à Tchipa.' });
-  if (a.invite_attempts >= AGENT_PIN_MAX_ATTEMPTS) {
-    return res.status(429).json({ error: 'PIN bloqué après trop d\'essais. Demande un nouveau PIN à Tchipa.' });
-  }
-  if (new Date(a.invite_expires).getTime() < Date.now()) {
-    return res.status(410).json({ error: 'PIN expiré. Demande un nouveau PIN à Tchipa.' });
-  }
-  if (!verifyPin(pin, a.invite_pin_salt, a.invite_pin_hash)) {
-    db.prepare('UPDATE agents SET invite_attempts = invite_attempts + 1 WHERE id = ?').run(a.id);
-    return res.status(403).json({ error: 'PIN incorrect',
-                                  attemptsRemaining: Math.max(0, AGENT_PIN_MAX_ATTEMPTS - a.invite_attempts - 1) });
-  }
-  const token = 'agt_' + randomBytes(24).toString('hex');
-  db.prepare(`UPDATE agents SET token_hash = ?, invite_pin_hash = NULL, invite_pin_salt = NULL,
-              invite_expires = NULL, invite_attempts = 0 WHERE id = ?`).run(sha256(token), a.id);
-  console.log(`[agent] ${a.id} (${a.name}) activé sur un téléphone`);
-  res.json({ token, name: a.name });
+  const r = activateWithPin('agents', 'agt_', req, res);
+  if (r) res.json(r);
 });
 
 // GET /admin/agents → every agent with what they owe
-app.get('/admin/agents', (req, res) => {
-  const rows = db.prepare('SELECT id, name, phone, active, max_outstanding_cents, created_at FROM agents').all();
+app.get('/admin/agents', requireAgentAdmin, (req, res) => {
+  const rows = db.prepare('SELECT * FROM agents ORDER BY id DESC').all();
   res.json({ agents: rows.map(a => ({ id: a.id, name: a.name, phone: a.phone, active: !!a.active,
     provisionUsd: fromCents(-agentOutstandingCents(a.id)), maxOutstandingUsd: fromCents(a.max_outstanding_cents),
-    createdAt: a.created_at })) });
+    createdAt: a.created_at, createdBy: a.created_by, ...pendingView(a) })) });
 });
 
-// POST /admin/agents/:id/provision { amountUsd, note? } → the agent paid Tarik: load their provision
-// (/settle kept as an alias for the first version of this route)
-app.post(['/admin/agents/:id/provision', '/admin/agents/:id/settle'], (req, res) => {
+// GET /admin/agents/settlements → last 100 provision loads, with who entered them
+app.get('/admin/agents/settlements', requireAgentAdmin, (req, res) => {
+  const rows = db.prepare(`SELECT s.*, a.name AS agent_name FROM agent_settlements s
+                           LEFT JOIN agents a ON a.id = s.agent_id ORDER BY s.id DESC LIMIT 100`).all();
+  res.json({ settlements: rows.map(s => ({ id: s.id, agentId: s.agent_id, agentName: s.agent_name,
+    amountUsd: fromCents(s.amount_cents), note: s.note, at: s.created_at })) });
+});
+
+// POST /admin/agents/:id/provision { amountUsd, note? } → the agent paid: load their provision
+// (/settle kept as an alias for the first version of this route). The note keeps who did it.
+app.post(['/admin/agents/:id/provision', '/admin/agents/:id/settle'], requireAgentAdmin, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const cents = toCents(req.body?.amountUsd);
-  if (!db.prepare('SELECT 1 FROM agents WHERE id = ?').get(id)) return res.status(404).json({ error: 'Agent introuvable' });
-  if (!cents) return res.status(400).json({ error: 'amountUsd invalide' });
-  db.prepare('INSERT INTO agent_settlements (agent_id, amount_cents, note) VALUES (?, ?, ?)')
-    .run(id, cents, req.body?.note ? String(req.body.note).slice(0, 200) : null);
+  const a = db.prepare('SELECT name FROM agents WHERE id = ?').get(id);
+  if (!a) return res.status(404).json({ error: 'Agent introuvable' });
+  if (!cents) return res.status(400).json({ error: 'Montant invalide' });
+  const note = `[${req.adminName}]` + (req.body?.note ? ' ' + String(req.body.note).slice(0, 180) : '');
+  db.prepare('INSERT INTO agent_settlements (agent_id, amount_cents, note) VALUES (?, ?, ?)').run(id, cents, note);
+  console.log(`[agents] ${id} (${a.name}) provision +${fromCents(cents)} $ par ${req.adminName}`);
   res.json({ ok: true, provisionUsd: fromCents(-agentOutstandingCents(id)) });
 });
 
 // POST /admin/agents/:id/active { active: bool } → block / unblock an agent
-app.post('/admin/agents/:id/active', (req, res) => {
+app.post('/admin/agents/:id/active', requireAgentAdmin, (req, res) => {
   const info = db.prepare('UPDATE agents SET active = ? WHERE id = ?').run(req.body?.active ? 1 : 0, parseInt(req.params.id, 10));
   if (!info.changes) return res.status(404).json({ error: 'Agent introuvable' });
+  console.log(`[agents] ${req.params.id} ${req.body?.active ? 'débloqué' : 'bloqué'} par ${req.adminName}`);
+  res.json({ ok: true });
+});
+
+// Managers (people who run agents in Algeria): only Tarik's ADMIN_TOKEN, via the global /admin guard.
+// GET /admin/managers
+app.get('/admin/managers', (req, res) => {
+  const rows = db.prepare('SELECT * FROM admin_users ORDER BY id DESC').all();
+  res.json({ managers: rows.map(m => ({ id: m.id, name: m.name, phone: m.phone, active: !!m.active,
+    createdAt: m.created_at, ...pendingView(m) })) });
+});
+
+// POST /admin/managers { name, phone } → activation PIN for the /gestion page
+app.post('/admin/managers', (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 80);
+  const phone = normalizePhone(req.body?.phone);
+  if (!name || !phone) return res.status(400).json({ error: 'Nom et téléphone requis' });
+  if (db.prepare('SELECT 1 FROM admin_users WHERE phone = ? AND active = 1').get(phone)) {
+    return res.status(409).json({ error: 'Un gérant actif existe déjà avec ce numéro' });
+  }
+  const info = db.prepare('INSERT INTO admin_users (name, phone, token_hash) VALUES (?, ?, ?)')
+    .run(name, phone, sha256(randomBytes(24).toString('hex')));
+  const { pin, expiresAt } = issueActivationPin('admin_users', info.lastInsertRowid);
+  res.json({ id: info.lastInsertRowid, name, phone, pin, expiresAt });
+});
+
+// POST /admin/managers/:id/pin → new PIN, logs the manager's current phone out
+app.post('/admin/managers/:id/pin', (req, res) => {
+  const m = db.prepare('SELECT id, name, phone FROM admin_users WHERE id = ?').get(parseInt(req.params.id, 10));
+  if (!m) return res.status(404).json({ error: 'Gérant introuvable' });
+  res.json({ id: m.id, name: m.name, phone: m.phone, ...issueActivationPin('admin_users', m.id) });
+});
+
+// POST /admin/managers/:id/active { active: bool }
+app.post('/admin/managers/:id/active', (req, res) => {
+  const info = db.prepare('UPDATE admin_users SET active = ? WHERE id = ?').run(req.body?.active ? 1 : 0, parseInt(req.params.id, 10));
+  if (!info.changes) return res.status(404).json({ error: 'Gérant introuvable' });
   res.json({ ok: true });
 });
 

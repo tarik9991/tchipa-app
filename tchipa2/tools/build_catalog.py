@@ -20,7 +20,9 @@ from pathlib import Path
 
 # ============ PRICING ============
 CNY_PER_USD = 7     # 1 USD = ~7 CNY
-MULTIPLIER = 2      # price_usd = cny / CNY_PER_USD * MULTIPLIER + FIXED_FEE
+MULTIPLIER = 2      # on the first TIER_USD dollars of the supplier price
+TIER_USD = 30       # above it only +25 %, so expensive items aren't doubled
+TIER_MULTIPLIER = 1.25
 MIN_CNY, MAX_CNY = 20, 5000   # outside = not a real price (e.g. oraclothing "P20518" is a code)
 FIXED_FEE = 17      # $ added after the multiplier (e.g. $20 → $57)
 
@@ -98,7 +100,10 @@ PHOTO = re.compile(r'https://photo\.yupoo\.com/[^/]+/([0-9a-f]+)/')
 
 
 def price_usd(cny: float) -> float:
-    return round(cny / CNY_PER_USD * MULTIPLIER + FIXED_FEE, 2)
+    # $20 → $57, $31 → $78.25, $100 → $164.50 (smooth: no jump at the tier)
+    usd = cny / CNY_PER_USD
+    base = min(usd, TIER_USD) * MULTIPLIER + max(0, usd - TIER_USD) * TIER_MULTIPLIER
+    return round(base + FIXED_FEE, 2)
 
 
 def parse_cny(item) -> float | None:

@@ -18,7 +18,12 @@ import 'package:video_player/video_player.dart';
 // CONFIGURATION
 // ============================================
 const String kVpsBase       = 'https://api.tchipa.co.uk';
-const String kAgentTelegram = 'https://t.me/c/3983752002/1';
+const String kAgentTelegram = 'https://t.me/tchipa_UK';
+// CI passes --dart-define=BUILD_NUMBER=<run number> and publishes version.json next to
+// the APK; a local build stays at 0 and never nags about updates.
+const int    kBuildNumber   = int.fromEnvironment('BUILD_NUMBER');
+const String kApkUrl        = 'https://github.com/tarik9991/tchipa-app/releases/latest/download/app-release.apk';
+const String kVersionUrl    = 'https://github.com/tarik9991/tchipa-app/releases/latest/download/version.json';
 const double kExchangeRate  = 242.0;
 
 class UserProfile {
@@ -1225,6 +1230,35 @@ class _SplashScreenState extends State<SplashScreen>
 // ============================================
 // MAIN SCREEN (3-tab shell)
 // ============================================
+// ── Mise à jour de l'APK ─────────────────────────────────────────────────
+// The APK is side-loaded, so nothing updates it for us. On launch we compare our
+// build number with the latest release's version.json and offer the new APK:
+// same signing key, so Android installs it over the old one (no uninstall).
+class UpdateCheck {
+  static Future<void> run(BuildContext context) async {
+    if (kIsWeb || kBuildNumber == 0) return;
+    try {
+      final r = await http.get(Uri.parse(kVersionUrl)).timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return;
+      final latest = (jsonDecode(r.body)['build'] as num?)?.toInt() ?? 0;
+      if (latest <= kBuildNumber || !context.mounted) return;
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Nouvelle version de Tchipa'),
+          content: const Text('Une mise à jour est disponible. Télécharge-la puis appuie sur « Installer » : '
+              'ton compte et ton solde sont conservés, pas besoin de désinstaller.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Mettre à jour')),
+          ],
+        ),
+      );
+      if (go == true) await launchUrl(Uri.parse(kApkUrl), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -1245,6 +1279,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => UpdateCheck.run(context));
     if (UserProfile.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         setState(() => _idx = 3);
@@ -1592,6 +1627,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   }
                   if (mounted) setState(() {});
                 },
+              ),
+              const SizedBox(height: 10),
+              _SettingsTile(
+                icon: Icons.telegram,
+                title: 'Groupe Telegram Tchipa',
+                subtitle: 't.me/tchipa_UK — infos, nouveautés et aide',
+                trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF00D4FF)),
+                onTap: () => launchUrl(Uri.parse(kAgentTelegram), mode: LaunchMode.externalApplication),
               ),
               const SizedBox(height: 20),
               GestureDetector(

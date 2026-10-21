@@ -56,7 +56,12 @@ jobs:
           echo "Release keystore installed — building with the stable key."
 
       - name: Build APK
-        run: flutter build apk --release --dart-define=OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          flutter build apk --release --build-number=${{ github.run_number }} \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }} \
+            --dart-define=OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+          # Read by the app on launch (UpdateCheck) to offer the new APK.
+          echo '{"build": ${{ github.run_number }}}' > build/app/outputs/flutter-apk/version.json
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -85,4 +90,6 @@ jobs:
           tag_name: latest
           name: Tchipa Latest
           make_latest: true
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/version.json

@@ -78,20 +78,20 @@
 
   <div id="app" class="hidden">
     <!-- Nouvel agent -->
-    <section class="card">
-      <h2>Nouvel agent</h2>
+    <section class="card" id="add-agent">
+      <h2>➕ Ajouter un agent</h2>
       <label for="a-name">Nom</label>
       <input id="a-name" placeholder="Karim">
       <label for="a-phone">Téléphone de l'agent</label>
       <input id="a-phone" type="tel" placeholder="0555 12 34 56">
-      <button class="primary" id="a-go">Créer et obtenir le PIN</button>
+      <button class="primary" id="a-go">Ajouter l'agent et obtenir le PIN</button>
       <div id="a-err" class="err"></div>
       <div id="a-pin"></div>
     </section>
 
     <!-- Agents -->
     <section class="card">
-      <div class="item-head"><h2>Agents</h2><button id="refresh">Actualiser</button></div>
+      <div class="item-head"><h2>Agents</h2><span><button id="to-add">➕ Ajouter</button> <button id="refresh">Actualiser</button></span></div>
       <div id="agents" class="muted">Chargement…</div>
     </section>
 
@@ -231,11 +231,13 @@ $('a-go').onclick = async e => {
   } catch (err) { $('a-err').textContent = err.message; }
   busy(e.target, false);
 };
+$('to-add').onclick = () => { $('add-agent').scrollIntoView({ behavior: 'smooth' }); $('a-name').focus(); };
 $('refresh').onclick = () => { loadAgents(); if ($('hist-box').open) loadHist(); };
 $('hist-box').addEventListener('toggle', () => { if ($('hist-box').open) loadHist(); });
 
 async function loadAgents() {
   const { agents } = await api('GET', '/admin/agents');
+  agents.sort((a, b) => a.id - b.id); // agent 1 first, as Tarik asked
   const box = $('agents');
   if (!agents.length) { box.textContent = 'Aucun agent pour le moment.'; return; }
   box.classList.remove('muted');

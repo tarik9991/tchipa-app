@@ -13,6 +13,7 @@ import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:video_player/video_player.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 // ============================================
 // CONFIGURATION
@@ -3850,6 +3851,52 @@ class AgentWalletScreen extends StatefulWidget {
 }
 
 class _AgentWalletScreenState extends State<AgentWalletScreen> {
+  // USDT addresses come from /agent/me; an older backend sends none and the block stays hidden.
+  List<Widget> _rechargeSection() {
+    final addresses = (_me?['paymentAddresses'] as List?) ?? const [];
+    if (addresses.isEmpty) return const [];
+    final selected = addresses[_payNetwork.clamp(0, addresses.length - 1)] as Map;
+    final String network = selected['network'];
+    final String address = selected['address'];
+    return [
+      const SizedBox(height: 14),
+      Text('Recharger ma provision', style: TextStyle(color: AppColors.label, fontSize: 15, fontWeight: FontWeight.w800)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, children: [
+        for (var i = 0; i < addresses.length; i++)
+          ChoiceChip(
+              label: Text('USDT ${addresses[i]['network']}'),
+              selected: identical(addresses[i], selected),
+              onSelected: (_) => setState(() => _payNetwork = i)),
+      ]),
+      const SizedBox(height: 12),
+      Center(
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          child: QrImageView(data: address, size: 180, backgroundColor: Colors.white),
+        ),
+      ),
+      const SizedBox(height: 10),
+      SelectableText(address, textAlign: TextAlign.center, style: TextStyle(color: AppColors.label, fontSize: 13)),
+      const SizedBox(height: 6),
+      Center(
+        child: TextButton.icon(
+          icon: const Icon(Icons.copy_rounded, size: 18),
+          label: const Text('Copier l\'adresse'),
+          onPressed: () async {
+            final messenger = ScaffoldMessenger.of(context);
+            await Clipboard.setData(ClipboardData(text: address));
+            messenger.showSnackBar(SnackBar(content: Text('Adresse $network copiée')));
+          },
+        ),
+      ),
+      Text('Envoie uniquement de l\'USDT sur le réseau $network : un envoi sur un autre réseau peut être perdu. '
+          'Ta provision est chargée après vérification du paiement par Tchipa.',
+          style: const TextStyle(color: Color(0xFFF79009), fontSize: 12.5)),
+    ];
+  }
+
   final _actPhone = TextEditingController();
   final _pin = TextEditingController();
   final _phone = TextEditingController();
@@ -3858,6 +3905,7 @@ class _AgentWalletScreenState extends State<AgentWalletScreen> {
   final _ref = TextEditingController();
   Map<String, dynamic>? _me;
   List<dynamic> _credits = [];
+  int _payNetwork = 0;
   bool _busy = false;
   String? _err;
   String _idem = _idemKey();
@@ -3982,6 +4030,7 @@ class _AgentWalletScreenState extends State<AgentWalletScreen> {
                     style: const TextStyle(color: Color(0xFF12B76A), fontSize: 16, fontWeight: FontWeight.w700)),
                 Text('Chaque crédit client est pris sur ta provision. Pour la recharger, paie Tchipa.',
                     style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+                ..._rechargeSection(),
               ]),
             ),
           const SizedBox(height: 18),

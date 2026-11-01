@@ -2378,13 +2378,22 @@ app.post('/wallet/logout', requireClient, (req, res) => {
   res.json({ ok: true });
 });
 
+// Where agents send USDT to recharge their provision. Served by /agent/me so a
+// change here doesn't need a new APK. Nothing watches these addresses: Tarik
+// checks the payment, then loads the provision by hand on /gestion.
+const AGENT_PAYMENT_ADDRESSES = [
+  { network: 'Polygon', token: 'USDT', address: '0x41A5720eD1e0817A036400a9B8c91d8F2534cF75' },
+  { network: 'Solana', token: 'USDT', address: 'EMkTvBWXX2BRPdYf3X9TW6DgSDTW7EWQ2s8aoJzHzjZv' },
+];
+
 // GET /agent/me → who am I, my prepaid provision, what I can still credit
 app.get('/agent/me', requireAgent, (req, res) => {
   const out = agentOutstandingCents(req.agent.id);            // credited - paid
   res.json({ id: req.agent.id, name: req.agent.name, provisionUsd: fromCents(-out),
              outstandingUsd: fromCents(Math.max(0, out)),
              maxOutstandingUsd: fromCents(req.agent.max_outstanding_cents),
-             availableUsd: fromCents(Math.max(0, req.agent.max_outstanding_cents - out)) });
+             availableUsd: fromCents(Math.max(0, req.agent.max_outstanding_cents - out)),
+             paymentAddresses: AGENT_PAYMENT_ADDRESSES });
 });
 
 // POST /agent/wallet/credit { phone, amountUsd, dzd?, ref?, idempotencyKey }

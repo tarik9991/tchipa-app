@@ -157,7 +157,7 @@ Play Console → **Développer la visibilité → Fiche Play Store principale** 
 | Image de présentation | `store/graphics/feature-graphic-1024x500.png` |
 | Captures d'écran téléphone | à faire toi-même, voir ci-dessous |
 | Catégorie | **Shopping** |
-| Email de contact | nou72025@gmail.com |
+| Email de contact | contact@tchipa.co.uk (redirigée vers Gmail) |
 | Site web | https://tchipa.co.uk |
 
 Puis **Gérer les traductions → Ajouter des traductions → Anglais (États-Unis)** et

@@ -2378,6 +2378,38 @@ app.post('/wallet/logout', requireClient, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /wallet/delete-account { pin } (client session) — required by Google Play.
+// Refused while money or an order is still pending, so nothing is lost silently
+// (privacy.html promises we settle those first). Deletes PIN, email and sessions;
+// orders and ledger stay for accounting but under an anonymous id, with the
+// delivery details wiped.
+app.post('/wallet/delete-account', requireClient, (req, res) => {
+  const phone = req.clientPhone;
+  const u = db.prepare('SELECT pin_hash, pin_salt FROM user_pins WHERE phone = ?').get(phone);
+  if (!u || !verifyPin(String(req.body?.pin ?? ''), u.pin_salt, u.pin_hash)) {
+    return res.status(403).json({ error: 'PIN invalide' });
+  }
+  const balance = walletBalance(phone);
+  if (balance > 0) {
+    return res.status(409).json({ error: `Il te reste ${fromCents(balance)} $ de solde. Utilise-le ou contacte ton agent avant de supprimer ton compte.` });
+  }
+  const open = db.prepare(`SELECT COUNT(*) n FROM shop_orders WHERE phone = ? AND status NOT IN ('livree','annulee')`).get(phone).n;
+  if (open) return res.status(409).json({ error: 'Une commande est encore en cours. Attends sa livraison avant de supprimer ton compte.' });
+
+  const anon = 'supprime:' + sha256(phone).slice(0, 16);
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('agents', 'user_pins', 'wallet_sessions')`).all()
+    .map(t => t.name)
+    .filter(t => db.prepare(`PRAGMA table_info(${t})`).all().some(c => c.name === 'phone'));
+  db.transaction(() => {
+    db.prepare(`UPDATE shop_orders SET full_name = '', contact_phone = '', commune = NULL, address = NULL WHERE phone = ?`).run(phone);
+    for (const t of tables) db.prepare(`UPDATE ${t} SET phone = ? WHERE phone = ?`).run(anon, phone);
+    db.prepare('DELETE FROM wallet_sessions WHERE phone = ?').run(phone);
+    db.prepare('DELETE FROM user_pins WHERE phone = ?').run(phone);
+  })();
+  console.log(`[wallet] compte supprimé ${anon}`);
+  res.json({ ok: true });
+});
+
 // Where agents send USDT to recharge their provision. Served by /agent/me so a
 // change here doesn't need a new APK. Nothing watches these addresses: Tarik
 // checks the payment, then loads the provision by hand on /gestion.

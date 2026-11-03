@@ -20,6 +20,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 // ============================================
 const String kVpsBase       = 'https://api.tchipa.co.uk';
 const String kAgentTelegram = 'https://t.me/tchipa_UK';
+// Build Google Play (--dart-define=PLAY_STORE=true) : sans adresses USDT ni mise à jour par APK.
+const bool   kPlayBuild     = bool.fromEnvironment('PLAY_STORE');
 // CI passes --dart-define=BUILD_NUMBER=<run number> and publishes version.json next to
 // the APK; a local build stays at 0 and never nags about updates.
 const int    kBuildNumber   = int.fromEnvironment('BUILD_NUMBER');
@@ -487,195 +489,39 @@ class AppColors {
 // TRANSLATIONS (FR / AR)
 // ============================================
 class _L {
-  final String activate;
-  final String activateSubtitle;
-  final String chooseAmount;
-  final String payDirectly;
-  final String sendExactly;
-  final String usdtPolygonOnly;
-  final String exactAmount;
-  final String usdtAddress;
-  final String addressCopied;
-  final String polygonWarning;
-  final String paidVerify;
-  final String orderCreated;
-  final String newVccCard;
-  final String checking;
-  final String cardReady;
-  final String newCardActivated;
-  final String viewCard;
-  final String close;
-  final String paymentReceived;
-  final String paymentNotReceived;
-  final String recharge;
-  final String createOrder;
-  final String myProfile;
-  final String saveProfile;
   final String biometric;
   final String biometricSub;
-  final String agentMode;
   final String settings;
   final String language;
-  final String theme;
   final String lightMode;
   final String darkMode;
-  final String french;
-  final String arabic;
-  final String home;
-  final String transactions;
-  final String profile;
-  final String activate2;
-  final String activated;
-  final String cardActive;
-  final String activateCard;
-  final String cardReady2;
-  final String cardActivated;
-  final String mastercard;
-  final String cardNetwork;
 
   const _L({
-    required this.activate,
-    required this.activateSubtitle,
-    required this.chooseAmount,
-    required this.payDirectly,
-    required this.sendExactly,
-    required this.usdtPolygonOnly,
-    required this.exactAmount,
-    required this.usdtAddress,
-    required this.addressCopied,
-    required this.polygonWarning,
-    required this.paidVerify,
-    required this.orderCreated,
-    required this.newVccCard,
-    required this.checking,
-    required this.cardReady,
-    required this.newCardActivated,
-    required this.viewCard,
-    required this.close,
-    required this.paymentReceived,
-    required this.paymentNotReceived,
-    required this.recharge,
-    required this.createOrder,
-    required this.myProfile,
-    required this.saveProfile,
     required this.biometric,
     required this.biometricSub,
-    required this.agentMode,
     required this.settings,
     required this.language,
-    required this.theme,
     required this.lightMode,
     required this.darkMode,
-    required this.french,
-    required this.arabic,
-    required this.home,
-    required this.transactions,
-    required this.profile,
-    required this.activate2,
-    required this.activated,
-    required this.cardActive,
-    required this.activateCard,
-    required this.cardReady2,
-    required this.cardActivated,
-    required this.mastercard,
-    required this.cardNetwork,
   });
 }
 
 const _fr = _L(
-  activate: 'Activer ma carte',
-  activateSubtitle: 'Paiement direct USDT · Réseau Polygon',
-  chooseAmount: 'Choisir le montant de la carte',
-  payDirectly: 'Payez directement en USDT sur le réseau Polygon',
-  sendExactly: 'Envoyez exactement',
-  usdtPolygonOnly: 'USDT sur le réseau Polygon uniquement',
-  exactAmount: 'MONTANT EXACT À ENVOYER',
-  usdtAddress: 'ADRESSE USDT (POLYGON)',
-  addressCopied: 'Adresse copiée',
-  polygonWarning: '⚠ Envoyez uniquement sur le réseau Polygon. Tout envoi sur un autre réseau sera perdu.',
-  paidVerify: 'J\'ai payé — Vérifier',
-  orderCreated: 'Commande créée',
-  newVccCard: 'Nouvelle carte VCC',
-  checking: 'Vérification du paiement…',
-  cardReady: 'Carte prête !',
-  newCardActivated: 'Votre nouvelle carte VCC Mastercard est activée.',
-  viewCard: 'Voir ma carte',
-  close: 'Fermer',
-  paymentReceived: 'Paiement reçu — carte en cours d\'émission, revérifiez dans 1 min.',
-  paymentNotReceived: 'Paiement non reçu. Vérifiez que vous avez envoyé exactement',
-  recharge: 'Nouvelle carte',
-  createOrder: 'Créer ma commande',
-  myProfile: 'Mon profil',
-  saveProfile: 'Enregistrer',
   biometric: 'Protection biométrique',
   biometricSub: 'Empreinte / Face ID au démarrage',
-  agentMode: 'Mode Agent',
   settings: 'Paramètres',
   language: 'Langue',
-  theme: 'Thème',
   lightMode: 'Mode clair',
   darkMode: 'Mode sombre',
-  french: 'Français',
-  arabic: 'العربية',
-  home: 'Accueil',
-  transactions: 'Transactions',
-  profile: 'Profil',
-  activate2: 'Activer',
-  activated: 'Activée',
-  cardActive: 'Carte active · Paiements internationaux',
-  activateCard: 'Activez votre carte pour commencer',
-  cardReady2: 'Carte activée !',
-  cardActivated: 'Votre carte VCC Mastercard est prête.',
-  mastercard: 'Carte Mastercard',
-  cardNetwork: 'réseau Polygon',
 );
 
 const _ar = _L(
-  activate: 'تفعيل البطاقة',
-  activateSubtitle: 'دفع مباشر بـ USDT · شبكة Polygon',
-  chooseAmount: 'اختر قيمة البطاقة',
-  payDirectly: 'ادفع مباشرةً بـ USDT على شبكة Polygon',
-  sendExactly: 'أرسل بالضبط',
-  usdtPolygonOnly: 'USDT على شبكة Polygon فقط',
-  exactAmount: 'المبلغ الدقيق للإرسال',
-  usdtAddress: 'عنوان USDT (Polygon)',
-  addressCopied: 'تم نسخ العنوان',
-  polygonWarning: '⚠ أرسل فقط على شبكة Polygon. أي إرسال على شبكة أخرى سيُفقد.',
-  paidVerify: 'دفعت — تحقق',
-  orderCreated: 'تم إنشاء الطلب',
-  newVccCard: 'بطاقة VCC جديدة',
-  checking: 'جارٍ التحقق من الدفع…',
-  cardReady: 'البطاقة جاهزة!',
-  newCardActivated: 'بطاقة Mastercard VCC الجديدة مُفعَّلة.',
-  viewCard: 'عرض البطاقة',
-  close: 'إغلاق',
-  paymentReceived: 'تم استلام الدفع — يتم إصدار البطاقة، تحقق خلال دقيقة.',
-  paymentNotReceived: 'لم يُستلم الدفع. تأكد من إرسال بالضبط',
-  recharge: 'بطاقة جديدة',
-  createOrder: 'إنشاء طلب',
-  myProfile: 'ملفي الشخصي',
-  saveProfile: 'حفظ',
   biometric: 'الحماية البيومترية',
   biometricSub: 'بصمة الإصبع / Face ID عند التشغيل',
-  agentMode: 'وضع الوكيل',
   settings: 'الإعدادات',
   language: 'اللغة',
-  theme: 'المظهر',
   lightMode: 'المظهر الفاتح',
   darkMode: 'المظهر الداكن',
-  french: 'Français',
-  arabic: 'العربية',
-  home: 'الرئيسية',
-  transactions: 'المعاملات',
-  profile: 'الملف',
-  activate2: 'تفعيل',
-  activated: 'مُفعَّلة',
-  cardActive: 'بطاقة نشطة · مدفوعات دولية',
-  activateCard: 'فعّل بطاقتك للبدء',
-  cardReady2: 'تم تفعيل البطاقة!',
-  cardActivated: 'بطاقة VCC Mastercard جاهزة.',
-  mastercard: 'بطاقة Mastercard',
-  cardNetwork: 'شبكة Polygon',
 );
 
 _L get L => langNotifier.value == 'ar' ? _ar : _fr;
@@ -1237,7 +1083,7 @@ class _SplashScreenState extends State<SplashScreen>
 // same signing key, so Android installs it over the old one (no uninstall).
 class UpdateCheck {
   static Future<void> run(BuildContext context) async {
-    if (kIsWeb || kBuildNumber == 0) return;
+    if (kIsWeb || kPlayBuild || kBuildNumber == 0) return;
     try {
       final r = await http.get(Uri.parse(kVersionUrl)).timeout(const Duration(seconds: 10));
       if (r.statusCode != 200) return;
@@ -1985,6 +1831,12 @@ class ShopApi {
     try {
       await _req('POST', '/wallet/logout', bearer: walletToken);
     } catch (_) {}
+    walletToken = null;
+    await _save(_tokKey, null);
+  }
+
+  static Future<void> deleteAccount(String pin) async {
+    await _req('POST', '/wallet/delete-account', bearer: walletToken, body: {'pin': pin});
     walletToken = null;
     await _save(_tokKey, null);
   }
@@ -3689,10 +3541,67 @@ class _WalletScreenState extends State<WalletScreen> {
                     },
                     child: Text('Se déconnecter', style: TextStyle(color: AppColors.hint)),
                   ),
+                  TextButton(
+                    onPressed: _deleteAccount,
+                    child: const Text('Supprimer mon compte', style: TextStyle(color: Color(0xFFF97066))),
+                  ),
                 ]),
               ),
       ),
     );
+  }
+
+  // Google Play exige la suppression du compte depuis l'app. Le serveur refuse
+  // tant qu'il reste du solde ou une commande en cours.
+  Future<void> _deleteAccount() async {
+    final pin = TextEditingController();
+    String? err;
+    bool busy = false;
+    final done = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Supprimer mon compte'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Ton PIN, ton email et tes sessions seront effacés, ainsi que tes adresses de livraison. '
+                'L\'historique des commandes et du solde est gardé de façon anonyme pour la comptabilité. '
+                'C\'est définitif.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: pin,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 8,
+              decoration: const InputDecoration(labelText: 'Ton PIN pour confirmer', counterText: ''),
+            ),
+            if (err != null)
+              Padding(padding: const EdgeInsets.only(top: 8),
+                  child: Text(err!, style: const TextStyle(color: Color(0xFFF97066)))),
+          ]),
+          actions: [
+            TextButton(onPressed: busy ? null : () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+            TextButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      setD(() { busy = true; err = null; });
+                      try {
+                        await ShopApi.deleteAccount(pin.text.trim());
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      } on ApiError catch (e) {
+                        setD(() { busy = false; err = e.message; });
+                      }
+                    },
+              child: const Text('Supprimer', style: TextStyle(color: Color(0xFFF97066))),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (done == true && mounted) {
+      setState(() => _me = null);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ton compte a été supprimé.')));
+    }
   }
 
   Widget _historyRow(Map<String, dynamic> h) {
@@ -3854,7 +3763,7 @@ class _AgentWalletScreenState extends State<AgentWalletScreen> {
   // USDT addresses come from /agent/me; an older backend sends none and the block stays hidden.
   List<Widget> _rechargeSection() {
     final addresses = (_me?['paymentAddresses'] as List?) ?? const [];
-    if (addresses.isEmpty) return const [];
+    if (kPlayBuild || addresses.isEmpty) return const [];
     final selected = addresses[_payNetwork.clamp(0, addresses.length - 1)] as Map;
     final String network = selected['network'];
     final String address = selected['address'];

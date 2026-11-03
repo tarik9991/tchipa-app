@@ -33,8 +33,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.nearpay.app"
+        // The sideloaded GitHub APK keeps its historical id so existing installs still
+        // update in place; the Play build (PLAY_STORE=true, play-release.yml) uses its own.
+        applicationId = if (System.getenv("PLAY_STORE") == "true") "uk.co.tchipa.app" else "com.nearpay.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

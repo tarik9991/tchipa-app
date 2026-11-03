@@ -1,0 +1,155 @@
+# Google Play release: builds a signed Android App Bundle (.aab) and, when the
+# PLAY_SERVICE_ACCOUNT_JSON secret exists, uploads it to the Play "internal" track.
+#
+# Manual only (Actions tab → "Play Store release (AAB)" → Run workflow) so that a
+# push to main never ships to Play by accident. The sideloaded APK pipeline in
+# build.yml is untouched.
+#
+# Differences from build.yml, all deliberate:
+#  - Flutter 3.41.x: its default targetSdk is 36, which Google Play requires for
+#    new apps and updates since 31 Aug 2026 (Flutter 3.29 would give 35 → rejected).
+#  - NO --dart-define=BUILD_NUMBER: kBuildNumber stays 0, so UpdateCheck in
+#    lib/main.dart never offers to download the GitHub APK. Play forbids an app
+#    from updating itself outside Play (Device and Network Abuse policy).
+#  - versionCode = 10000 + run number: always above the sideloaded APK's codes
+#    and strictly increasing, as Play requires.
+#  - The release keystore is mandatory here (it becomes the Play *upload* key);
+#    we never fall back to the debug key.
+name: Play Store release (AAB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: 'Piste Play (internal, alpha = test fermé, beta = test ouvert, production)'
+        required: true
+        default: internal
+        type: choice
+        options: [internal, alpha, beta, production]
+      release_status:
+        description: 'draft tant que l''app n''a jamais été publiée/validée ; completed ensuite'
+        required: true
+        default: draft
+        type: choice
+        options: [draft, completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-release
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+      MIN_TARGET_SDK: 36
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.6'
+          channel: stable
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Detect Play service account secret
+        id: play
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$PLAY_JSON" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Set up release (upload) signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD:  ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD:    ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS:       ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+            echo "::error::Release keystore secrets missing — Play refuses debug-signed bundles."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/tchipa-release.jks
+          cat > android/key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=tchipa-release.jks
+          EOF
+
+      # PLAY_STORE=true: Gradle switches to the Play applicationId (uk.co.tchipa.app)
+      # and lib/main.dart hides the agent USDT addresses and the APK update prompt.
+      - name: Build signed App Bundle
+        env:
+          PLAY_STORE: 'true'
+        run: |
+          VERSION_CODE=$((10000 + ${{ github.run_number }}))
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          flutter build appbundle --release --build-number=$VERSION_CODE --dart-define=PLAY_STORE=true
+
+      - name: Check applicationId, targetSdk and forbidden permissions
+        run: |
+          MANIFEST=$(find build/app/intermediates -path '*release*' -name AndroidManifest.xml \
+                     | xargs -r grep -l 'targetSdkVersion' | head -1)
+          APP_ID=$(grep -oP 'package="\K[^"]+' "$MANIFEST" | head -1)
+          echo "PACKAGE_NAME=$APP_ID" >> "$GITHUB_ENV"
+          TARGET=$(grep -oP 'targetSdkVersion="\K[0-9]+' "$MANIFEST" | head -1)
+          echo "applicationId=$APP_ID  versionCode=$VERSION_CODE  targetSdk=$TARGET  ($MANIFEST)"
+          if [ -z "$TARGET" ] || [ "$TARGET" -lt "$MIN_TARGET_SDK" ]; then
+            echo "::error::targetSdk=$TARGET < $MIN_TARGET_SDK required by Google Play."
+            exit 1
+          fi
+          if grep -q 'REQUEST_INSTALL_PACKAGES' "$MANIFEST"; then
+            echo "::error::REQUEST_INSTALL_PACKAGES found — self-updating apps are refused on Play."
+            exit 1
+          fi
+          if [ "$APP_ID" != "uk.co.tchipa.app" ]; then
+            echo "::error::applicationId=$APP_ID, expected uk.co.tchipa.app — it becomes permanent on the first Play upload."
+            exit 1
+          fi
+          if grep -q 'android.permission.CAMERA' "$MANIFEST"; then
+            echo "::error::CAMERA permission found — unused, remove it before shipping to Play."
+            exit 1
+          fi
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f android/app/tchipa-release.jks android/key.properties
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tchipa-play-${{ env.VERSION_CODE }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+      - name: Upload to Google Play
+        if: steps.play.outputs.enabled == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ env.PACKAGE_NAME }}
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: ${{ inputs.track }}
+          status: ${{ inputs.release_status }}
+          whatsNewDirectory: store/whatsnew
+
+      - name: No Play secret — upload skipped
+        if: steps.play.outputs.enabled != 'true'
+        run: |
+          echo "::notice::PLAY_SERVICE_ACCOUNT_JSON not set: the signed AAB is in the run's artifacts. Upload it by hand in Play Console (see store/GUIDE_PLAY_STORE.md)."

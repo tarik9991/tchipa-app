@@ -1,0 +1,39 @@
+Tchipa is an online fashion shop built for Algeria: thousands of clothing items selected from manufacturers in China, delivered to your wilaya, with shipping and customs already included in the displayed price.
+
+★ A BIG CATALOGUE
+• Women, men, kids, shoes
+• Browse by category, "Small prices" picks under $5
+• Photos, sizes, colours and detailed prices for every item
+
+★ CLEAR PRICES, NO SURPRISES
+• The displayed price includes international shipping and customs fees
+• No hidden fees at delivery
+• Estimated delivery time: 2 to 4 weeks
+
+★ A SIMPLE BALANCE
+• Pay a Tchipa agent in dinars (BaridiMob) and they top up your in-app balance
+• Pay for your orders with that balance in one tap
+• Full history of your top-ups and purchases
+
+★ ORDER TRACKING
+• Every order goes through: paid, bought from the supplier, shipped, delivered
+• The courier contacts you on the phone number you provide
+
+★ SECURITY
+• Your balance is protected by a PIN code
+• Optional app lock with fingerprint or device credentials
+• Encrypted connections (HTTPS)
+
+★ A REAL TEAM
+• Agents in Algeria you can reach directly
+• Community and support on Telegram
+
+How it works
+1. Create your profile (name, phone, email) and your PIN.
+2. Top up your balance with a Tchipa agent.
+3. Pick your items, enter your delivery address and pay with your balance.
+4. Track your order to your door.
+
+The Tchipa balance can only be used to buy items in the Tchipa shop: it is not a bank account or a payment method usable elsewhere, and it cannot be transferred to another user.
+
+Privacy policy: https://tchipa.co.uk/privacy.html

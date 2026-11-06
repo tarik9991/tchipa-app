@@ -14,6 +14,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:video_player/video_player.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'dart:io' show File;
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 // ============================================
 // CONFIGURATION
@@ -1759,6 +1762,9 @@ class _ElectricLogoPainter extends CustomPainter {
 // BaridiMob). Server routes: /shop/*, /wallet/*, /agent/* in backend/server.js.
 // The app never sends a price — the server charges the chosen variant's price.
 
+// Product links open the sheet on the website (website/index.html handles #produit-<id>).
+const String kShopShareBase = 'https://tchipa.co.uk/#produit-';
+
 const LinearGradient _kShopGrad =
     LinearGradient(colors: [Color(0xFFFF6A00), Color(0xFFFF3D1F)]);
 
@@ -2072,6 +2078,95 @@ Widget _netImage(String? url, {BoxFit fit = BoxFit.cover, bool thumb = true}) {
         ? CachedNetworkImage(imageUrl: url, fit: fit, placeholder: ph, errorWidget: (c2, u2, e2) => ph(c2, u2))
         : ph(c, u),
   );
+}
+
+// Full-screen photo viewer: pinch to zoom (x5), double tap to zoom in/out, swipe between photos.
+class PhotoViewerScreen extends StatefulWidget {
+  final List<String> images;
+  final int initial;
+  const PhotoViewerScreen({super.key, required this.images, this.initial = 0});
+  @override
+  State<PhotoViewerScreen> createState() => _PhotoViewerScreenState();
+}
+
+class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
+  late final PageController _pc = PageController(initialPage: widget.initial);
+  late int _i = widget.initial;
+  final Map<int, TransformationController> _tc = {};
+  bool _zoomed = false;
+  TapDownDetails? _tap;
+
+  TransformationController _ctl(int i) => _tc.putIfAbsent(i, () => TransformationController());
+
+  @override
+  void dispose() {
+    _pc.dispose();
+    for (final c in _tc.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _doubleTap() {
+    final c = _ctl(_i);
+    if (c.value.getMaxScaleOnAxis() > 1.01) {
+      c.value = Matrix4.identity();
+    } else if (_tap != null) {
+      final p = _tap!.localPosition;
+      c.value = Matrix4.identity()
+        ..translate(-p.dx * 1.5, -p.dy * 1.5)
+        ..scale(2.5);
+    }
+    setState(() => _zoomed = c.value.getMaxScaleOnAxis() > 1.01);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(children: [
+        PageView.builder(
+          controller: _pc,
+          physics: _zoomed ? const NeverScrollableScrollPhysics() : null,
+          itemCount: widget.images.length,
+          onPageChanged: (i) => setState(() {
+            _ctl(_i).value = Matrix4.identity();
+            _i = i;
+            _zoomed = false;
+          }),
+          itemBuilder: (_, i) => GestureDetector(
+            onDoubleTapDown: (d) => _tap = d,
+            onDoubleTap: _doubleTap,
+            child: InteractiveViewer(
+              transformationController: _ctl(i),
+              minScale: 1,
+              maxScale: 5,
+              onInteractionEnd: (_) => setState(() => _zoomed = _ctl(i).value.getMaxScaleOnAxis() > 1.01),
+              child: Center(child: _netImage(widget.images[i], fit: BoxFit.contain, thumb: false)),
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(children: [
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                onPressed: () => Navigator.pop(context),
+              ),
+              const Spacer(),
+              if (widget.images.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Text('${_i + 1}/${widget.images.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                ),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
 }
 
 class _CartButton extends StatelessWidget {
@@ -2915,6 +3010,7 @@ class _ProductScreenState extends State<ProductScreen> {
   String? _err;
   final Map<String, String> _sel = {};
   int _qty = 1, _img = 0;
+  final PageController _pages = PageController();
 
   List<Map<String, dynamic>> get _variants =>
       ((_p?['variants'] as List?) ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -2976,6 +3072,97 @@ class _ProductScreenState extends State<ProductScreen> {
         return _sel.entries.where((e) => e.key != key).every((e) => '${props[e.key]}' == e.value);
       });
 
+  bool _sharing = false;
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  // Share = photo + name + price + link tchipa.co.uk/#produit-<id> (the site opens the
+  // product sheet straight away) — agents send it on WhatsApp/Telegram to their clients.
+  String get _shareLink => '$kShopShareBase${widget.productId}';
+
+  String _shareText(Map<String, dynamic> p) {
+    final from = p['priceFrom'] as num?, to = p['priceTo'] as num?;
+    final price = from == null ? '' : (to != null && to > from ? 'dès ${_usd(from)}' : _usd(from));
+    final opts = ((p['options'] as Map?) ?? {}).entries
+        .map((e) => '${e.key} : ${(e.value as List).take(12).join(', ')}')
+        .join('\n');
+    return '${p['title']}${price.isEmpty ? '' : ' — $price'}\n'
+        '${opts.isEmpty ? '' : '$opts\n'}'
+        'Livré en Algérie, douane comprise.\n'
+        '$_shareLink';
+  }
+
+  Future<void> _share() async {
+    final p = _p;
+    if (p == null) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_library_rounded, color: Color(0xFFFF6A00)),
+            title: Text('Partager le produit', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+            subtitle: Text('Toutes les photos, le prix, les tailles et le lien',
+                style: TextStyle(color: AppColors.sublabel)),
+            onTap: () => Navigator.pop(ctx, 'all'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.link_rounded, color: Color(0xFFFF6A00)),
+            title: Text('Partager le lien seulement', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+            onTap: () => Navigator.pop(ctx, 'text'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.copy_rounded, color: Color(0xFFFF6A00)),
+            title: Text('Copier le lien', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+            onTap: () => Navigator.pop(ctx, 'copy'),
+          ),
+        ]),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final text = _shareText(p);
+    if (choice == 'copy') {
+      await Clipboard.setData(ClipboardData(text: _shareLink));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Lien copié'), behavior: SnackBarBehavior.floating));
+      }
+      return;
+    }
+    setState(() => _sharing = true);
+    try {
+      final imgs = ((p['images'] as List?) ?? [p['image']]).whereType<String>().take(10).toList();
+      if (choice == 'all' && !kIsWeb && imgs.isNotEmpty) {
+        final dir = (await getTemporaryDirectory()).path;
+        final files = <XFile>[];
+        await Future.wait(imgs.asMap().entries.map((e) async {
+          try {
+            final r = await http.get(Uri.parse(e.value)).timeout(const Duration(seconds: 10));
+            if (r.statusCode == 200 && r.bodyBytes.isNotEmpty) {
+              final f = File('$dir/tchipa_${widget.productId}_${e.key}.jpg');
+              await f.writeAsBytes(r.bodyBytes);
+              files.add(XFile(f.path, mimeType: 'image/jpeg'));
+            }
+          } catch (_) {/* skip this photo */}
+        }));
+        files.sort((a, b) => a.path.compareTo(b.path));
+        if (files.isNotEmpty) {
+          await Share.shareXFiles(files, text: text, subject: '${p['title']}');
+          return;
+        }
+      }
+      await Share.share(text, subject: '${p['title']}');
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   void _add() {
     final v = _current;
     if (v == null) return;
@@ -3009,7 +3196,17 @@ class _ProductScreenState extends State<ProductScreen> {
         scrolledUnderElevation: 0,
         title: Text(p == null ? '' : '${p['sub'] ?? p['category'] ?? ''}',
             style: TextStyle(color: AppColors.label, fontSize: 16, fontWeight: FontWeight.w700)),
-        actions: const [Padding(padding: EdgeInsets.only(right: 12), child: _CartButton())],
+        actions: [
+          if (p != null)
+            IconButton(
+              tooltip: 'Partager',
+              icon: _sharing
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.share_rounded),
+              onPressed: _sharing ? null : _share,
+            ),
+          const Padding(padding: EdgeInsets.only(right: 12), child: _CartButton()),
+        ],
       ),
       body: p == null
           ? Center(
@@ -3033,10 +3230,29 @@ class _ProductScreenState extends State<ProductScreen> {
             aspectRatio: 0.9,
             child: Stack(children: [
               PageView.builder(
+                controller: _pages,
                 itemCount: max(1, images.length),
                 onPageChanged: (i) => setState(() => _img = i),
-                itemBuilder: (_, i) => _netImage(images.isEmpty ? null : images[i], thumb: false),
+                itemBuilder: (_, i) => GestureDetector(
+                  onTap: images.isEmpty
+                      ? null
+                      : () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => PhotoViewerScreen(images: images, initial: i))),
+                  child: _netImage(images.isEmpty ? null : images[i], thumb: false),
+                ),
               ),
+              if (images.isNotEmpty)
+                Positioned(
+                  left: 14, bottom: 14,
+                  child: IgnorePointer(
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
+                      child: const Icon(Icons.zoom_in_rounded, color: Colors.white, size: 18),
+                    ),
+                  ),
+                ),
               if (images.length > 1)
                 Positioned(
                   right: 14, bottom: 14,
@@ -3058,7 +3274,10 @@ class _ProductScreenState extends State<ProductScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
                 itemCount: images.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (_, i) => Container(
+                itemBuilder: (_, i) => GestureDetector(
+                 onTap: () => _pages.animateToPage(i,
+                     duration: const Duration(milliseconds: 250), curve: Curves.easeOut),
+                 child: Container(
                   width: 54,
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
@@ -3067,6 +3286,7 @@ class _ProductScreenState extends State<ProductScreen> {
                         color: i == _img ? const Color(0xFFFF3D1F) : Colors.transparent, width: 2),
                   ),
                   child: _netImage(images[i]),
+                 ),
                 ),
               ),
             ),

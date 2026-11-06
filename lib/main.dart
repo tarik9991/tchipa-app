@@ -3047,7 +3047,9 @@ class _ProductScreenState extends State<ProductScreen> {
       if (!mounted) return;
       setState(() => _p = d);
       if (_variants.isNotEmpty) {
-        (_variants.first['props'] as Map).forEach((k, v) => _sel['$k'] = '$v');
+        // Start on the cheapest variant so the sheet shows the same price as the list ("dès").
+        final cheapest = _variants.reduce((a, b) => (a['priceUsd'] as num) <= (b['priceUsd'] as num) ? a : b);
+        (cheapest['props'] as Map).forEach((k, v) => _sel['$k'] = '$v');
         setState(() {});
       }
     } on ApiError catch (e) {

@@ -66,3 +66,15 @@ android/app/*.jks
 
 # tchipa-ai service secrets (deployed only on the VPS)
 tchipa-ai/.env
+
+# Local secrets / data / other projects living in this checkout
+.env
+**/.env
+node_modules/
+scraper/apify-actor/storage/
+scraper/apify-actor.tar.gz
+scraper/yupoo/apify_csv/
+campagne-verite/
+verite-ai/
+.claude/settings.local.json
+website/index.vcc-backup.html

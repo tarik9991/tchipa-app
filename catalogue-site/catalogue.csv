@@ -1,0 +1,21 @@
+id,title,category,price_dzd,colors,sizes,images,description
+T001,T-shirt coton 220g blanc uni,T-shirts,2200,Blanc;Noir;Gris chiné,S;M;L;XL;XXL,,Coton peigné 220 g/m², coupe droite, col côtelé renforcé. Coupe unisexe.
+T002,T-shirt oversize blanc épais 260g,T-shirts,2500,Blanc;Crème;Noir,S;M;L;XL,,Coton lourd 260 g/m², épaules tombantes, coupe oversize unisexe.
+T003,T-shirt manches longues neutre,T-shirts,2700,Blanc;Gris;Beige,S;M;L;XL;XXL,,Jersey coton 240 g/m², manches longues, finition double piqûre.
+T004,Polo piqué manches courtes,T-shirts,2600,Blanc;Marine;Gris,S;M;L;XL,,Piqué coton, col tricoté, deux boutons nacre.
+S001,Sweat à capuche gris chiné,Sweats,4200,Gris chiné;Noir;Beige,M;L;XL;XXL,,Molleton gratté 320 g/m², capuche doublée, poche kangourou.
+S002,Hoodie oversize crème,Sweats,4500,Crème;Noir;Gris,M;L;XL,,Molleton 350 g/m², coupe oversize, cordon plat ton sur ton.
+S003,Sweat col rond zippé,Sweats,4400,Noir;Gris;Bleu nuit,M;L;XL;XXL,,Molleton 330 g/m², zip YKK ton sur ton, bord-côtes.
+S004,Sweat crewneck uni,Sweats,3900,Blanc;Gris;Noir;Vert sauge,S;M;L;XL;XXL,,Molleton 300 g/m², col rond côtelé, coupe droite.
+P001,Jogging molleton noir,Pantalons,3800,Noir;Gris chiné;Marine,S;M;L;XL;XXL,,Molleton 300 g/m², taille élastiquée + cordon, poches latérales.
+P002,Pantalon cargo beige,Pantalons,4600,Beige;Noir;Olive,28;30;32;34;36,,Twill coton, 6 poches, taille comfort.
+P003,Jogging tandem gris,Pantalons,4200,Gris;Noir,M;L;XL,,Survêtement 2 pièces molleton, coudres et chevilles côtelées.
+P004,Jean droit brut,Pantalons,4900,Bleu brut;Noir,28;30;32;34;36,,Denim 12 oz, coupe droite, rivets ton sur ton.
+E001,Doudoune sans manches enfant,Enfants,3500,Noir;Bleu;Rose,4A;6A;8A;10A;12A,,Dessus déperlant, garnissage chaud, capuche amovible.
+E002,Ensemble sweat enfant,Enfants,2900,Gris;Beige;Bleu,2A;4A;6A;8A,,Sweat + jogging assortis, molleton doux intérieur coton.
+E003,T-shirt enfant pack de 3,Enfants,2400,Blanc;Gris;Blanc cassé,2A;4A;6A;8A;10A,,3 t-shirts coton 180 g/m², encolure élastiquée.
+E004,Baskets enfant scratch,Enfants,3200,Blanc;Noir,24;26;28;30;32;34,,Semelle légère, fermeture scratch, tige textile.
+A001,Casquette baseball unie,Accessoires,1500,Noir;Beige;Marine;Blanc,,Taille unique,Coton twill 6 panneaux, sangle ajustable métal.
+A002,Bonnet côtelé,Accessoires,1200,Noir;Gris;Beige,,Taille unique,Acrylique côtelé doublé polaire.
+A003,Chaussettes sport pack 5,Accessoires,900,Blanc;Noir,39-42;43-46,,5 paires coton renforcé talon et pointe.
+A004,Sac banane neutre,Accessoires,1800,Noir;Beige,,Taille unique,Nylon 600D, sangle réglable, 3 compartiments.

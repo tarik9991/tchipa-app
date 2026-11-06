@@ -1,0 +1,33 @@
+{
+    "actorSpecification": 1,
+    "name": "yupoo-catalog",
+    "version": "0.1",
+    "buildTag": "latest",
+    "title": "Yupoo catalog (Tchipa)",
+    "description": "Lists all albums of a Yupoo store and extracts title, price and photo URLs.",
+    "meta": {
+        "templateVersion": "0.0.1"
+    },
+    "input": {
+        "title": "Yupoo catalog input",
+        "type": "object",
+        "schemaVersion": 1,
+        "properties": {
+            "startUrl": {
+                "title": "Store or category URL",
+                "type": "string",
+                "description": "e.g. https://tianjin-no1.x.yupoo.com or .../categories/5254178",
+                "editor": "textfield"
+            },
+            "maxAlbums": {
+                "title": "Max albums (0 = all)",
+                "type": "integer",
+                "description": "Safety cap on album pages crawled. 0 means unlimited.",
+                "default": 0,
+                "editor": "number"
+            }
+        },
+        "required": ["startUrl"]
+    },
+    "minMemoryMbytes": 1024
+}

@@ -1,0 +1,569 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Boutique Tchipa</title>
+<style>
+/* ============ TOKENS ============ */
+/* Layout concept : vitrine mobile-first — bandeau COD en haut, filtres en chips,
+   grille produits 2 col sur téléphone / 3-4 sur desktop, fiche en overlay plein écran. */
+:root {
+  --bg: #f7f6f3;
+  --surface: #ffffff;
+  --ink: #1a1d21;
+  --muted: #6b7178;
+  --line: #e3e1dc;
+  --accent: #0e6b4f;
+  --accent-ink: #ffffff;
+  --chip: #eeede8;
+  --good: #0e6b4f;
+  --warn: #b46a00;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131518;
+    --surface: #1c1f23;
+    --ink: #eceae6;
+    --muted: #9aa0a6;
+    --line: #2b2f34;
+    --accent: #35c48f;
+    --accent-ink: #08130e;
+    --chip: #24282d;
+    --good: #35c48f;
+    --warn: #e0a04a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131518;
+  --surface: #1c1f23;
+  --ink: #eceae6;
+  --muted: #9aa0a6;
+  --line: #2b2f34;
+  --accent: #35c48f;
+  --accent-ink: #08130e;
+  --chip: #24282d;
+  --good: #35c48f;
+  --warn: #e0a04a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+button { font: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+
+/* ============ HEADER ============ */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top, 0px);
+  border-bottom: 1px solid var(--line);
+  margin: 0 -16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.topbar-in {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-block: 12px;
+}
+.brand { font-weight: 700; font-size: 18px; letter-spacing: -0.2px; }
+.brand small { color: var(--muted); font-weight: 500; }
+
+.cod-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-block: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.cod-badge strong { color: var(--good); }
+.cod-badge svg { flex: none; }
+
+/* ============ FILTERS ============ */
+.filters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-block: 4px 12px;
+  scrollbar-width: none;
+}
+.filters::-webkit-scrollbar { display: none; }
+.chip {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.search {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 15px;
+  margin-block: 4px 10px;
+}
+.search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ============ GRID ============ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+  max-width: 1100px;
+  margin-inline: auto;
+}
+@media (min-width: 480px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+}
+.card:active { transform: scale(0.985); }
+.thumb {
+  aspect-ratio: 1;
+  background: var(--chip);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px;
+  text-align: center;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-meta { display: flex; align-items: baseline; gap: 8px; margin-top: auto; }
+.price { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.price small { font-weight: 500; color: var(--muted); font-size: 12px; }
+.tag {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding-block: 60px;
+  max-width: 1100px;
+  margin-inline: auto;
+}
+
+/* ============ SHEET PRODUIT ============ */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  z-index: 20;
+}
+.sheet {
+  position: fixed;
+  z-index: 21;
+  left: 0; right: 0; bottom: 0;
+  top: max(48px, env(safe-area-inset-top, 0px));
+  background: var(--bg);
+  border-radius: 16px 16px 0 0;
+  overflow-y: auto;
+  padding: 0 16px 24px;
+  animation: up 0.22s ease-out;
+}
+@keyframes up { from { transform: translateY(30px); opacity: 0.6; } }
+@media (min-width: 720px) {
+  .sheet {
+    left: 50%; right: auto;
+    width: 620px;
+    transform: translateX(-50%);
+    border-radius: 16px;
+    top: max(48px, env(safe-area-inset-top, 0px));
+    bottom: 6vh;
+  }
+  @keyframes up { from { transform: translate(-50%, 30px); opacity: 0.6; } }
+}
+.sheet-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  display: flex;
+  justify-content: flex-end;
+  padding-block: 10px;
+  z-index: 2;
+}
+.close {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 999px;
+  width: 34px; height: 34px;
+  font-size: 16px;
+}
+.sheet h2 { margin: 0 0 4px; font-size: 20px; line-height: 1.3; text-wrap: balance; }
+.sheet .cat { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+.gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.gallery .ph {
+  aspect-ratio: 1;
+  background: var(--chip);
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+}
+.gallery .ph img { width: 100%; height: 100%; object-fit: cover; }
+.gallery .ph:first-child { grid-column: 1 / -1; }
+.opt-label { font-size: 12px; color: var(--muted); margin: 12px 0 6px; letter-spacing: 0.4px; text-transform: uppercase; }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opt {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 7px 13px;
+  font-size: 14px;
+}
+.opt[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sheet .price { font-size: 22px; margin-block: 16px 2px; }
+.order-cta {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  font-size: 16px;
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 14px;
+}
+.order-cta:focus-visible, .chip:focus-visible, .card:focus-visible, .opt:focus-visible, .close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.order-note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px; }
+.sheet .desc { color: var(--ink); font-size: 14px; line-height: 1.6; }
+.sheet .desc code {
+  background: var(--chip);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+/* ============ FOOTER ============ */
+footer {
+  max-width: 1100px;
+  margin: 40px auto 0;
+  padding-block: 20px 30px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+footer .flag { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">Boutique Tchipa</div>
+  </div>
+</header>
+
+<div class="cod-badge">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--good)"><circle cx="9" cy="21" r="1.6"/><circle cx="19" cy="21" r="1.6"/><path d="M1 2h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>
+  <span><strong>Paiement à la livraison</strong> — 58 wilayas. Vous ne payez qu'à la réception du colis.</span>
+</div>
+
+<main>
+  <input id="q" class="search" type="search" placeholder="Rechercher un article…" aria-label="Rechercher un article">
+  <div id="chips" class="filters" role="group" aria-label="Filtrer par catégorie"></div>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>Aucun article ne correspond. Essayez un autre mot-clé.</div>
+</main>
+
+<footer>
+  <div class="flag">Livraison 58 wilayas · Paiement à la livraison · Échange sous 48h si défaut</div>
+  <div id="csvnote" style="margin-top:6px"></div>
+</footer>
+
+<div id="backdrop" class="sheet-backdrop" hidden></div>
+<aside id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sh-title">
+  <div class="sheet-head"><button class="close" id="close" aria-label="Fermer">✕</button></div>
+  <h2 id="sh-title"></h2>
+  <div class="cat" id="sh-cat"></div>
+  <div class="gallery" id="sh-gallery"></div>
+  <div class="opt-label">Couleur</div>
+  <div class="opts" id="sh-colors"></div>
+  <div class="opt-label">Taille</div>
+  <div class="opts" id="sh-sizes"></div>
+  <div class="price" id="sh-price"></div>
+  <button class="order-cta" id="sh-order">Commander — paiement à la livraison</button>
+  <div class="order-note">Un conseiller vous contacte pour confirmer la commande et l'adresse de livraison.</div>
+  <p class="desc" id="sh-desc"></p>
+</aside>
+
+<script>
+/* ============ DONNÉES ============ */
+/* Le site lit catalogue.csv (même dossier) — format standard :
+   id,title,category,price_dzd,colors,sizes,images,description
+   colors/sizes séparés par ";" ; images séparées par ";" (URLs ou chemins).
+   Remplacez simplement le CSV et rechargez — aucun code à toucher. */
+const CSV_URL = 'catalogue.csv';
+
+/* ============ PARSING CSV ============ */
+function parseCSV(text) {
+  const rows = []; let row = []; let field = ''; let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c === '\r') { /* skip */ }
+    else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+const imgPh = (label) => {
+  const d = document.createElement('div');
+  d.className = 'ph';
+  d.textContent = label || 'Image';
+  return d;
+};
+
+/* ============ ÉTAT ============ */
+let PRODUCTS = [];
+let CATS = [];
+let activeCat = '';
+let query = '';
+
+/* ============ RENDU ============ */
+function matches(p) {
+  const okCat = !activeCat || p.category === activeCat;
+  const okQ = !query ||
+    p.title.toLowerCase().includes(query) ||
+    p.category.toLowerCase().includes(query) ||
+    (p.description || '').toLowerCase().includes(query);
+  return okCat && okQ;
+}
+
+function renderChips() {
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  const mk = (label, val) => {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(activeCat === val));
+    b.onclick = () => { activeCat = activeCat === val ? '' : val; renderChips(); renderGrid(); };
+    box.appendChild(b);
+  };
+  mk('Tout', '');
+  CATS.forEach(c => mk(c, c));
+}
+
+function thumbFor(p) {
+  const t = document.createElement('div');
+  t.className = 'thumb';
+  if (p.images && p.images[0]) {
+    const img = document.createElement('img');
+    img.src = p.images[0];
+    img.alt = '';
+    img.loading = 'lazy';
+    img.onerror = () => { img.remove(); t.textContent = 'Image indisponible'; };
+    t.appendChild(img);
+  } else {
+    t.textContent = p.category || 'Article';
+  }
+  return t;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  grid.innerHTML = '';
+  const list = PRODUCTS.filter(matches);
+  empty.hidden = list.length > 0;
+  for (const p of list) {
+    const card = document.createElement('button');
+    card.className = 'card';
+    card.type = 'button';
+    card.appendChild(thumbFor(p));
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    const t = document.createElement('div');
+    t.className = 'card-title';
+    t.textContent = p.title;
+    body.appendChild(t);
+    const meta = document.createElement('div');
+    meta.className = 'card-meta';
+    const pr = document.createElement('div');
+    pr.className = 'price';
+    pr.textContent = p.price_dzd.toLocaleString('fr-DZ') + ' ';
+    const sm = document.createElement('small');
+    sm.textContent = 'DZD';
+    pr.appendChild(sm);
+    meta.appendChild(pr);
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.textContent = (p.sizes && p.sizes[0] && p.sizes[0].includes('-')) ? 'Tailles multiples' : (p.sizes ? p.sizes.length + ' tailles' : '—');
+    meta.appendChild(tag);
+    body.appendChild(meta);
+    card.appendChild(body);
+    card.onclick = () => openSheet(p);
+    grid.appendChild(card);
+  }
+}
+
+/* ============ SHEET PRODUIT ============ */
+let selColor = '', selSize = '';
+function openSheet(p) {
+  selColor = (p.colors && p.colors[0]) || '';
+  selSize = (p.sizes && p.sizes[0]) || '';
+  document.getElementById('sh-title').textContent = p.title;
+  document.getElementById('sh-cat').textContent = p.category + ' · réf ' + p.id;
+  const g = document.getElementById('sh-gallery');
+  g.innerHTML = '';
+  if (p.images && p.images.length) {
+    p.images.forEach((src, i) => {
+      const d = document.createElement('div');
+      d.className = 'ph';
+      const img = document.createElement('img');
+      img.src = src; img.alt = ''; img.loading = 'lazy';
+      img.onerror = () => { img.remove(); d.textContent = '—'; };
+      d.appendChild(img);
+      g.appendChild(d);
+    });
+  } else {
+    g.appendChild(imgPh('Photo à venir'));
+  }
+  const mkOpts = (boxId, values, sel, onPick) => {
+    const box = document.getElementById(boxId);
+    box.innerHTML = '';
+    (values && values.length ? values : ['—']).forEach(v => {
+      const b = document.createElement('button');
+      b.className = 'opt';
+      b.type = 'button';
+      b.textContent = v;
+      b.setAttribute('aria-pressed', String(v === sel));
+      b.onclick = () => { onPick(v); [...box.children].forEach(x => x.setAttribute('aria-pressed', String(x === b))); };
+      box.appendChild(b);
+    });
+  };
+  mkOpts('sh-colors', p.colors, selColor, v => selColor = v);
+  mkOpts('sh-sizes', p.sizes, selSize, v => selSize = v);
+  document.getElementById('sh-price').textContent = p.price_dzd.toLocaleString('fr-DZ') + ' DZD';
+  document.getElementById('sh-desc').textContent = p.description || '';
+  document.getElementById('sh-order').onclick = () => {
+    const msg = `Bonjour, je souhaite commander : ${p.title} (réf ${p.id})`
+      + (selColor ? ` — couleur : ${selColor}` : '')
+      + (selSize ? ` — taille : ${selSize}` : '')
+      + ` — prix : ${p.price_dzd.toLocaleString('fr-DZ')} DZD`;
+    document.getElementById('sh-order').textContent = '✓ ' + msg;
+    setTimeout(() => {
+      document.getElementById('sh-order').textContent = 'Commander — paiement à la livraison';
+    }, 4000);
+  };
+  document.getElementById('backdrop').hidden = false;
+  document.getElementById('sheet').hidden = false;
+  document.getElementById('close').focus();
+}
+function closeSheet() {
+  document.getElementById('backdrop').hidden = true;
+  document.getElementById('sheet').hidden = true;
+}
+document.getElementById('close').onclick = closeSheet;
+document.getElementById('backdrop').onclick = closeSheet;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+/* ============ RECHERCHE ============ */
+document.getElementById('q').oninput = e => {
+  query = e.target.value.trim().toLowerCase();
+  renderGrid();
+};
+
+/* ============ INIT ============ */
+fetch(CSV_URL)
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+  .then(txt => {
+    const rows = parseCSV(txt);
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    const idx = Object.fromEntries(head.map((h, i) => [h, i]));
+    PRODUCTS = rows.slice(1)
+      .filter(r => r.length > 1 && r[idx.id || 0])
+      .map(r => ({
+        id: (r[idx.id] || '').trim(),
+        title: (r[idx.title] || '').trim(),
+        category: (r[idx.category] || '').trim(),
+        price_dzd: parseFloat((r[idx.price_dzd] || '0').replace(/\s/g, '').replace(',', '.')) || 0,
+        colors: (r[idx.colors] || '').split(';').map(s => s.trim()).filter(Boolean),
+        sizes: (r[idx.sizes] || '').split(';').map(s => s.trim()).filter(Boolean),
+        images: (r[idx.images] || '').split(';').map(s => s.trim()).filter(Boolean),
+        description: (r[idx.description] || '').trim(),
+      }));
+    CATS = [...new Set(PRODUCTS.map(p => p.category).filter(Boolean))];
+    document.getElementById('csvnote').textContent =
+      PRODUCTS.length + ' articles · source : catalogue.csv';
+    renderChips();
+    renderGrid();
+  })
+  .catch(e => {
+    document.getElementById('empty').hidden = false;
+    document.getElementById('empty').textContent = 'Impossible de charger catalogue.csv — vérifiez le fichier à côté de index.html. (' + e.message + ')';
+  });
+</script>
+</body>

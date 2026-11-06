@@ -2770,7 +2770,7 @@ db.exec(`
 // Price formula = prix() in ~/tchipa-boutique/echantillon.py — keep both in sync.
 // ---------------------------------------------------------------------------
 const TMAPI_ITEM_URL = 'http://api.tmapi.top/1688/item_detail';
-const SHOP_FRET_USD_KG = 10.0;         // agent: freight to Algeria, customs included
+const SHOP_FRET_USD_KG = 17.0;         // freight to Algeria, customs included (Tarik 2026-11-06; was 10)
 const SHOP_COMMISSION_AGENT = 0.10;
 const SHOP_MARGE = 0.25;
 const SHOP_POIDS_MIN_KG = 0.10;
@@ -2796,6 +2796,34 @@ db.exec(`
     fetched_at     TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Freight rate change → re-price the sheets already bought (each variant keeps its
+// fret_usd, so no TMAPI call is needed). Runs once per rate; shop_meta remembers it.
+db.exec(`CREATE TABLE IF NOT EXISTS shop_meta (k TEXT PRIMARY KEY, v TEXT)`);
+(function repriceSheetsForFreight() {
+  const row = db.prepare(`SELECT v FROM shop_meta WHERE k = 'fret_usd_kg'`).get();
+  const old = row ? parseFloat(row.v) : 10.0;     // sheets bought before this code used 10 $/kg
+  if (old === SHOP_FRET_USD_KG) return;
+  const r2 = x => Math.round(x * 100) / 100;
+  const upd = db.prepare(`UPDATE shop_fiches SET variantes_prix = ?, prix_des_usd = ?, prix_max_usd = ? WHERE item_id = ?`);
+  let n = 0;
+  db.transaction(() => {
+    for (const f of db.prepare(`SELECT item_id, variantes_prix FROM shop_fiches WHERE status = 'ok'`).all()) {
+      const vp = JSON.parse(f.variantes_prix || '[]').map(v => {
+        const fret = r2(v.fret_usd * SHOP_FRET_USD_KG / old);
+        const revient = r2(v.revient_usd + fret - v.fret_usd);
+        return { ...v, fret_usd: fret, revient_usd: revient, prix_client_usd: r2(revient * (1 + SHOP_MARGE)) };
+      });
+      if (!vp.length) continue;
+      const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
+      const ref = px[Math.floor(px.length / 2)];
+      upd.run(JSON.stringify(vp), Math.min(...px.filter(x => x >= ref / 3)), px[px.length - 1], f.item_id);
+      n++;
+    }
+    db.prepare(`INSERT OR REPLACE INTO shop_meta (k, v) VALUES ('fret_usd_kg', ?)`).run(String(SHOP_FRET_USD_KG));
+  })();
+  console.log(`[shop] fret ${old} -> ${SHOP_FRET_USD_KG} $/kg : ${n} fiches re-tarifees`);
+})();
 
 function productRow(id) {
   if (SHOP_HIDDEN_ITEMS.includes(id)) return undefined;

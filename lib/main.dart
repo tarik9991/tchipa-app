@@ -1114,8 +1114,26 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _idx = 0;
+  DateTime _lastUpdateCheck = DateTime.now();
+
+  // Android keeps the app alive in the background for days: also check for a new
+  // APK when it comes back to the foreground (at most once every 6 h).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        DateTime.now().difference(_lastUpdateCheck) > const Duration(hours: 6)) {
+      _lastUpdateCheck = DateTime.now();
+      UpdateCheck.run(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
   // Boutique first: PayGate/Swype cards are gone (2026-09), the shop is the product.
   static const _screens = [
     ShopScreen(),
@@ -1127,6 +1145,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => UpdateCheck.run(context));
     if (UserProfile.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {

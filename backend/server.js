@@ -2761,6 +2761,14 @@ db.exec(`
     url_1688        TEXT
   );
 `);
+// Sourcing for the China agent (2026-11-06): the exact 1688 variant in Chinese, fetched once per ordered line.
+{
+  const have = new Set(db.prepare('PRAGMA table_info(shop_order_items)').all().map(c => c.name));
+  for (const [c, t] of [['sku_id', 'TEXT'], ['props_ids', 'TEXT'], ['title_cn', 'TEXT'], ['variant_cn', 'TEXT'],
+                        ['sku_image', 'TEXT'], ['price_cny', 'REAL']]) {
+    if (!have.has(c)) db.exec(`ALTER TABLE shop_order_items ADD COLUMN ${c} ${t}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Vitrine large (2026-10-12): rows with estime = 1 come from 1688 SEARCH pages only
@@ -2870,7 +2878,8 @@ function sheetFromTmapi(d, fx) {
   const poidsMax = Math.max(0, ...skus.map(s => s.package_info?.weight || 0));
   if (d.is_sold_out || !d.stock || !byUnit || !skus.length || poidsMax < 0.05) return { status: 'indispo' };
   const fraisCn = parseFloat(d.delivery_info?.delivery_fee) || 0;
-  const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock,
+  // sku / ids = 1688 skuid + props_ids: identical in the Chinese sheet, so the China agent sees the exact variant.
+  const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock, sku: s.skuid || null, ids: s.props_ids || null,
     ...shopPrice(parseFloat(s.sale_price), fraisCn, s.package_info?.weight || poidsMax, fx) }));
   // A cheap "accessory" variant (5 ¥ crown on a 49 ¥ dress) stays buyable but is not the "from" price.
   const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
@@ -3042,7 +3051,8 @@ app.get('/shop/products/:id', async (req, res) => {
 function priceVariant(p, variantName) {
   const v = JSON.parse(p.variantes_prix || '[]').find(x => x.nom === variantName);
   if (!v || !(v.stock > 0)) return null;
-  return { unitCents: Math.round(v.prix_client_usd * 100), costCents: Math.round(v.revient_usd * 100) };
+  return { unitCents: Math.round(v.prix_client_usd * 100), costCents: Math.round(v.revient_usd * 100),
+           skuId: v.sku || null, propsIds: v.ids || null };
 }
 
 // POST /shop/orders { items:[{productId, variant, qty}], delivery:{fullName, phone, wilaya, commune?, address?},
@@ -3079,10 +3089,10 @@ app.post('/shop/orders', requireClient, (req, res) => {
              `order:${req.clientPhone}:${idem}`);
       const oid = info.lastInsertRowid;
       const ins = db.prepare(`INSERT INTO shop_order_items (order_id, item_id, title, image, variant, qty, unit_cents,
-                                cost_cents, url_1688) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+                                cost_cents, url_1688, sku_id, props_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const l of lines) {
         ins.run(oid, l.p.item_id, productTitle(l.p), JSON.parse(l.p.images || '[]')[0] || null, l.variant, l.qty,
-                l.unitCents, l.costCents * l.qty, l.p.url);
+                l.unitCents, l.costCents * l.qty, l.p.url, l.skuId, l.propsIds);
       }
       // Throws INSUFFICIENT_FUNDS -> the whole order rolls back.
       walletApply({ phone: req.clientPhone, deltaCents: -total, kind: 'purchase', ref: `commande #${oid}`,
@@ -3149,6 +3159,198 @@ app.post('/admin/shop/orders/:id/status', (req, res) => {
     }
   })();
   res.json({ ok: true, order: orderView(db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(id)) });
+});
+
+// ---------------------------------------------------------------------------
+// Sourcing pages (2026-11-06). Tarik talks to the China agent on WhatsApp only, so there is no
+// login: each page is reached by a secret link signed with ADMIN_TOKEN.
+//   /achats/<sig>          Tarik (FR): every order, client details, margin, "send to the agent on WhatsApp"
+//   /achat/<id>/<sig>      China agent (ZH + FR): what to buy on 1688 for one order, NO client details,
+//                          button 已购买 (bought) -> status 'achetee' + 1688 order number in admin_note.
+// Tarik's link: on the VPS `node backend/lien_achats.js` (cd /var/www/tchipa-api && node lien_achats.js).
+// The Chinese variant is fetched from TMAPI once per ordered line (sku_id / props_ids are the same in
+// both languages); older lines without sku_id are matched on the English variant name first.
+// ---------------------------------------------------------------------------
+const ACHAT_BASE = 'https://api.tchipa.co.uk';
+const { createHmac } = require('crypto');
+
+function achatSig(what) {
+  return createHmac('sha256', ADMIN_TOKEN).update('achat:' + what).digest('base64url').slice(0, 22);
+}
+function achatSigOk(what, given) {
+  if (ADMIN_TOKEN.length < 24) return false;
+  const want = achatSig(what), g = String(given || '');
+  return g.length === want.length && timingSafeEqual(Buffer.from(g), Buffer.from(want));
+}
+const achatUrl = id => `${ACHAT_BASE}/achat/${id}/${achatSig('commande:' + id)}`;
+const url1688 = itemId => `https://detail.1688.com/offer/${itemId}.html`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+async function tmapiDetail(itemId, lang) {
+  if (!process.env.TMAPI_KEY) throw new Error('TMAPI_KEY absent');
+  const qs = new URLSearchParams({ item_id: String(itemId), ...(lang ? { language: lang } : {}) });
+  return tmapiSlot(async () => {
+    const r = await fetch(`${TMAPI_ITEM_URL}?${qs}`, { headers: { apikey: process.env.TMAPI_KEY },
+                                                      signal: AbortSignal.timeout(40_000) });
+    const j = await r.json();
+    if (j?.code !== 200 || !j.data) throw new Error(`TMAPI ${j?.code} ${j?.msg || ''}`);
+    return j.data;
+  });
+}
+
+const achatInflight = new Map();       // shop_order_items.id -> Promise
+function enrichLine(it) {
+  if (it.variant_cn || achatInflight.has(it.id)) return achatInflight.get(it.id) || Promise.resolve();
+  const job = (async () => {
+    let sku = it.sku_id, ids = it.props_ids;
+    if (!sku && !ids) {                 // ordered before 2026-11-06: find the variant in the English sheet
+      const en = await tmapiDetail(it.item_id, 'en');
+      const s = (en.skus || []).find(x => x.props_names === it.variant);
+      if (!s) throw new Error('variante anglaise introuvable');
+      sku = s.skuid; ids = s.props_ids;
+    }
+    const cn = await tmapiDetail(it.item_id);
+    const s = (cn.skus || []).find(x => sku && x.skuid === sku) || (cn.skus || []).find(x => ids && x.props_ids === ids);
+    if (!s) throw new Error('variante chinoise introuvable');
+    let image = null;                   // the photo of the colour (sku_props value with an imageUrl)
+    for (const pair of String(s.props_ids || '').split(';')) {
+      const [pid, vid] = pair.split(':');
+      const v = (cn.sku_props || []).find(p => String(p.pid) === pid)?.values?.find(x => String(x.vid) === vid);
+      if (v?.imageUrl) { image = v.imageUrl; break; }
+    }
+    db.prepare(`UPDATE shop_order_items SET sku_id = ?, props_ids = ?, title_cn = ?, variant_cn = ?, sku_image = ?,
+                price_cny = ? WHERE id = ?`)
+      .run(sku || s.skuid, s.props_ids, cn.title || null, s.props_names, image, parseFloat(s.sale_price) || null, it.id);
+  })().catch(e => console.error(`[achats] ligne ${it.id} (offre ${it.item_id}):`, e.message))
+      .finally(() => achatInflight.delete(it.id));
+  achatInflight.set(it.id, job);
+  return job;
+}
+
+async function achatLines(orderId) {
+  const q = () => db.prepare('SELECT * FROM shop_order_items WHERE order_id = ? ORDER BY id').all(orderId);
+  await Promise.all(q().map(enrichLine));
+  return q();
+}
+
+function whatsappText(o, lines) {
+  const parts = [`Tchipa 订单 #${o.id} — 请在1688购买 / à acheter sur 1688 :`];
+  lines.forEach((l, i) => {
+    parts.push(`\n${i + 1}) ${l.title_cn || l.title}`,
+               `链接 : ${url1688(l.item_id)}`,
+               `规格 : ${(l.variant_cn || l.variant).replace(/;/g, ' / ')}`,
+               `数量 : ${l.qty}${l.price_cny ? `   单价 : ¥${l.price_cny}` : ''}`);
+  });
+  parts.push(`\n图片和"已购买"按钮 / photos + bouton « acheté » :\n${achatUrl(o.id)}`);
+  return parts.join('\n');
+}
+
+const ACHAT_CSS = `
+  *{box-sizing:border-box} body{margin:0;font:15px/1.45 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:#F6F6F6;color:#1A1A1A} main{max-width:760px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:4px 0 14px} .card{background:#fff;border:1px solid #E5E5E5;border-radius:14px;padding:14px;margin-bottom:14px}
+  .line{display:flex;gap:12px;padding:10px 0;border-top:1px solid #EEE} .line:first-of-type{border-top:0}
+  .line img{width:96px;height:96px;object-fit:cover;border-radius:10px;flex:none;background:#EEE}
+  .muted{color:#6B6B6B;font-size:13px} .big{font-size:17px;font-weight:700} a{color:#E85A00}
+  .btn{display:inline-block;border:0;border-radius:10px;padding:11px 16px;font:inherit;font-weight:700;cursor:pointer;
+  text-decoration:none;color:#fff;background:linear-gradient(90deg,#FF6A00,#FF3D1F)} .btn.wa{background:#1FA855}
+  .btn.ghost{background:#fff;color:#1A1A1A;border:1px solid #CCC} .tag{display:inline-block;padding:2px 9px;border-radius:99px;
+  font-size:12px;font-weight:700;background:#FFF1E6;color:#B84300} .tag.ok{background:#E7F7EC;color:#167A3A}
+  input{font:inherit;padding:10px;border:1px solid #CCC;border-radius:10px;width:100%;margin:8px 0}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}`;
+const STATUT_FR = { payee: 'Payée — à acheter', achetee: 'Achetée', entrepot: 'À l’entrepôt', expediee: 'Expédiée',
+                    livree: 'Livrée', annulee: 'Annulée' };
+const STATUT_ZH = { payee: '待购买', achetee: '已购买', entrepot: '已到仓库', expediee: '已发货', livree: '已送达', annulee: '已取消' };
+
+function page(title, body) {
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${ACHAT_CSS}</style></head><body><main>${body}</main></body></html>`;
+}
+
+function lineHtml(l, withFr) {
+  const img = l.sku_image || l.image;
+  return `<div class="line">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : ''}<div>
+    <div class="big">${esc(l.title_cn || l.title)}</div>
+    ${withFr || !l.title_cn ? `<div class="muted">${esc(l.title)}</div>` : ''}
+    <div>规格 / variante : <b>${esc((l.variant_cn || l.variant).replace(/;/g, ' / '))}</b></div>
+    ${l.variant_cn ? `<div class="muted">${esc(l.variant.replace(/;/g, ' / '))}</div>` : '<div class="muted">（中文规格暂不可用，请按图片选择）</div>'}
+    <div>数量 / quantité : <b>${l.qty}</b>${l.price_cny ? ` · 单价 / prix : <b>¥${l.price_cny}</b>` : ''}</div>
+    <div><a href="${esc(url1688(l.item_id))}" target="_blank" rel="noopener">在1688打开 / ouvrir sur 1688 ↗</a></div>
+  </div></div>`;
+}
+
+// China agent: one order, no client details.
+app.get('/achat/:id/:sig', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!achatSigOk('commande:' + id, req.params.sig)) return res.status(404).send('Not found');
+  const o = db.prepare('SELECT * FROM shop_orders WHERE id = ?').get(id);
+  if (!o) return res.status(404).send('Not found');
+  const lines = await achatLines(id);
+  const done = o.status !== 'payee';
+  res.set('Cache-Control', 'no-store').send(page(`订单 #${id}`, `
+    <h1>Tchipa 订单 #${id} <span class="tag ${done ? 'ok' : ''}">${esc(STATUT_ZH[o.status] || o.status)} · ${esc(STATUT_FR[o.status] || o.status)}</span></h1>
+    <div class="card">${lines.map(l => lineHtml(l, false)).join('')}</div>
+    <div class="card">${done
+      ? `<div class="big">✅ 已购买 / déjà acheté</div>${o.admin_note ? `<div class="muted">${esc(o.admin_note)}</div>` : ''}`
+      : `<div class="big">购买后请点击 / après l'achat, appuyez :</div>
+         <input id="ref" placeholder="1688订单号（可选）/ n° de commande 1688 (facultatif)" maxlength="60">
+         <button class="btn" id="ok">已购买 / Acheté</button> <span id="msg" class="muted"></span>
+         <script>
+           document.getElementById('ok').onclick = async (e) => {
+             e.target.disabled = true;
+             const r = await fetch(location.pathname + '/achetee', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({ ref: document.getElementById('ref').value }) });
+             if (r.ok) location.reload(); else { e.target.disabled = false; document.getElementById('msg').textContent = '错误 / erreur ' + r.status; }
+           };
+         </script>`}</div>`));
+});
+
+app.post('/achat/:id/:sig/achetee', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!achatSigOk('commande:' + id, req.params.sig)) return res.status(404).json({ error: 'Not found' });
+  const ref = String(req.body?.ref || '').trim().slice(0, 60);
+  const r = db.prepare(`UPDATE shop_orders SET status = 'achetee', admin_note = ?, updated_at = datetime('now')
+                        WHERE id = ? AND status = 'payee'`)
+    .run(`Acheté par l'agent Chine${ref ? ' — commande 1688 n° ' + ref : ''}`, id);
+  if (!r.changes) return res.status(409).json({ error: 'Commande pas à acheter (déjà achetée ou annulée)' });
+  console.log(`[achats] commande #${id} achetée par l'agent Chine${ref ? ' (1688 ' + ref + ')' : ''}`);
+  res.json({ ok: true });
+});
+
+// Tarik: every order + the WhatsApp message for the agent.
+app.get('/achats/:sig', async (req, res) => {
+  if (!achatSigOk('liste', req.params.sig)) return res.status(404).send('Not found');
+  const tous = req.query.tous === '1';
+  const orders = db.prepare(`SELECT * FROM shop_orders ${tous ? '' : "WHERE status NOT IN ('livree','annulee')"}
+                             ORDER BY id DESC LIMIT 100`).all();
+  const blocks = [];
+  for (const o of orders) {
+    const lines = o.status === 'payee' ? await achatLines(o.id)
+      : db.prepare('SELECT * FROM shop_order_items WHERE order_id = ? ORDER BY id').all(o.id);
+    const cost = lines.reduce((s, l) => s + (l.cost_cents || 0), 0);
+    const wa = whatsappText(o, lines);
+    blocks.push(`<div class="card">
+      <div class="big">Commande #${o.id} <span class="tag ${o.status === 'payee' ? '' : 'ok'}">${esc(STATUT_FR[o.status] || o.status)}</span></div>
+      <div class="muted">${esc(o.created_at)} UTC · payé ${fromCents(o.total_cents)} $ · coût ${fromCents(cost)} $ · marge ${fromCents(o.total_cents - cost)} $</div>
+      <div>👤 ${esc(o.full_name)} · ${esc(o.contact_phone)} · ${esc(o.wilaya)}${o.commune ? ', ' + esc(o.commune) : ''}${o.address ? ' — ' + esc(o.address) : ''}</div>
+      ${o.admin_note ? `<div class="muted">📝 ${esc(o.admin_note)}</div>` : ''}
+      ${lines.map(l => lineHtml(l, true)).join('')}
+      <div class="row">
+        <a class="btn wa" href="https://wa.me/?text=${encodeURIComponent(wa)}" target="_blank" rel="noopener">Envoyer à l'agent sur WhatsApp</a>
+        <button class="btn ghost" data-copy="${esc(wa)}">Copier le message</button>
+        <a class="btn ghost" href="${esc(achatUrl(o.id))}" target="_blank" rel="noopener">Page de l'agent</a>
+      </div></div>`);
+  }
+  res.set('Cache-Control', 'no-store').send(page('Achats Tchipa', `
+    <h1>Commandes boutique — achats 1688</h1>
+    <p class="muted">${tous ? `<a href="?">Masquer livrées / annulées</a>` : `<a href="?tous=1">Voir aussi les livrées / annulées</a>`}
+      · Garde ce lien pour toi : il donne accès aux adresses des clients.</p>
+    ${blocks.join('') || '<div class="card">Aucune commande.</div>'}
+    <script>
+      document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+        await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié ✓';
+      });
+    </script>`));
 });
 
 // One-time (idempotent) rewrite of every stored phone to normalizePhone()'s

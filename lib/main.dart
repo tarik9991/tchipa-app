@@ -2902,18 +2902,40 @@ class _SubBubble extends StatelessWidget {
   }
 }
 
-class _ProductTile extends StatelessWidget {
+class _ProductTile extends StatefulWidget {
   final Map<String, dynamic> p;
   const _ProductTile({required this.p});
+  @override
+  State<_ProductTile> createState() => _ProductTileState();
+}
+
+class _ProductTileState extends State<_ProductTile> {
+  // Opening the sheet gives the exact price: written back into the list item (shared map) so the
+  // tile no longer shows the estimate when the client comes back.
+  void _exact(num from, num? to) {
+    if (!mounted) return;
+    setState(() {
+      widget.p['priceFrom'] = from;
+      widget.p['priceTo'] = to;
+      widget.p['estimated'] = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final p = widget.p;
     final from = (p['priceFrom'] as num).toDouble();
     final to = ((p['priceTo'] as num?) ?? from).toDouble();
     final sold = (p['sold'] as num?) ?? 0;
+    final estimated = p['estimated'] == true;
     return GestureDetector(
       onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => ProductScreen(productId: p['id'] as int))),
+          context,
+          MaterialPageRoute(
+              builder: (_) => ProductScreen(
+                  productId: p['id'] as int,
+                  listPrice: estimated ? from : null,
+                  onExactPrice: _exact))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         AspectRatio(
           aspectRatio: 0.82,
@@ -2951,7 +2973,10 @@ class _ProductTile extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(2, 4, 2, 2),
           child: Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-            if (to > from + 0.01)
+            // ≈ : price estimated from the 1688 search page (no weight yet) — exact on the sheet.
+            if (estimated)
+              Text('≈ ', style: TextStyle(color: AppColors.hint, fontSize: 14, fontWeight: FontWeight.w700))
+            else if (to > from + 0.01)
               Text('dès ', style: TextStyle(color: AppColors.hint, fontSize: 11)),
             Text(_usd(from),
                 style: TextStyle(color: AppColors.label, fontSize: 16.5, fontWeight: FontWeight.w900)),
@@ -3000,7 +3025,9 @@ String _optLabel(String k) {
 
 class ProductScreen extends StatefulWidget {
   final int productId;
-  const ProductScreen({super.key, required this.productId});
+  final double? listPrice;                       // estimated price shown in the list, if any
+  final void Function(num from, num? to)? onExactPrice;
+  const ProductScreen({super.key, required this.productId, this.listPrice, this.onExactPrice});
   @override
   State<ProductScreen> createState() => _ProductScreenState();
 }
@@ -3046,6 +3073,8 @@ class _ProductScreenState extends State<ProductScreen> {
       final d = await ShopApi.product(widget.productId);
       if (!mounted) return;
       setState(() => _p = d);
+      final from = d['priceFrom'] as num?;
+      if (from != null && d['estimated'] != true) widget.onExactPrice?.call(from, d['priceTo'] as num?);
       if (_variants.isNotEmpty) {
         // Start on the cheapest variant so the sheet shows the same price as the list ("dès").
         final cheapest = _variants.reduce((a, b) => (a['priceUsd'] as num) <= (b['priceUsd'] as num) ? a : b);
@@ -3316,6 +3345,16 @@ class _ProductScreenState extends State<ProductScreen> {
               if (v == null)
                 Text('Cette combinaison n\'est pas disponible',
                     style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+              // The list showed an estimate (≈): say why the price changed instead of letting it look like a bug.
+              if (widget.listPrice != null && p['priceFrom'] != null &&
+                  ((p['priceFrom'] as num) - widget.listPrice!).abs() >= 0.5)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                      'Prix exact calculé pour ce modèle (poids réel). '
+                      'La liste affichait une estimation ≈ ${_usd(widget.listPrice!)}.',
+                      style: TextStyle(color: AppColors.sublabel, fontSize: 12.5)),
+                ),
               const SizedBox(height: 8),
               Text('${p['title']}',
                   style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),

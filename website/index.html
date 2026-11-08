@@ -868,7 +868,7 @@ document.querySelectorAll('.products img').forEach(img => {
     li.innerHTML = `<figure class="product in" tabindex="0" role="button" data-id="${p.id}" aria-label="Voir ${esc(p.title)}">
       <div class="ph"><img src="${esc(thumb(p.image, 300))}" alt="${esc(p.title)}" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div>
       <figcaption><span class="t">${esc(p.title)}</span>
-        <span class="price">${p.priceTo > p.priceFrom ? '<em>dès</em>' : ''}${usd(p.priceFrom)}</span>
+        <span class="price">${p.estimated ? '<em>≈</em>' : p.priceTo > p.priceFrom ? '<em>dès</em>' : ''}${usd(p.priceFrom)}</span>
         ${sold(p.sold) ? `<span class="sold">${sold(p.sold)}</span>` : ''}</figcaption></figure>`;
     li.querySelector('img').addEventListener('error', () => { li.style.display = 'none'; });
     return li;

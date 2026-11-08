@@ -2953,11 +2953,25 @@ function parseVariant(name) {
   }
   return o;
 }
-const productCard = p => ({
-  id: p.item_id, title: productTitle(p), category: p.categorie, sub: p.sous_categorie || null,
-  image: (JSON.parse(p.images || '[]')[0]) || null,
-  priceFrom: p.f_des ?? p.prix_des_usd, priceTo: p.f_max ?? p.prix_max_usd, sold: p.ventes_n || 0,
-});
+// Vitrine price still ESTIMATED (sheet never bought): the 1688 search page gives no weight, so
+// import_vitrine.py priced it with a prudent ~p90 weight. Measured 2026-11-08 on 500 bought sheets:
+// the exact price was LOWER in 93 % of cases (median -42 %, -10.6 $) — the "price difference" clients
+// see when they open a product. SHOP_ESTIMATE_FACTOR pulls the estimate down per category to ~p85 of
+// exact/estimate (so the exact price stays <= the list price for ~85-90 % of products); the app shows
+// these prices with "≈" and the exact price replaces them as soon as the sheet is bought.
+const SHOP_ESTIMATE_FACTOR = { Femme: 0.85, Homme: 1.0, Hijab: 0.8, Abaya: 0.95, Ados: 1.0, Enfants: 0.85 };
+const isEstimated = p => !!p.estime && p.f_des == null && p.fiche?.status !== 'ok';
+const estimatedPrice = (p, x) => x == null ? x : Math.round(x * (SHOP_ESTIMATE_FACTOR[p.categorie] ?? 1) * 100) / 100;
+const productCard = p => {
+  const est = isEstimated(p);
+  return {
+    id: p.item_id, title: productTitle(p), category: p.categorie, sub: p.sous_categorie || null,
+    image: (JSON.parse(p.images || '[]')[0]) || null,
+    priceFrom: est ? estimatedPrice(p, p.prix_des_usd) : (p.f_des ?? p.prix_des_usd),
+    priceTo: est ? estimatedPrice(p, p.prix_max_usd) : (p.f_max ?? p.prix_max_usd),
+    estimated: est, sold: p.ventes_n || 0,
+  };
+};
 // Sub-categories (sous_categorie) and 1688 sales (ventes_n) are computed offline by
 // ~/tchipa-boutique/classer.py. Older catalogue files may lack them: checked once.
 let catHasSubs = null;
@@ -2968,7 +2982,10 @@ function hasSubs() {
   return !!catHasSubs;
 }
 const SHOP_MIN_SUB = 12;   // smaller sub-categories stay reachable under "Tout"
-const SHOP_PRICE = 'COALESCE(f.prix_des_usd, p.prix_des_usd)';   // exact once the sheet was bought
+// Exact once the sheet was bought, else the estimate x SHOP_ESTIMATE_FACTOR (same as productCard).
+const SHOP_PRICE = `COALESCE(f.prix_des_usd, CASE WHEN p.estime = 1 THEN ROUND(p.prix_des_usd * CASE p.categorie ${
+  Object.entries(SHOP_ESTIMATE_FACTOR).map(([c, k]) => `WHEN '${c}' THEN ${k}`).join(' ')} ELSE 1 END, 2)
+  ELSE p.prix_des_usd END)`;
 const SHOP_SORTS = {
   pop: 'p.ventes_n DESC, p.rowid', price_asc: `${SHOP_PRICE} ASC, p.rowid`, price_desc: `${SHOP_PRICE} DESC, p.rowid`,
 };

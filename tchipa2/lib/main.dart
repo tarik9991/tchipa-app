@@ -26,6 +26,11 @@ const String kPhotos = 'https://api.tchipa.co.uk/t2';
 // Bump when photos are rewritten on the VPS (e.g. tools/jmdy_patch.py) so caches refetch.
 const String kPhotosVersion = '2';
 const String kPhotoRelay = 'https://api.tchipa.co.uk/yupoo';
+// The APK is side-loaded: CI passes --dart-define=BUILD_NUMBER=<run number> and publishes
+// version.json next to tchipa2.apk; a local build stays at 0 and never nags about updates.
+const int kBuildNumber = int.fromEnvironment('BUILD_NUMBER');
+const String kApkUrl = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/tchipa2.apk';
+const String kVersionUrl = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/version.json';
 // Shared product links open the sheet on the site (website/tchipa2/index.html handles #produit-<id>).
 const String kShareBase = 'https://tchipa.co.uk/tchipa2/#produit-';
 
@@ -280,14 +285,67 @@ class Tchipa2App extends StatelessWidget {
   }
 }
 
+// ── Mise à jour de l'APK ── (same mechanism as Tchipa): on launch, compare our build number
+// with the release's version.json and offer the new APK; same signing key, so Android
+// installs it over the old one (favourites and cart kept, no uninstall).
+class UpdateCheck {
+  static Future<void> run(BuildContext context) async {
+    if (kIsWeb || kBuildNumber == 0) return;
+    try {
+      final r = await http.get(Uri.parse(kVersionUrl)).timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return;
+      final latest = (jsonDecode(r.body)['build'] as num?)?.toInt() ?? 0;
+      if (latest <= kBuildNumber || !context.mounted) return;
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Nouvelle version de Tchipa 2'),
+          content: const Text('Une mise à jour est disponible. Télécharge-la puis appuie sur « Installer » : '
+              'tes favoris et ton panier sont conservés, pas besoin de désinstaller.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Plus tard')),
+            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Mettre à jour')),
+          ],
+        ),
+      );
+      if (go == true) await launchUrl(Uri.parse(kApkUrl), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+}
+
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
   @override
   State<RootScreen> createState() => _RootScreenState();
 }
 
-class _RootScreenState extends State<RootScreen> {
+class _RootScreenState extends State<RootScreen> with WidgetsBindingObserver {
   int _tab = 0;
+  DateTime _lastUpdateCheck = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => UpdateCheck.run(context));
+  }
+
+  // Android keeps the app alive in the background for days: also check for a new
+  // APK when it comes back to the foreground (at most once every 6 h).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        DateTime.now().difference(_lastUpdateCheck) > const Duration(hours: 6)) {
+      _lastUpdateCheck = DateTime.now();
+      UpdateCheck.run(context);
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

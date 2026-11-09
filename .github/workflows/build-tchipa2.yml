@@ -62,7 +62,11 @@ jobs:
         run: flutter test
 
       - name: Build APK
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release --build-number=${{ github.run_number }} \
+            --dart-define=BUILD_NUMBER=${{ github.run_number }}
+          # Read by the app on launch (UpdateCheck) to offer the new APK.
+          echo '{"build": ${{ github.run_number }}}' > build/app/outputs/flutter-apk/version.json
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/tchipa2.apk
@@ -85,4 +89,6 @@ jobs:
           tag_name: tchipa2-latest
           name: Tchipa 2 Latest
           make_latest: false
-          files: tchipa2/build/app/outputs/flutter-apk/tchipa2.apk
+          files: |
+            tchipa2/build/app/outputs/flutter-apk/tchipa2.apk
+            tchipa2/build/app/outputs/flutter-apk/version.json

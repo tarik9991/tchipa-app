@@ -2788,9 +2788,12 @@ const SHOP_MARGE = 0.25;
 const SHOP_POIDS_MIN_KG = 0.10;
 const FICHE_MAX_AGE_DAYS = 30;         // older sheets are bought again on open (price/stock drift)
 const FICHE_DAILY_MAX = 1500;          // new sheets per day (x 20 credits) — caps a scraping bot
-const FICHE_IP_HOURLY = 40;            // new sheets per IP per hour
+const FICHE_IP_HOURLY = 120;           // new sheets per IP per hour (40 blocked a whole home wifi, 2026-11-09)
 const TMAPI_PARALLEL = 3;              // TMAPI limit: 3 calls/s, a sheet takes 2-3 s
 const CNY_USD_FALLBACK = 0.14;
+// 1688 sellers asking 2 pieces minimum (MOQ 2): sold as "Lot de 2" at the price of 2 (Tarik 2026-11-09).
+// Above SHOP_LOT_MAX the product stays unavailable.
+const SHOP_LOT_MAX = 2;
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS shop_fiches (
@@ -2808,6 +2811,13 @@ db.exec(`
     fetched_at     TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+{
+  const have = new Set(db.prepare('PRAGMA table_info(shop_fiches)').all().map(c => c.name));
+  if (!have.has('lot')) db.exec('ALTER TABLE shop_fiches ADD COLUMN lot INTEGER');
+  const haveItems = new Set(db.prepare('PRAGMA table_info(shop_order_items)').all().map(c => c.name));
+  if (!haveItems.has('lot')) db.exec('ALTER TABLE shop_order_items ADD COLUMN lot INTEGER');   // pieces per unit sold
+}
 
 // Freight rate change → re-price the sheets already bought (each variant keeps its
 // fret_usd, so no TMAPI call is needed). Runs once per rate; shop_meta remembers it.
@@ -2852,6 +2862,16 @@ db.exec(`CREATE TABLE IF NOT EXISTS shop_meta (k TEXT PRIMARY KEY, v TEXT)`);
   console.log(`[shop] ${n} fiches bijoux/accessoires 'indispo' oubliees (poids leger accepte)`);
 })();
 
+// Lots de 2 (2026-11-09): every sheet marked 'indispo' so far is forgotten once — MOQ-2 products become
+// "Lot de 2", the really sold-out ones are found again (and hidden) when someone opens them.
+(function forgetIndispoForLots() {
+  const key = 'indispo_lot2_oublies';
+  if (db.prepare('SELECT 1 FROM shop_meta WHERE k = ?').get(key)) return;
+  const n = db.prepare(`DELETE FROM shop_fiches WHERE status = 'indispo'`).run().changes;
+  db.prepare('INSERT OR REPLACE INTO shop_meta (k, v) VALUES (?, ?)').run(key, new Date().toISOString());
+  console.log(`[shop] ${n} fiches 'indispo' oubliees (lots de 2)`);
+})();
+
 function productRow(id) {
   if (SHOP_HIDDEN_ITEMS.includes(id)) return undefined;
   const p = cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
@@ -2869,7 +2889,7 @@ const relabel = t => t == null ? t : String(t)
   .replace(/diamants?\s+(?:de\s+laboratoire|synth[ée]tiques?|cultiv[ée]s?)(?:\s+synth[ée]tiques?)?|lab[- ]?grown\s+diamonds?|laboratory\s+diamonds?|cvd\s+diamonds?/gi,
            'diamant industriel')
   .replace(/^./, c => c.toUpperCase());
-function productTitle(p) { return relabel(p.titre_fr || p.titre_en || p.titre_cn); }
+function productTitle(p) { return (p.lot > 1 ? `Lot de ${p.lot} · ` : '') + relabel(p.titre_fr || p.titre_en || p.titre_cn); }
 
 let cnyUsd = { rate: CNY_USD_FALLBACK, at: 0 };
 async function cnyToUsd() {
@@ -2902,7 +2922,9 @@ const SHEET_MIN_WEIGHT_DEFAULT = 0.05;
 function sheetFromTmapi(d, fx, cat, sub) {
   const tp = d.tiered_price_info || {};
   const firstTier = (tp.prices || [])[0]?.beginAmount;
-  const byUnit = [d.moq, tp.begin_num, firstTier].every(x => x == null || String(x) === '1');
+  // Minimum pieces asked by the seller (moq, first tier): 1 = by unit, 2 = sold here as a lot of 2.
+  const lot = Math.max(1, ...[d.moq, tp.begin_num, firstTier].map(x => parseInt(x, 10) || 1));
+  const byUnit = lot <= SHOP_LOT_MAX;
   const skus = (d.skus || []).filter(s => s.stock && s.sale_price);
   const poidsMax = Math.max(0, ...skus.map(s => s.package_info?.weight || 0));
   const minW = SHEET_MIN_WEIGHT[cat] ?? SHEET_MIN_WEIGHT[sub] ?? SHEET_MIN_WEIGHT_DEFAULT;
@@ -2910,7 +2932,8 @@ function sheetFromTmapi(d, fx, cat, sub) {
   const fraisCn = parseFloat(d.delivery_info?.delivery_fee) || 0;
   // sku / ids = 1688 skuid + props_ids: identical in the Chinese sheet, so the China agent sees the exact variant.
   const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock, sku: s.skuid || null, ids: s.props_ids || null,
-    ...shopPrice(parseFloat(s.sale_price), fraisCn, s.package_info?.weight || poidsMax, fx) }));
+    ...(lot > 1 ? { lot } : {}),
+    ...shopPrice(lot * parseFloat(s.sale_price), fraisCn, lot * (s.package_info?.weight || poidsMax), fx) }));
   // A cheap "accessory" variant (5 ¥ crown on a 49 ¥ dress) stays buyable but is not the "from" price.
   const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
   const ref = px[Math.floor(px.length / 2)];
@@ -2918,7 +2941,7 @@ function sheetFromTmapi(d, fx, cat, sub) {
     status: 'ok', titre_en: d.title, images: JSON.stringify((d.main_imgs || []).slice(0, 5)),
     video: d.video_url || null,
     variantes: JSON.stringify(Object.fromEntries((d.sku_props || []).map(v => [v.prop_name, v.values.map(x => x.name)]))),
-    variantes_prix: JSON.stringify(vp), poids_kg: poidsMax,
+    variantes_prix: JSON.stringify(vp), poids_kg: poidsMax, lot: lot > 1 ? lot : null,
     prix_des_usd: Math.min(...px.filter(x => x >= ref / 3)), prix_max_usd: px[px.length - 1], stock: d.stock,
   };
 }
@@ -3064,7 +3087,7 @@ app.get('/shop/products', (req, res) => {
     }
   }
   const order = hasSubs() ? (SHOP_SORTS[req.query.sort] || SHOP_SORTS.pop) : 'p.rowid';
-  const rows = cat().prepare(`SELECT p.*, f.prix_des_usd AS f_des, f.prix_max_usd AS f_max
+  const rows = cat().prepare(`SELECT p.*, f.prix_des_usd AS f_des, f.prix_max_usd AS f_max, f.lot AS lot
                               FROM produits p LEFT JOIN o.shop_fiches f ON f.item_id = p.item_id
                               WHERE ${where.join(' AND ')}
                               ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, SHOP_PAGE + 1, (page - 1) * SHOP_PAGE);
@@ -3102,7 +3125,7 @@ app.get('/shop/products/:id', async (req, res) => {
 function priceVariant(p, variantName) {
   const v = JSON.parse(p.variantes_prix || '[]').find(x => x.nom === variantName);
   if (!v || !(v.stock > 0)) return null;
-  return { unitCents: Math.round(v.prix_client_usd * 100), costCents: Math.round(v.revient_usd * 100),
+  return { unitCents: Math.round(v.prix_client_usd * 100), costCents: Math.round(v.revient_usd * 100), lot: v.lot || 1,
            skuId: v.sku || null, propsIds: v.ids || null };
 }
 
@@ -3140,10 +3163,10 @@ app.post('/shop/orders', requireClient, (req, res) => {
              `order:${req.clientPhone}:${idem}`);
       const oid = info.lastInsertRowid;
       const ins = db.prepare(`INSERT INTO shop_order_items (order_id, item_id, title, image, variant, qty, unit_cents,
-                                cost_cents, url_1688, sku_id, props_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+                                cost_cents, url_1688, sku_id, props_ids, lot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       for (const l of lines) {
         ins.run(oid, l.p.item_id, productTitle(l.p), JSON.parse(l.p.images || '[]')[0] || null, l.variant, l.qty,
-                l.unitCents, l.costCents * l.qty, l.p.url, l.skuId, l.propsIds);
+                l.unitCents, l.costCents * l.qty, l.p.url, l.skuId, l.propsIds, l.lot > 1 ? l.lot : null);
       }
       // Throws INSUFFICIENT_FUNDS -> the whole order rolls back.
       walletApply({ phone: req.clientPhone, deltaCents: -total, kind: 'purchase', ref: `commande #${oid}`,
@@ -3284,13 +3307,16 @@ async function achatLines(orderId) {
   return q();
 }
 
+// Pieces the China agent must buy: a "lot de 2" line with qty 3 = 6 pieces.
+const pieces = l => l.lot > 1 ? `${l.qty * l.lot}（${l.qty} × ${l.lot}件 / ${l.qty} lot(s) de ${l.lot}）` : String(l.qty);
+
 function whatsappText(o, lines) {
   const parts = [`Tchipa 订单 #${o.id} — 请在1688购买 / à acheter sur 1688 :`];
   lines.forEach((l, i) => {
     parts.push(`\n${i + 1}) ${l.title_cn || l.title}`,
                `链接 : ${url1688(l.item_id)}`,
                `规格 : ${(l.variant_cn || l.variant).replace(/;/g, ' / ')}`,
-               `数量 : ${l.qty}${l.price_cny ? `   单价 : ¥${l.price_cny}` : ''}`);
+               `数量 : ${pieces(l)}${l.price_cny ? `   单价 : ¥${l.price_cny}` : ''}`);
   });
   parts.push(`\n图片和"已购买"按钮 / photos + bouton « acheté » :\n${achatUrl(o.id)}`);
   return parts.join('\n');
@@ -3325,7 +3351,7 @@ function lineHtml(l, withFr) {
     ${withFr || !l.title_cn ? `<div class="muted">${esc(l.title)}</div>` : ''}
     <div>规格 / variante : <b>${esc((l.variant_cn || l.variant).replace(/;/g, ' / '))}</b></div>
     ${l.variant_cn ? `<div class="muted">${esc(l.variant.replace(/;/g, ' / '))}</div>` : '<div class="muted">（中文规格暂不可用，请按图片选择）</div>'}
-    <div>数量 / quantité : <b>${l.qty}</b>${l.price_cny ? ` · 单价 / prix : <b>¥${l.price_cny}</b>` : ''}</div>
+    <div>数量 / quantité : <b>${esc(pieces(l))}</b>${l.price_cny ? ` · 单价 / prix : <b>¥${l.price_cny}</b>` : ''}</div>
     <div><a href="${esc(url1688(l.item_id))}" target="_blank" rel="noopener">在1688打开 / ouvrir sur 1688 ↗</a></div>
   </div></div>`;
 }

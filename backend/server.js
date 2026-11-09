@@ -2710,10 +2710,11 @@ function cat() {
   }
   return catalogue;
 }
-const SHOP_CATEGORIES = ['Femme', 'Homme', 'Hijab', 'Abaya', 'Ados', 'Enfants'];   // Ados: 12-16 ans (2026-11-06)
+const SHOP_CATEGORIES = ['Femme', 'Homme', 'Hijab', 'Abaya', 'Ados', 'Enfants', 'Bijoux'];   // Ados: 12-16 ans (2026-11-06) ; Bijoux (2026-11-09)
 // Nothing above this "from" price is listed (Tarik 2026-11-06: 150 $ wool coats don't sell in DZ).
 // The catalogue copy is also pruned at build time; this catches exact sheet prices above the cap.
 const SHOP_PRICE_MAX = 100;
+const SHOP_NO_CAP = ['Bijoux'];   // diamonds / moissanite stay listed whatever the price (Tarik 2026-11-09)
 // Products pulled from the shop entirely (listings, search, sheet, orders) —
 // photos not acceptable for a family audience in Algeria.
 const SHOP_HIDDEN_ITEMS = [
@@ -3025,7 +3026,8 @@ app.get('/shop/products', (req, res) => {
   if (req.query.category) { where.push('p.categorie = ?'); args.push(String(req.query.category)); }
   if (req.query.sub && hasSubs()) { where.push('p.sous_categorie = ?'); args.push(String(req.query.sub)); }
   const max = Math.min(parseFloat(req.query.max) || SHOP_PRICE_MAX, SHOP_PRICE_MAX);
-  where.push(`${SHOP_PRICE} <= ?`); args.push(max);
+  if (req.query.max) { where.push(`${SHOP_PRICE} <= ?`); args.push(max); }   // client's own filter: everywhere
+  else { where.push(`(p.categorie IN (${SHOP_NO_CAP.map(() => '?').join(',')}) OR ${SHOP_PRICE} <= ?)`); args.push(...SHOP_NO_CAP, max); }
   const q = String(req.query.q || '').trim().slice(0, 60);
   if (q) {
     for (const w of q.split(/\s+/).slice(0, 5)) {

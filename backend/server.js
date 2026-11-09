@@ -2837,6 +2837,21 @@ db.exec(`CREATE TABLE IF NOT EXISTS shop_meta (k TEXT PRIMARY KEY, v TEXT)`);
   console.log(`[shop] fret ${old} -> ${SHOP_FRET_USD_KG} $/kg : ${n} fiches re-tarifees`);
 })();
 
+// Sheets of jewellery / accessories marked 'indispo' before SHEET_MIN_WEIGHT existed: forget them once,
+// they are bought again (with the right weight rule) on the next open.
+(function forgetLightIndispo() {
+  const key = 'indispo_legers_oublies';
+  if (!cat() || db.prepare('SELECT 1 FROM shop_meta WHERE k = ?').get(key)) return;
+  const ids = cat().prepare(`SELECT f.item_id FROM o.shop_fiches f JOIN produits p ON p.item_id = f.item_id
+                             WHERE f.status = 'indispo' AND (p.categorie = 'Bijoux' OR p.sous_categorie = 'Accessoires')`)
+    .all().map(r => r.item_id);
+  const del = db.prepare('DELETE FROM shop_fiches WHERE item_id = ?');
+  db.transaction(() => ids.forEach(i => del.run(i)))();
+  const n = ids.length;
+  db.prepare('INSERT OR REPLACE INTO shop_meta (k, v) VALUES (?, ?)').run(key, new Date().toISOString());
+  console.log(`[shop] ${n} fiches bijoux/accessoires 'indispo' oubliees (poids leger accepte)`);
+})();
+
 function productRow(id) {
   if (SHOP_HIDDEN_ITEMS.includes(id)) return undefined;
   const p = cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
@@ -2846,7 +2861,15 @@ function productRow(id) {
   const { item_id, status, fetched_at, ...sheet } = f;
   return { ...p, ...sheet, fiche: f };
 }
-function productTitle(p) { return p.titre_fr || p.titre_en || p.titre_cn; }
+// Words Algerian clients don't know (Tarik 2026-11-09). Moissanite is NOT a diamond (selling it as one
+// is misleading): it becomes "pierre éclat diamant"; lab-grown diamonds are real diamonds: "diamant industriel".
+// Display only — variant names sent back with orders stay raw.
+const relabel = t => t == null ? t : String(t)
+  .replace(/(?:diamants?\s+)?moissanites?(?:\s+diamonds?)?/gi, 'pierre éclat diamant')
+  .replace(/diamants?\s+(?:de\s+laboratoire|synth[ée]tiques?|cultiv[ée]s?)(?:\s+synth[ée]tiques?)?|lab[- ]?grown\s+diamonds?|laboratory\s+diamonds?|cvd\s+diamonds?/gi,
+           'diamant industriel')
+  .replace(/^./, c => c.toUpperCase());
+function productTitle(p) { return relabel(p.titre_fr || p.titre_en || p.titre_cn); }
 
 let cnyUsd = { rate: CNY_USD_FALLBACK, at: 0 };
 async function cnyToUsd() {
@@ -2871,13 +2894,19 @@ function shopPrice(cny, fraisCn, poids, fx) {
 }
 
 // TMAPI item_detail -> shop_fiches row (same filters as echantillon.fiche()).
-function sheetFromTmapi(d, fx) {
+// Minimum 1688 package weight for a sheet to be trusted: below it a garment has no real weight.
+// Jewellery (2-8 g) and small accessories (hair clips, gloves) are genuinely that light (2026-11-09:
+// almost every ring was shown "no longer available"). The price still uses SHOP_POIDS_MIN_KG.
+const SHEET_MIN_WEIGHT = { Bijoux: 0.001, Accessoires: 0.001 };   // by category, or by sub-category
+const SHEET_MIN_WEIGHT_DEFAULT = 0.05;
+function sheetFromTmapi(d, fx, cat, sub) {
   const tp = d.tiered_price_info || {};
   const firstTier = (tp.prices || [])[0]?.beginAmount;
   const byUnit = [d.moq, tp.begin_num, firstTier].every(x => x == null || String(x) === '1');
   const skus = (d.skus || []).filter(s => s.stock && s.sale_price);
   const poidsMax = Math.max(0, ...skus.map(s => s.package_info?.weight || 0));
-  if (d.is_sold_out || !d.stock || !byUnit || !skus.length || poidsMax < 0.05) return { status: 'indispo' };
+  const minW = SHEET_MIN_WEIGHT[cat] ?? SHEET_MIN_WEIGHT[sub] ?? SHEET_MIN_WEIGHT_DEFAULT;
+  if (d.is_sold_out || !d.stock || !byUnit || !skus.length || poidsMax < minW) return { status: 'indispo' };
   const fraisCn = parseFloat(d.delivery_info?.delivery_fee) || 0;
   // sku / ids = 1688 skuid + props_ids: identical in the Chinese sheet, so the China agent sees the exact variant.
   const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock, sku: s.skuid || null, ids: s.props_ids || null,
@@ -2906,7 +2935,7 @@ async function tmapiSlot(fn) {
   try { return await fn(); } finally { tmapiActive--; tmapiWaiters.shift()?.(); }
 }
 
-function buySheet(id, ip) {
+function buySheet(id, ip, cat, sub) {
   if (sheetInflight.has(id)) return sheetInflight.get(id);
   if (!process.env.TMAPI_KEY) return Promise.reject(httpError(503, 'Fiche indisponible pour le moment'));
   const day = new Date().toISOString().slice(0, 10);
@@ -2926,7 +2955,7 @@ function buySheet(id, ip) {
       j = await r.json();
     } catch (e) { console.error('[shop] TMAPI', id, e.message); }
     let sheet;
-    if (j?.code === 200 && j.data) sheet = sheetFromTmapi(j.data, fx);
+    if (j?.code === 200 && j.data) sheet = sheetFromTmapi(j.data, fx, cat, sub);
     else if (j?.code === 404) sheet = { status: 'indispo' };               // removed from 1688
     else {
       console.error('[shop] TMAPI', id, j?.code, j?.msg || j?.message);  // 439 = credits exhausted
@@ -3050,7 +3079,7 @@ app.get('/shop/products/:id', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'Produit introuvable' });
   if (p.estime && !sheetIsFresh(p.fiche)) {
     try {
-      await buySheet(id, req.headers['x-real-ip'] || req.socket.remoteAddress);
+      await buySheet(id, req.headers['x-real-ip'] || req.socket.remoteAddress, p.categorie, p.sous_categorie);
       p = productRow(id);
     } catch (e) {
       if (p.fiche?.status !== 'ok') return res.status(e.status || 503).json({ error: e.message });
@@ -3061,10 +3090,13 @@ app.get('/shop/products/:id', async (req, res) => {
     return res.status(410).json({ error: "Ce modèle n'est plus disponible" });
   }
   const variants = JSON.parse(p.variantes_prix || '[]').filter(v => v.stock > 0).map(v => ({
-    name: v.nom, props: parseVariant(v.nom), priceUsd: v.prix_client_usd, stock: v.stock,
+    name: v.nom, props: Object.fromEntries(Object.entries(parseVariant(v.nom)).map(([k, x]) => [k, relabel(x)])),
+    priceUsd: v.prix_client_usd, stock: v.stock,
   }));
-  res.json({ ...productCard(p), titleEn: p.titre_en, images: JSON.parse(p.images || '[]'), video: p.video,
-             weightKg: p.poids_kg, options: JSON.parse(p.variantes || '{}'), variants });
+  res.json({ ...productCard(p), images: JSON.parse(p.images || '[]'), video: p.video,
+             weightKg: p.poids_kg, titleEn: relabel(p.titre_en),
+             options: Object.fromEntries(Object.entries(JSON.parse(p.variantes || '{}')).map(([k, l]) => [k, l.map(relabel)])),
+             variants });
 });
 
 function priceVariant(p, variantName) {

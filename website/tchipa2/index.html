@@ -76,6 +76,18 @@
     .logo b { font-weight: 900; }
     .nav-back { margin-left: auto; color: var(--sub); text-decoration: none; font-size: .9rem; }
     .nav-back:hover { color: var(--text); }
+    /* Bandeau temporaire (nov. 2026) : les APK d'avant la mise à jour auto doivent être
+       re-téléchargés une fois. À retirer dans quelques semaines. */
+    .upd {
+      margin: 14px auto 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 12px 14px; border-radius: 14px;
+      background: linear-gradient(135deg,rgba(0,212,255,.12),rgba(139,92,246,.14));
+      border: 1px solid rgba(0,212,255,.35);
+    }
+    .upd p { flex: 1 1 240px; font-size: .92rem; color: var(--text); }
+    .upd p b { color: var(--cyan); }
+    .upd .btn { padding: .55rem 1rem; font-size: .88rem; }
+    .upd-x { background: none; border: 0; color: var(--dim); font-size: 1.1rem; padding: 4px 6px; line-height: 1; }
     .btn-nav { padding: .55rem 1rem; font-size: .9rem; white-space: nowrap; }
     @media (max-width: 520px) { .nav-back { display: none; } .btn-nav { margin-left: auto; } }
 
@@ -200,6 +212,13 @@
 </nav>
 
 <main>
+  <div class="wrap">
+    <div id="upd" class="upd" role="status">
+      <p><b>Tu as déjà l'app Tchipa 2 ?</b> Re-télécharge-la une seule fois et installe-la par-dessus : tu auras le partage des produits, le zoom des photos et les mises à jour automatiques. Favoris et panier conservés.</p>
+      <a class="btn btn-primary" data-apk>Mettre à jour l'app</a>
+      <button type="button" class="upd-x" id="upd-x" aria-label="Masquer">✕</button>
+    </div>
+  </div>
   <header class="wrap hero">
     <h1>Sneakers, doudounes &amp; streetwear<br><span class="grad-text">près de 10 000 articles</span></h1>
     <p>Jordan, New Balance, Asics, doudounes, vêtements enfants… Parcourez le catalogue ici, puis commandez dans l'app Tchipa 2.</p>
@@ -281,6 +300,15 @@ const RELAY_BASE = 'https://api.tchipa.co.uk/yupoo/';
 const PAGE = 60;
 
 document.querySelectorAll('[data-apk]').forEach(a => { a.href = APK; });
+// Bandeau de mise à jour : masquable, mémorisé dans ce navigateur.
+{
+  const upd = document.getElementById('upd');
+  try { if (localStorage.getItem('t2-upd-hide') === '1') upd.hidden = true; } catch (_) {}
+  document.getElementById('upd-x').onclick = () => {
+    upd.hidden = true;
+    try { localStorage.setItem('t2-upd-hide', '1'); } catch (_) {}
+  };
+}
 
 /* ============ ÉTAT ============ */
 let ALL = [];

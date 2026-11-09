@@ -2288,6 +2288,7 @@ class ShopScreen extends StatefulWidget {
 
 class _ShopScreenState extends State<ShopScreen> {
   final _scroll = ScrollController();
+  bool _showTop = false; // "back to top" button, shown once the user is ~2 screens down
   final _search = TextEditingController();
   List<dynamic> _cats = [];
   String? _cat, _sub;
@@ -2305,6 +2306,8 @@ class _ShopScreenState extends State<ShopScreen> {
     super.initState();
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 900) _more();
+      final show = _scroll.offset > 1500;
+      if (show != _showTop) setState(() => _showTop = show);
     });
     _reload();
   }
@@ -2377,6 +2380,38 @@ class _ShopScreenState extends State<ShopScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
+      floatingActionButton: IgnorePointer(
+        ignoring: !_showTop,
+        child: AnimatedScale(
+          scale: _showTop ? 1 : 0.6,
+          duration: const Duration(milliseconds: 200),
+          child: AnimatedOpacity(
+            opacity: _showTop ? 1 : 0,
+            duration: const Duration(milliseconds: 200),
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(24),
+              elevation: 6,
+              clipBehavior: Clip.antiAlias,
+              child: Ink(
+                decoration: const BoxDecoration(gradient: _kShopGrad),
+                child: InkWell(
+                  onTap: () => _scroll.animateTo(0,
+                      duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white, size: 22),
+                      SizedBox(width: 4),
+                      Text('Haut', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
       body: SafeArea(
         bottom: false,
         child: RefreshIndicator(

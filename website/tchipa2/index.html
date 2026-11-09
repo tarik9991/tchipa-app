@@ -402,6 +402,7 @@ function openSheet(p) {
   $('sh-copy').onclick = () => {
     navigator.clipboard?.writeText(p.code || p.id).then(() => { $('sh-copy').textContent = '✓ Référence copiée'; });
   };
+  history.replaceState(null, '', '#produit-' + p.id);
   $('backdrop').hidden = false;
   $('sheet').hidden = false;
   $('sheet').scrollTop = 0;
@@ -410,6 +411,7 @@ function openSheet(p) {
 function closeSheet() {
   $('backdrop').hidden = true;
   $('sheet').hidden = true;
+  if (location.hash.startsWith('#produit-')) history.replaceState(null, '', location.pathname + location.search);
 }
 $('close').onclick = closeSheet;
 $('backdrop').onclick = closeSheet;
@@ -429,6 +431,10 @@ fetch('products.json')
     ALL = data.map(p => ({ ...p, _h: fold(`${p.t} ${p.code || ''} ${p.id} ${p.c}`) }));
     renderChips();
     filter();
+    // Lien partagé depuis l'app : tchipa.co.uk/tchipa2/#produit-<id>
+    const m = location.hash.match(/^#produit-(\d+)$/);
+    const p = m && ALL.find(x => x.id === m[1]);
+    if (p) openSheet(p);
   })
   .catch(e => { $('count').textContent = 'Catalogue indisponible (' + e.message + ').'; });
 </script>

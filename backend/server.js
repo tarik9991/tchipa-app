@@ -2862,10 +2862,10 @@ function productRow(id) {
   return { ...p, ...sheet, fiche: f };
 }
 // Words Algerian clients don't know (Tarik 2026-11-09). Moissanite is NOT a diamond (selling it as one
-// is misleading): it becomes "pierre éclat diamant"; lab-grown diamonds are real diamonds: "diamant industriel".
+// is misleading): it becomes "simili-diamant"; lab-grown diamonds are real diamonds: "diamant industriel".
 // Display only — variant names sent back with orders stay raw.
 const relabel = t => t == null ? t : String(t)
-  .replace(/(?:diamants?\s+)?moissanites?(?:\s+diamonds?)?/gi, 'pierre éclat diamant')
+  .replace(/(?:diamants?\s+)?moissanites?(?:\s+diamonds?)?/gi, 'simili-diamant')
   .replace(/diamants?\s+(?:de\s+laboratoire|synth[ée]tiques?|cultiv[ée]s?)(?:\s+synth[ée]tiques?)?|lab[- ]?grown\s+diamonds?|laboratory\s+diamonds?|cvd\s+diamonds?/gi,
            'diamant industriel')
   .replace(/^./, c => c.toUpperCase());

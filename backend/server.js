@@ -3411,6 +3411,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS shop_carts (
   total_cents INTEGER NOT NULL,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
+{ // Tchipa 2 carts (2026-11-10): same table, app = 'tchipa2'; sent_at = order handed to the agent
+  const have = new Set(db.prepare('PRAGMA table_info(shop_carts)').all().map(c => c.name));
+  if (!have.has('app')) db.exec("ALTER TABLE shop_carts ADD COLUMN app TEXT NOT NULL DEFAULT 'tchipa'");
+  if (!have.has('sent_at')) db.exec('ALTER TABLE shop_carts ADD COLUMN sent_at TEXT');
+}
 const CART_MAX_LINES = 40;
 const CART_DAYS = 14;                  // carts untouched for longer are hidden and purged
 const cartHits = new Map();            // ip -> recent timestamps (60 pushes / 10 min)
@@ -3431,10 +3436,13 @@ app.post('/shop/cart', (req, res) => {
     const qty = Math.max(1, Math.min(10, parseInt(it?.qty, 10) || 1));
     const unitUsd = Math.max(0, Math.min(10000, Number(it?.unitUsd) || 0));
     if (!Number.isSafeInteger(productId) || productId <= 0) continue;
-    items.push({ productId, qty, unitUsd,
+    const url = String(it?.url ?? '');
+    items.push({ productId, qty, unitUsd, url: /^https:\/\/[\w.-]+\.yupoo\.com\//.test(url) ? url.slice(0, 300) : '',
                  title: String(it?.title ?? '').slice(0, 200), image: String(it?.image ?? '').slice(0, 500),
                  variant: String(it?.variant ?? '').slice(0, 300) });
   }
+  const appName = req.body?.app === 'tchipa2' ? 'tchipa2' : 'tchipa';
+  const sent = req.body?.sent === true;
   if (!items.length) {
     db.prepare('DELETE FROM shop_carts WHERE device_id = ?').run(deviceId);
     return res.json({ ok: true });
@@ -3444,33 +3452,37 @@ app.post('/shop/cart', (req, res) => {
                                 WHERE token_hash = ? AND expires_at > datetime('now')`).get(sha256(t));
   const phone = sess ? sess.phone : (normalizePhone(req.body?.phone) || null);
   const total = Math.round(items.reduce((s, i) => s + i.unitUsd * i.qty, 0) * 100);
-  db.prepare(`INSERT INTO shop_carts (device_id, phone, verified, name, items, total_cents, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-              ON CONFLICT(device_id) DO UPDATE SET phone = excluded.phone, verified = excluded.verified,
-                name = excluded.name, items = excluded.items, total_cents = excluded.total_cents,
-                updated_at = excluded.updated_at`)
-    .run(deviceId, phone, sess ? 1 : 0, String(req.body?.name ?? '').slice(0, 80) || null,
+  // sent_at is set when the client hands the order to the agent, cleared when the cart changes.
+  db.prepare(`INSERT INTO shop_carts (device_id, app, phone, verified, name, items, total_cents, sent_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ${sent ? "datetime('now')" : 'NULL'}, datetime('now'))
+              ON CONFLICT(device_id) DO UPDATE SET app = excluded.app, phone = excluded.phone,
+                verified = excluded.verified, name = excluded.name, items = excluded.items,
+                total_cents = excluded.total_cents, sent_at = excluded.sent_at, updated_at = excluded.updated_at`)
+    .run(deviceId, appName, phone, sess ? 1 : 0, String(req.body?.name ?? '').slice(0, 80) || null,
          JSON.stringify(items), total);
   res.json({ ok: true });
 });
 
-function cartsHtml() {
+function cartsHtml(appName) {
   db.prepare(`DELETE FROM shop_carts WHERE updated_at < datetime('now', ?)`).run(`-${CART_DAYS} days`);
-  const carts = db.prepare('SELECT * FROM shop_carts ORDER BY updated_at DESC LIMIT 100').all();
+  const carts = db.prepare('SELECT * FROM shop_carts WHERE app = ? ORDER BY updated_at DESC LIMIT 100').all(appName);
   if (!carts.length) return '<div class="card">Aucun panier en cours.</div>';
   return carts.map(c => {
     let items = [];
     try { items = JSON.parse(c.items); } catch { /* ignore */ }
-    const who = [c.name, c.phone].filter(Boolean).map(esc).join(' · ') || 'Client anonyme (pas de profil)';
+    const who = [c.name, c.phone].filter(Boolean).map(esc).join(' · ')
+      || (c.app === 'tchipa2' ? 'Client Tchipa 2 (anonyme)' : 'Client anonyme (pas de profil)');
     return `<div class="card">
-      <div class="big">🛒 ${who}${c.phone ? ` <span class="tag ${c.verified ? 'ok' : ''}">${c.verified ? 'connecté' : 'non vérifié'}</span>` : ''}</div>
+      <div class="big">🛒 ${who}${c.phone ? ` <span class="tag ${c.verified ? 'ok' : ''}">${c.verified ? 'connecté' : 'non vérifié'}</span>` : ''}${c.sent_at ? ` <span class="tag ok">commande envoyée à l'agent ${esc(c.sent_at)} UTC</span>` : ''}</div>
       <div class="muted">mis à jour ${esc(c.updated_at)} UTC · ${items.reduce((s, i) => s + i.qty, 0)} article(s) · ${fromCents(c.total_cents)} $</div>
       ${items.map(i => `<div class="line">${i.image ? `<img src="${esc(i.image)}" alt="" referrerpolicy="no-referrer">` : ''}<div>
         <div class="big">${esc(i.title)}</div>
         <div class="muted">Réf. ${esc(i.productId)}</div>
         <div>variante : <b>${esc(i.variant.replace(/;/g, ' / '))}</b></div>
         <div>quantité : <b>${esc(i.qty)}</b> · ${esc(i.unitUsd)} $ / pièce</div>
-        <div><a href="${esc(url1688(i.productId))}" target="_blank" rel="noopener">ouvrir sur 1688 ↗</a></div>
+        <div>${c.app === 'tchipa2'
+          ? (i.url ? `<a href="${esc(i.url)}" target="_blank" rel="noopener">ouvrir l'album Yupoo ↗</a>` : '')
+          : `<a href="${esc(url1688(i.productId))}" target="_blank" rel="noopener">ouvrir sur 1688 ↗</a>`}</div>
       </div></div>`).join('')}
     </div>`;
   }).join('');
@@ -3502,13 +3514,17 @@ app.get('/achats/:sig', async (req, res) => {
   res.set('Cache-Control', 'no-store').send(page('Achats Tchipa', `
     <h1>Commandes boutique — achats 1688</h1>
     <p class="muted">${tous ? `<a href="?">Masquer livrées / annulées</a>` : `<a href="?tous=1">Voir aussi les livrées / annulées</a>`}
-      · <a href="#paniers">Voir les paniers en cours ↓</a>
+      · <a href="#paniers">Paniers en cours ↓</a> · <a href="#paniers2">Paniers Tchipa 2 ↓</a>
       · Garde ce lien pour toi : il donne accès aux adresses des clients.</p>
     ${blocks.join('') || '<div class="card">Aucune commande.</div>'}
     <h1 id="paniers">Paniers en cours (pas encore payés)</h1>
     <p class="muted">Ce que les clients ont mis dans leur panier (app à jour seulement), ${CART_DAYS} derniers jours.
       Un panier disparaît quand il est payé ou vidé.</p>
-    ${cartsHtml()}
+    ${cartsHtml('tchipa')}
+    <h1 id="paniers2">Paniers Tchipa 2</h1>
+    <p class="muted">Clients anonymes (Tchipa 2 n'a pas de compte). « Commande envoyée » = le client a appuyé sur
+      Commander (message WhatsApp/Telegram) ; le panier reste affiché tant qu'il ne le vide pas.</p>
+    ${cartsHtml('tchipa2')}
     <script>
       document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
         await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié ✓';

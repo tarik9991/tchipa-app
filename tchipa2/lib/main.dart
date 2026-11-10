@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -33,6 +35,8 @@ const String kApkUrl = 'https://github.com/tarik9991/tchipa-app/releases/downloa
 const String kVersionUrl = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/version.json';
 // Shared product links open the sheet on the site (website/tchipa2/index.html handles #produit-<id>).
 const String kShareBase = 'https://tchipa.co.uk/tchipa2/#produit-';
+// Carts are mirrored on the purchases page (backend/server.js POST /shop/cart, app 'tchipa2').
+const String kCartSyncUrl = 'https://api.tchipa.co.uk/shop/cart';
 
 const Color kCyan = Color(0xFF00D4FF);
 const Color kViolet = Color(0xFF8B5CF6);
@@ -192,6 +196,51 @@ class Shop extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Every cart change is pushed (debounced) to the server so Tarik sees carts on
+  // the purchases page. Anonymous: a random device id, no name/phone in Tchipa 2.
+  Timer? _syncTimer;
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    if (!loaded) return;
+    final sig = cart.map((l) => '${l.product.id}|${l.size}|${l.qty}').join(',');
+    if (sig == _lastSig) return; // favourites etc. don't touch the cart
+    _lastSig = sig;
+    _syncTimer?.cancel();
+    _syncTimer = Timer(const Duration(seconds: 2), () => syncCart(cart));
+  }
+  String _lastSig = '';
+
+  Future<void> syncCart(List<CartLine> lines, {bool sent = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var id = prefs.getString('device_id');
+      if (id == null) {
+        final r = Random.secure();
+        id = List.generate(32, (_) => r.nextInt(16).toRadixString(16)).join();
+        await prefs.setString('device_id', id);
+      }
+      await http.post(Uri.parse(kCartSyncUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'deviceId': id,
+            'app': 'tchipa2',
+            'sent': sent,
+            'items': lines
+                .map((l) => {
+                      'productId': int.tryParse(l.product.id) ?? 0,
+                      'title': l.product.code.isEmpty ? l.product.title : '${l.product.title} (${l.product.code})',
+                      'image': l.product.photoUrl(0),
+                      'url': 'https://${l.product.store}.x.yupoo.com/albums/${l.product.id}',
+                      'variant': l.size.isEmpty ? 'Taille à préciser' : 'Taille ${l.size}',
+                      'qty': l.qty,
+                      'unitUsd': l.product.price,
+                    })
+                .toList(),
+          })).timeout(const Duration(seconds: 15));
+    } catch (_) {/* offline: best effort */}
+  }
+
   int get cartCount => cart.fold(0, (n, l) => n + l.qty);
   double get cartTotal => cart.fold(0.0, (t, l) => t + l.product.price * l.qty);
 }
@@ -216,6 +265,7 @@ String orderMessage(List<CartLine> lines) {
 
 Future<void> sendOrder(BuildContext context, List<CartLine> lines) async {
   final msg = orderMessage(lines);
+  Shop.i.syncCart(lines, sent: true); // shows "commande envoyée" on the purchases page
   final messenger = ScaffoldMessenger.of(context);
   if (kAgentWhatsapp.isNotEmpty) {
     final uri = Uri.parse('https://wa.me/$kAgentWhatsapp?text=${Uri.encodeComponent(msg)}');
@@ -328,6 +378,39 @@ class _RootScreenState extends State<RootScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => UpdateCheck.run(context));
+    _deepLinks.setMethodCallHandler((call) async {
+      if (call.method == 'ping') _consumeDeepLink();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeDeepLink());
+  }
+
+  // "Commander dans l'app" on tchipa.co.uk/tchipa2 opens tchipa2://produit/<id>
+  // (MainActivity.kt keeps the link until we ask for it) → open that product.
+  static const _deepLinks = MethodChannel('tchipa2/deeplink');
+
+  Future<void> _consumeDeepLink() async {
+    String? link;
+    try {
+      link = await _deepLinks.invokeMethod<String>('initial');
+    } catch (_) {
+      return;
+    }
+    final m = RegExp(r'produit[/-](\d+)').firstMatch(link ?? '');
+    if (m == null) return;
+    final id = m.group(1)!;
+    void open() {
+      final p = Shop.i.byId(id);
+      if (p == null || !mounted) return;
+      setState(() => _tab = 0);
+      Navigator.push(context, MaterialPageRoute(builder: (_) => ProductScreen(product: p)));
+    }
+    if (Shop.i.loaded) return open();
+    void onLoad() {
+      if (!Shop.i.loaded) return;
+      Shop.i.removeListener(onLoad);
+      open();
+    }
+    Shop.i.addListener(onLoad); // catalogue still loading at cold start
   }
 
   // Android keeps the app alive in the background for days: also check for a new
@@ -344,6 +427,7 @@ class _RootScreenState extends State<RootScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _deepLinks.setMethodCallHandler(null);
     super.dispose();
   }
 
@@ -1266,6 +1350,8 @@ class _CartTile extends StatelessWidget {
                 style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
             const SizedBox(height: 4),
             Text(line.size.isEmpty ? 'Taille à préciser' : 'Taille ${line.size}',
+                style: const TextStyle(color: Colors.white38, fontSize: 12)),
+            Text(p.code.isEmpty ? 'Réf ${p.id}' : '${p.code} · Réf ${p.id}',
                 style: const TextStyle(color: Colors.white38, fontSize: 12)),
             const SizedBox(height: 4),
             Text(formatUsd(p.price * line.qty),

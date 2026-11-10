@@ -282,10 +282,10 @@
     <div id="sh-ref" class="ref"></div>
     <div class="big-price"><span id="sh-price" class="grad-text"></span><small>USD</small></div>
     <div class="sheet-cta">
-      <a class="btn btn-primary" data-apk>Commander dans l'app Tchipa 2</a>
+      <a id="sh-order" class="btn btn-primary" data-apk>Commander dans l'app Tchipa 2</a>
       <button id="sh-copy" class="btn btn-ghost" type="button">Copier la référence</button>
     </div>
-    <p class="note">Dans l'app, recherchez la référence pour retrouver l'article, choisissez votre taille et envoyez la commande à l'agent.</p>
+    <p class="note">App déjà installée : l'article s'ouvre directement dedans. Sinon le bouton télécharge l'app (si le téléchargement se lance alors que vous l'avez déjà, installez-le : c'est la mise à jour).</p>
   </div>
 </div>
 
@@ -430,6 +430,11 @@ function openSheet(p) {
   $('sh-copy').onclick = () => {
     navigator.clipboard?.writeText(p.code || p.id).then(() => { $('sh-copy').textContent = '✓ Référence copiée'; });
   };
+  // Android Chrome: open the article in the installed app (tchipa2://produit/<id>,
+  // intent filter in tchipa2/android/.../AndroidManifest.xml); no app → APK download.
+  $('sh-order').href = /Android/i.test(navigator.userAgent)
+    ? `intent://produit/${encodeURIComponent(p.id)}#Intent;scheme=tchipa2;S.browser_fallback_url=${encodeURIComponent(APK)};end`
+    : APK;
   history.replaceState(null, '', '#produit-' + p.id);
   $('backdrop').hidden = false;
   $('sheet').hidden = false;

@@ -2230,6 +2230,125 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   }
 }
 
+// Gallery page for the product video: first photo dimmed + big ▶, tap = full screen.
+class _VideoPoster extends StatelessWidget {
+  final String? image;
+  final VoidCallback onTap;
+  const _VideoPoster({required this.image, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(fit: StackFit.expand, children: [
+        _netImage(image, thumb: false),
+        Container(color: Colors.black.withValues(alpha: 0.35)),
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.55), shape: BoxShape.circle),
+            child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 48),
+          ),
+        ),
+        const Positioned(
+          left: 0, right: 0, bottom: 44,
+          child: Text('Voir la vidéo', textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+        ),
+      ]),
+    );
+  }
+}
+
+// Full-screen player for 1688 product videos (cloud.video.taobao.com → alicdn mp4).
+class VideoViewerScreen extends StatefulWidget {
+  final String url;
+  const VideoViewerScreen({super.key, required this.url});
+  @override
+  State<VideoViewerScreen> createState() => _VideoViewerScreenState();
+}
+
+class _VideoViewerScreenState extends State<VideoViewerScreen> {
+  late final VideoPlayerController _c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _c.initialize().then((_) {
+      if (!mounted) return;
+      _c
+        ..setLooping(true)
+        ..play();
+      setState(() {});
+    }).catchError((_) {
+      if (mounted) setState(() => _error = true);
+    });
+    _c.addListener(_onTick);
+  }
+
+  void _onTick() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _c.removeListener(_onTick);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = _c.value.isInitialized;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(children: [
+        Center(
+          child: _error
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text("La vidéo n'a pas pu être chargée. Réessaie plus tard.",
+                      textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)))
+              : !ready
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : GestureDetector(
+                      onTap: () => _c.value.isPlaying ? _c.pause() : _c.play(),
+                      child: AspectRatio(
+                        aspectRatio: _c.value.aspectRatio,
+                        child: Stack(alignment: Alignment.center, children: [
+                          VideoPlayer(_c),
+                          if (!_c.value.isPlaying)
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.55), shape: BoxShape.circle),
+                              child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 48),
+                            ),
+                        ]),
+                      ),
+                    ),
+        ),
+        if (ready && !_error)
+          Positioned(
+            left: 16, right: 16,
+            bottom: MediaQuery.viewPaddingOf(context).bottom + 20,
+            child: VideoProgressIndicator(_c, allowScrubbing: true,
+                colors: const VideoProgressColors(playedColor: Color(0xFFFF6A00))),
+          ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: IconButton(
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
 class _CartButton extends StatelessWidget {
   const _CartButton();
   @override
@@ -3347,6 +3466,10 @@ class _ProductScreenState extends State<ProductScreen> {
 
   Widget _body(Map<String, dynamic> p) {
     final images = ((p['images'] as List?) ?? []).cast<String>();
+    // 1688 video (when the product has one) = last page of the gallery, as on the site.
+    final video = (p['video'] is String && (p['video'] as String).startsWith('http')) ? p['video'] as String : null;
+    final pageCount = images.length + (video != null ? 1 : 0);
+    void openVideo() => Navigator.push(context, MaterialPageRoute(builder: (_) => VideoViewerScreen(url: video!)));
     final v = _current;
     final opts = _options;
     final hasSize = opts.keys.any((k) => k.toLowerCase().contains('size') || k.toLowerCase().contains('height'));
@@ -3359,9 +3482,11 @@ class _ProductScreenState extends State<ProductScreen> {
             child: Stack(children: [
               PageView.builder(
                 controller: _pages,
-                itemCount: max(1, images.length),
+                itemCount: max(1, pageCount),
                 onPageChanged: (i) => setState(() => _img = i),
-                itemBuilder: (_, i) => GestureDetector(
+                itemBuilder: (_, i) => i >= images.length && video != null
+                    ? _VideoPoster(image: images.isEmpty ? null : images.first, onTap: openVideo)
+                    : GestureDetector(
                   onTap: images.isEmpty
                       ? null
                       : () => Navigator.push(context, MaterialPageRoute(
@@ -3369,7 +3494,7 @@ class _ProductScreenState extends State<ProductScreen> {
                   child: _netImage(images.isEmpty ? null : images[i], thumb: false),
                 ),
               ),
-              if (images.isNotEmpty)
+              if (images.isNotEmpty && _img < images.length)
                 Positioned(
                   left: 14, bottom: 14,
                   child: IgnorePointer(
@@ -3381,26 +3506,26 @@ class _ProductScreenState extends State<ProductScreen> {
                     ),
                   ),
                 ),
-              if (images.length > 1)
+              if (pageCount > 1)
                 Positioned(
                   right: 14, bottom: 14,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                         color: Colors.black.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12)),
-                    child: Text('${_img + 1}/${images.length}',
+                    child: Text(_img >= images.length ? 'Vidéo' : '${_img + 1}/${images.length}',
                         style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                   ),
                 ),
             ]),
           ),
-          if (images.length > 1)
+          if (pageCount > 1)
             SizedBox(
               height: 64,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                itemCount: images.length,
+                itemCount: pageCount,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (_, i) => GestureDetector(
                  onTap: () => _pages.animateToPage(i,
@@ -3413,7 +3538,10 @@ class _ProductScreenState extends State<ProductScreen> {
                     border: Border.all(
                         color: i == _img ? const Color(0xFFFF3D1F) : Colors.transparent, width: 2),
                   ),
-                  child: _netImage(images[i]),
+                  child: i >= images.length
+                      ? Container(color: Colors.black,
+                          child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 30))
+                      : _netImage(images[i]),
                  ),
                 ),
               ),

@@ -3348,6 +3348,7 @@ function lineHtml(l, withFr) {
   const img = l.sku_image || l.image;
   return `<div class="line">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : ''}<div>
     <div class="big">${esc(l.title_cn || l.title)}</div>
+    <div class="muted">Réf. ${esc(l.item_id)}</div>
     ${withFr || !l.title_cn ? `<div class="muted">${esc(l.title)}</div>` : ''}
     <div>规格 / variante : <b>${esc((l.variant_cn || l.variant).replace(/;/g, ' / '))}</b></div>
     ${l.variant_cn ? `<div class="muted">${esc(l.variant.replace(/;/g, ' / '))}</div>` : '<div class="muted">（中文规格暂不可用，请按图片选择）</div>'}

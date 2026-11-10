@@ -916,7 +916,12 @@ document.querySelectorAll('.products img').forEach(img => {
   }).catch(() => {});
 
   // ── Fiche produit ─────────────────────────────────────────
-  let P = null, variants = [], sel = {}, media = [], cur = 0;
+  let P = null, variants = [], sel = {}, media = [], cur = 0, curId = '';
+  // Android Chrome: open the product in the installed app (tchipa://produit/<id>,
+  // intent filter in AndroidManifest.xml); no app → falls back to the APK download.
+  const appLink = id => /Android/i.test(navigator.userAgent)
+    ? `intent://produit/${id}#Intent;scheme=tchipa;S.browser_fallback_url=${encodeURIComponent(APK)};end`
+    : APK;
 
   const options = () => { const o = {};
     variants.forEach(v => Object.entries(v.props).forEach(([k, val]) => {
@@ -946,6 +951,7 @@ document.querySelectorAll('.products img').forEach(img => {
     pd.querySelector('.pd-info').innerHTML = `
       <div class="pd-cat">${esc(P.category)}${P.sub ? ' · ' + esc(P.sub) : ''}</div>
       <h3 class="pd-title">${esc(P.title)}</h3>
+      <div style="font-size:.85rem;color:var(--sub);margin:-.3rem 0 .6rem;user-select:all">Réf. ${esc(curId)}</div>
       <div class="pd-price">${v ? '' : '<small style="margin:0 .3rem 0 0">dès</small>'}${usd(price)}<small>livré en Algérie, douane comprise</small></div>
       ${sold(P.sold) ? `<div style="font-size:.82rem;color:var(--sub);margin-top:-.5rem">${sold(P.sold)} sur 1688</div>` : ''}
       ${Object.entries(opts).map(([k, vals]) => `
@@ -956,9 +962,9 @@ document.querySelectorAll('.products img').forEach(img => {
       ${hasSize ? '<div class="pd-warn">📏 Tailles chinoises : elles taillent petit. Prends 1 à 2 tailles au-dessus de ta taille habituelle.</div>' : ''}
       <ul class="pd-perks"><li>🚚 Livré en Algérie</li><li>🛃 Douane comprise</li><li>💳 Payé en dinars (BaridiMob)</li></ul>
       <div class="pd-cta">
-        <a class="btn btn-primary" href="${APK}">Commander dans l'app Android</a>
+        <a class="btn btn-primary" href="${appLink(curId)}">Commander dans l'app Android</a>
         <a class="btn btn-ghost" href="${PWA}" target="_blank" rel="noopener">Commander sur iPhone</a>
-        <p>Cherche « ${esc(P.title.split(' ').slice(0, 4).join(' '))} » dans la boutique de l'app, choisis ta variante et paie avec ton solde Tchipa.</p>
+        <p>App déjà installée : la fiche s'ouvre directement dedans. Sinon le bouton télécharge l'app (si le téléchargement se lance alors que tu l'as déjà, installe-le : c'est la mise à jour).</p>
       </div>`;
   }
 
@@ -979,6 +985,7 @@ document.querySelectorAll('.products img').forEach(img => {
     if (!dlg.open) dlg.showModal();
     document.documentElement.style.overflow = 'hidden';
     history.replaceState(null, '', '#produit-' + id);
+    curId = String(id).replace(/\D/g, '');
     try {
       P = await getJson('/shop/products/' + id);
     } catch (e) {

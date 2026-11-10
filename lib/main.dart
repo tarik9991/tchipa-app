@@ -1132,9 +1132,28 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
+  // "Commander dans l'app" on tchipa.co.uk opens tchipa://produit/<id> (MainActivity.kt
+  // keeps the link until we ask for it) → open that product sheet in the shop.
+  static const _deepLinks = MethodChannel('tchipa/deeplink');
+
+  Future<void> _consumeDeepLink() async {
+    String? link;
+    try {
+      link = await _deepLinks.invokeMethod<String>('initial');
+    } catch (_) {
+      return;
+    }
+    final m = RegExp(r'produit[/-](\d+)').firstMatch(link ?? '');
+    if (m == null || !mounted) return;
+    setState(() => _idx = 0);
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => ProductScreen(productId: int.parse(m.group(1)!))));
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (!kIsWeb) _deepLinks.setMethodCallHandler(null);
     super.dispose();
   }
   // Boutique first: PayGate/Swype cards are gone (2026-09), the shop is the product.
@@ -1150,6 +1169,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => UpdateCheck.run(context));
+    if (!kIsWeb) {
+      _deepLinks.setMethodCallHandler((call) async {
+        if (call.method == 'ping') _consumeDeepLink();
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _consumeDeepLink());
+    }
     if (UserProfile.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         setState(() => _idx = 3);
@@ -3158,6 +3183,7 @@ class _ProductScreenState extends State<ProductScreen> {
         .join('\n');
     return '${p['title']}${price.isEmpty ? '' : ' — $price'}\n'
         '${opts.isEmpty ? '' : '$opts\n'}'
+        'Réf. ${widget.productId}\n'
         'Livré en Algérie, douane comprise.\n'
         '$_shareLink';
   }
@@ -3393,6 +3419,11 @@ class _ProductScreenState extends State<ProductScreen> {
               const SizedBox(height: 8),
               Text('${p['title']}',
                   style: TextStyle(color: AppColors.label, fontSize: 18, fontWeight: FontWeight.w700, height: 1.3)),
+              const SizedBox(height: 4),
+              // Product reference = catalogue id (same number as in the share link and the
+              // purchases page) so clients/agents can quote it on WhatsApp.
+              SelectableText('Réf. ${widget.productId}',
+                  style: TextStyle(color: AppColors.sublabel, fontSize: 13, fontWeight: FontWeight.w600)),
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
@@ -3660,6 +3691,7 @@ class _CartScreenState extends State<CartScreen> {
                     Text(l.title, maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w600)),
                     Text(l.variantLabel, style: TextStyle(color: AppColors.sublabel, fontSize: 12)),
+                    Text('Réf. ${l.productId}', style: TextStyle(color: AppColors.sublabel, fontSize: 12)),
                     Text(_usd(l.unitUsd * l.qty),
                         style: const TextStyle(color: Color(0xFFFF6A00), fontWeight: FontWeight.w800)),
                   ])),
@@ -4053,8 +4085,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ClipRRect(borderRadius: BorderRadius.circular(8),
                   child: SizedBox(width: 44, height: 44, child: _netImage(it['image'] as String?))),
               const SizedBox(width: 10),
-              Expanded(child: Text('${it['qty']} × ${it['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: AppColors.sublabel, fontSize: 13))),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${it['qty']} × ${it['title']}', maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.sublabel, fontSize: 13)),
+                if (it['productId'] != null)
+                  Text('Réf. ${it['productId']}', style: TextStyle(color: AppColors.textDim, fontSize: 11.5)),
+              ])),
             ]),
           ),
       ]),

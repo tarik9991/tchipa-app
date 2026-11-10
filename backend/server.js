@@ -3396,6 +3396,86 @@ app.post('/achat/:id/:sig/achetee', (req, res) => {
 });
 
 // Tarik: every order + the WhatsApp message for the agent.
+// ── Carts mirrored from the app (2026-11-10) ─────────────────────────────
+// The cart lives on the phone; the app (>= this version) pushes a copy on every
+// change so Tarik sees on /achats what people are about to buy. Anonymous
+// (deviceId), the phone/name come from the session when logged in, otherwise
+// from the profile the app sends (unverified, display only). Empty cart = row
+// deleted (also after checkout, the app clears its cart).
+db.exec(`CREATE TABLE IF NOT EXISTS shop_carts (
+  device_id   TEXT PRIMARY KEY,
+  phone       TEXT,
+  verified    INTEGER NOT NULL DEFAULT 0,
+  name        TEXT,
+  items       TEXT NOT NULL,
+  total_cents INTEGER NOT NULL,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+const CART_MAX_LINES = 40;
+const CART_DAYS = 14;                  // carts untouched for longer are hidden and purged
+const cartHits = new Map();            // ip -> recent timestamps (60 pushes / 10 min)
+
+app.post('/shop/cart', (req, res) => {
+  const deviceId = String(req.body?.deviceId ?? '');
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(deviceId)) return res.status(400).json({ error: 'deviceId' });
+  const ip = req.headers['x-real-ip'] || req.socket.remoteAddress || '';   // behind nginx
+  const now = Date.now();
+  const hits = (cartHits.get(ip) || []).filter(t => now - t < 600000);
+  if (hits.length >= 60) return res.status(429).json({ error: 'Trop de requêtes' });
+  hits.push(now); cartHits.set(ip, hits);
+
+  const raw = Array.isArray(req.body?.items) ? req.body.items.slice(0, CART_MAX_LINES) : [];
+  const items = [];
+  for (const it of raw) {
+    const productId = Number(it?.productId);
+    const qty = Math.max(1, Math.min(10, parseInt(it?.qty, 10) || 1));
+    const unitUsd = Math.max(0, Math.min(10000, Number(it?.unitUsd) || 0));
+    if (!Number.isSafeInteger(productId) || productId <= 0) continue;
+    items.push({ productId, qty, unitUsd,
+                 title: String(it?.title ?? '').slice(0, 200), image: String(it?.image ?? '').slice(0, 500),
+                 variant: String(it?.variant ?? '').slice(0, 300) });
+  }
+  if (!items.length) {
+    db.prepare('DELETE FROM shop_carts WHERE device_id = ?').run(deviceId);
+    return res.json({ ok: true });
+  }
+  const t = bearer(req);
+  const sess = t && db.prepare(`SELECT phone FROM wallet_sessions
+                                WHERE token_hash = ? AND expires_at > datetime('now')`).get(sha256(t));
+  const phone = sess ? sess.phone : (normalizePhone(req.body?.phone) || null);
+  const total = Math.round(items.reduce((s, i) => s + i.unitUsd * i.qty, 0) * 100);
+  db.prepare(`INSERT INTO shop_carts (device_id, phone, verified, name, items, total_cents, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(device_id) DO UPDATE SET phone = excluded.phone, verified = excluded.verified,
+                name = excluded.name, items = excluded.items, total_cents = excluded.total_cents,
+                updated_at = excluded.updated_at`)
+    .run(deviceId, phone, sess ? 1 : 0, String(req.body?.name ?? '').slice(0, 80) || null,
+         JSON.stringify(items), total);
+  res.json({ ok: true });
+});
+
+function cartsHtml() {
+  db.prepare(`DELETE FROM shop_carts WHERE updated_at < datetime('now', ?)`).run(`-${CART_DAYS} days`);
+  const carts = db.prepare('SELECT * FROM shop_carts ORDER BY updated_at DESC LIMIT 100').all();
+  if (!carts.length) return '<div class="card">Aucun panier en cours.</div>';
+  return carts.map(c => {
+    let items = [];
+    try { items = JSON.parse(c.items); } catch { /* ignore */ }
+    const who = [c.name, c.phone].filter(Boolean).map(esc).join(' · ') || 'Client anonyme (pas de profil)';
+    return `<div class="card">
+      <div class="big">🛒 ${who}${c.phone ? ` <span class="tag ${c.verified ? 'ok' : ''}">${c.verified ? 'connecté' : 'non vérifié'}</span>` : ''}</div>
+      <div class="muted">mis à jour ${esc(c.updated_at)} UTC · ${items.reduce((s, i) => s + i.qty, 0)} article(s) · ${fromCents(c.total_cents)} $</div>
+      ${items.map(i => `<div class="line">${i.image ? `<img src="${esc(i.image)}" alt="" referrerpolicy="no-referrer">` : ''}<div>
+        <div class="big">${esc(i.title)}</div>
+        <div class="muted">Réf. ${esc(i.productId)}</div>
+        <div>variante : <b>${esc(i.variant.replace(/;/g, ' / '))}</b></div>
+        <div>quantité : <b>${esc(i.qty)}</b> · ${esc(i.unitUsd)} $ / pièce</div>
+        <div><a href="${esc(url1688(i.productId))}" target="_blank" rel="noopener">ouvrir sur 1688 ↗</a></div>
+      </div></div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
 app.get('/achats/:sig', async (req, res) => {
   if (!achatSigOk('liste', req.params.sig)) return res.status(404).send('Not found');
   const tous = req.query.tous === '1';
@@ -3422,8 +3502,13 @@ app.get('/achats/:sig', async (req, res) => {
   res.set('Cache-Control', 'no-store').send(page('Achats Tchipa', `
     <h1>Commandes boutique — achats 1688</h1>
     <p class="muted">${tous ? `<a href="?">Masquer livrées / annulées</a>` : `<a href="?tous=1">Voir aussi les livrées / annulées</a>`}
+      · <a href="#paniers">Voir les paniers en cours ↓</a>
       · Garde ce lien pour toi : il donne accès aux adresses des clients.</p>
     ${blocks.join('') || '<div class="card">Aucune commande.</div>'}
+    <h1 id="paniers">Paniers en cours (pas encore payés)</h1>
+    <p class="muted">Ce que les clients ont mis dans leur panier (app à jour seulement), ${CART_DAYS} derniers jours.
+      Un panier disparaît quand il est payé ou vidé.</p>
+    ${cartsHtml()}
     <script>
       document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
         await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié ✓';

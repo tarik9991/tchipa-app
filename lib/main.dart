@@ -2002,11 +2002,47 @@ class Cart {
     } catch (_) {
       lines.value = [];
     }
+    _scheduleSync(); // existing carts show up on the purchases page after the update
   }
 
   static Future<void> _persist() async {
     final p = await SharedPreferences.getInstance();
     await p.setString('cart_v1', jsonEncode(lines.value.map((l) => l.toJson()).toList()));
+    _scheduleSync();
+  }
+
+  // Mirror of the cart on the server (POST /shop/cart) so Tarik sees on the
+  // purchases page what clients are about to buy. Debounced, best effort.
+  static Timer? _syncTimer;
+  static void _scheduleSync() {
+    _syncTimer?.cancel();
+    _syncTimer = Timer(const Duration(seconds: 2), _sync);
+  }
+
+  static Future<void> _sync() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      var id = p.getString('device_id');
+      if (id == null) {
+        final r = Random.secure();
+        id = List.generate(32, (_) => r.nextInt(16).toRadixString(16)).join();
+        await p.setString('device_id', id);
+      }
+      await http.post(Uri.parse('$kVpsBase/shop/cart'),
+          headers: {
+            'Content-Type': 'application/json',
+            if (ShopApi.walletToken != null) 'Authorization': 'Bearer ${ShopApi.walletToken}',
+          },
+          body: jsonEncode({
+            'deviceId': id,
+            'name': UserProfile.name,
+            'phone': UserProfile.phone,
+            'items': lines.value
+                .map((l) => {'productId': l.productId, 'title': l.title, 'image': l.image,
+                             'variant': l.variant, 'qty': l.qty, 'unitUsd': l.unitUsd})
+                .toList(),
+          })).timeout(const Duration(seconds: 15));
+    } catch (_) {/* offline: next change or next launch will retry */}
   }
 
   static void add(CartLine l) {

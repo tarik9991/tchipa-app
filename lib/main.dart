@@ -3346,6 +3346,7 @@ class _ProductScreenState extends State<ProductScreen> {
   Future<void> _share() async {
     final p = _p;
     if (p == null) return;
+    final video = (p['video'] is String && (p['video'] as String).startsWith('http')) ? p['video'] as String : null;
     final choice = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: AppColors.surface,
@@ -3355,10 +3356,17 @@ class _ProductScreenState extends State<ProductScreen> {
           ListTile(
             leading: const Icon(Icons.photo_library_rounded, color: Color(0xFFFF6A00)),
             title: Text('Partager le produit', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
-            subtitle: Text('Toutes les photos, le prix, les tailles et le lien',
+            subtitle: Text(video != null ? 'Les photos, la vidéo, le prix, les tailles et le lien' : 'Toutes les photos, le prix, les tailles et le lien',
                 style: TextStyle(color: AppColors.sublabel)),
             onTap: () => Navigator.pop(ctx, 'all'),
           ),
+          if (video != null && !kIsWeb)
+            ListTile(
+              leading: const Icon(Icons.play_circle_fill_rounded, color: Color(0xFFFF6A00)),
+              title: Text('Partager la vidéo', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+              subtitle: Text('La vidéo du produit, le prix et le lien', style: TextStyle(color: AppColors.sublabel)),
+              onTap: () => Navigator.pop(ctx, 'video'),
+            ),
           ListTile(
             leading: const Icon(Icons.link_rounded, color: Color(0xFFFF6A00)),
             title: Text('Partager le lien seulement', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
@@ -3384,10 +3392,37 @@ class _ProductScreenState extends State<ProductScreen> {
     }
     setState(() => _sharing = true);
     try {
+      // 1688 video: cloud.video.taobao.com redirects to an alicdn mp4 (http follows it).
+      Future<XFile?> videoFile(String dir) async {
+        try {
+          final r = await http.get(Uri.parse(video!)).timeout(const Duration(seconds: 60));
+          final type = r.headers['content-type'] ?? '';
+          if (r.statusCode != 200 || r.bodyBytes.isEmpty || !type.startsWith('video')) return null;
+          final f = File('$dir/tchipa_${widget.productId}_video.mp4');
+          await f.writeAsBytes(r.bodyBytes);
+          return XFile(f.path, mimeType: 'video/mp4');
+        } catch (_) {
+          return null;
+        }
+      }
+      if (choice == 'video' && video != null) {
+        final f = await videoFile((await getTemporaryDirectory()).path);
+        if (f != null) {
+          await Share.shareXFiles([f], text: text, subject: '${p['title']}');
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('Vidéo indisponible, seul le lien est partagé'), behavior: SnackBarBehavior.floating));
+          }
+          await Share.share(text, subject: '${p['title']}');
+        }
+        return;
+      }
       final imgs = ((p['images'] as List?) ?? [p['image']]).whereType<String>().take(10).toList();
-      if (choice == 'all' && !kIsWeb && imgs.isNotEmpty) {
+      if (choice == 'all' && !kIsWeb && (imgs.isNotEmpty || video != null)) {
         final dir = (await getTemporaryDirectory()).path;
         final files = <XFile>[];
+        final vid = video != null ? videoFile(dir) : Future<XFile?>.value(null);
         await Future.wait(imgs.asMap().entries.map((e) async {
           try {
             final r = await http.get(Uri.parse(e.value)).timeout(const Duration(seconds: 10));
@@ -3399,6 +3434,8 @@ class _ProductScreenState extends State<ProductScreen> {
           } catch (_) {/* skip this photo */}
         }));
         files.sort((a, b) => a.path.compareTo(b.path));
+        final v = await vid;
+        if (v != null) files.add(v);
         if (files.isNotEmpty) {
           await Share.shareXFiles(files, text: text, subject: '${p['title']}');
           return;

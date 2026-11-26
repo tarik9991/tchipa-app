@@ -33,8 +33,8 @@ const String kPhotoRelay = 'https://api.tchipa.co.uk/yupoo';
 const int kBuildNumber = int.fromEnvironment('BUILD_NUMBER');
 const String kApkUrl = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/tchipa2.apk';
 const String kVersionUrl = 'https://github.com/tarik9991/tchipa-app/releases/download/tchipa2-latest/version.json';
-// Shared product links open the sheet on the site (website/tchipa2/index.html handles #produit-<id>).
-const String kShareBase = 'https://tchipa.co.uk/tchipa2/#produit-';
+// Shared product links open the sheet on the site (tchipa2/site/index.html handles #produit-<id>).
+const String kShareBase = 'https://tchipa2.tchipa.co.uk/#produit-';
 // Carts are mirrored on the purchases page (backend/server.js POST /shop/cart, app 'tchipa2').
 const String kCartSyncUrl = 'https://api.tchipa.co.uk/shop/cart';
 
@@ -384,7 +384,7 @@ class _RootScreenState extends State<RootScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumeDeepLink());
   }
 
-  // "Commander dans l'app" on tchipa.co.uk/tchipa2 opens tchipa2://produit/<id>
+  // "Commander dans l'app" on tchipa2.tchipa.co.uk opens tchipa2://produit/<id>
   // (MainActivity.kt keeps the link until we ask for it) → open that product.
   static const _deepLinks = MethodChannel('tchipa2/deeplink');
 
@@ -892,7 +892,7 @@ class _ProductScreenState extends State<ProductScreen> {
 
   bool _sharing = false;
 
-  // Share = photos + name + price + link tchipa.co.uk/tchipa2/#produit-<id> (the site opens the
+  // Share = photos + name + price + link tchipa2.tchipa.co.uk/#produit-<id> (the site opens the
   // product sheet straight away) — agents send it on WhatsApp/Telegram to their clients.
   String get _shareLink => '$kShareBase${widget.product.id}';
 

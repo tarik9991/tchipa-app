@@ -26,7 +26,7 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Product links from tchipa.co.uk/tchipa2: tchipa2://produit/<id> (see MainActivity.kt) -->
+            <!-- Product links from tchipa2.tchipa.co.uk: tchipa2://produit/<id> (see MainActivity.kt) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>

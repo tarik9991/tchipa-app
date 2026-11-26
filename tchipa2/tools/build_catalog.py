@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT.parent / 'scraper' / 'yupoo' / 'apify_csv'
 MANIFEST = ROOT.parent / 'scraper' / 'yupoo' / 't2_manifest.json'   # { store: { albumId: photo count } }
 OUT = ROOT / 'assets' / 'catalog' / 'products.json'
-SITE_OUT = ROOT.parent / 'website' / 'tchipa2' / 'products.json'   # tchipa.co.uk/tchipa2/
+SITE_OUT = ROOT / 'site' / 'products.json'   # tchipa2.tchipa.co.uk (deploy: tchipa2/tools/deploy_site.sh)
 
 # store -> fallback category when no keyword matches. Stores not listed are
 # skipped (samluxuryfactory albums are mixed-product category albums whose

@@ -3475,6 +3475,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS shop_carts (
 const CART_MAX_LINES = 40;
 const CART_DAYS = 14;                  // carts untouched for longer are hidden and purged
 const cartHits = new Map();            // ip -> recent timestamps (60 pushes / 10 min)
+// /achats only shows the carts of these phones (Tarik, 2026-11-28: « laisse juste ALFA »).
+// Empty list = every cart. Other carts are still stored, just not displayed.
+const ACHATS_PHONES = ['+21356093021'];
 
 app.post('/shop/cart', (req, res) => {
   const deviceId = String(req.body?.deviceId ?? '');
@@ -3521,8 +3524,9 @@ app.post('/shop/cart', (req, res) => {
 
 function cartsHtml(appName) {
   db.prepare(`DELETE FROM shop_carts WHERE updated_at < datetime('now', ?)`).run(`-${CART_DAYS} days`);
-  const carts = db.prepare('SELECT * FROM shop_carts WHERE app = ? ORDER BY updated_at DESC LIMIT 100').all(appName);
-  if (!carts.length) return '<div class="card">Aucun panier en cours.</div>';
+  const carts = db.prepare('SELECT * FROM shop_carts WHERE app = ? ORDER BY updated_at DESC LIMIT 100').all(appName)
+    .filter(c => !ACHATS_PHONES.length || ACHATS_PHONES.includes(c.phone));
+  if (!carts.length) return '<div class="card">Aucun achat.</div>';
   return carts.map(c => {
     let items = [];
     try { items = JSON.parse(c.items); } catch { /* ignore */ }
@@ -3570,17 +3574,11 @@ app.get('/achats/:sig', async (req, res) => {
   res.set('Cache-Control', 'no-store').send(page('Achats Tchipa', `
     <h1>Commandes boutique — achats 1688</h1>
     <p class="muted">${tous ? `<a href="?">Masquer livrées / annulées</a>` : `<a href="?tous=1">Voir aussi les livrées / annulées</a>`}
-      · <a href="#paniers">Paniers en cours ↓</a> · <a href="#paniers2">Paniers Tchipa 2 ↓</a>
+      · <a href="#paniers">Achats ↓</a>
       · Garde ce lien pour toi : il donne accès aux adresses des clients.</p>
     ${blocks.join('') || '<div class="card">Aucune commande.</div>'}
-    <h1 id="paniers">Paniers en cours (pas encore payés)</h1>
-    <p class="muted">Ce que les clients ont mis dans leur panier (app à jour seulement), ${CART_DAYS} derniers jours.
-      Un panier disparaît quand il est payé ou vidé.</p>
+    <h1 id="paniers">Achats</h1>
     ${cartsHtml('tchipa')}
-    <h1 id="paniers2">Paniers Tchipa 2</h1>
-    <p class="muted">Clients anonymes (Tchipa 2 n'a pas de compte). « Commande envoyée » = le client a appuyé sur
-      Commander (message WhatsApp/Telegram) ; le panier reste affiché tant qu'il ne le vide pas.</p>
-    ${cartsHtml('tchipa2')}
     <script>
       document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
         await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copié ✓';

@@ -201,6 +201,9 @@
     .product { cursor:pointer; position:relative; }
     .product:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
     .product .price { display:block; margin-top:.35rem; font-size:.95rem; font-weight:800; color:var(--cyan); }
+    .vnote { margin:0 0 1rem; padding:.6rem .9rem; border-radius:12px; font-size:.85rem; line-height:1.35;
+             background:rgba(16,185,129,.12); color:var(--sub); }
+    .vnote strong { color:var(--text); }
     .product .price em { font-style:normal; font-size:.72rem; font-weight:600; color:var(--sub); margin-right:.2rem; }
     .product .sold { display:block; margin-top:.15rem; font-size:.72rem; font-weight:600; color:var(--sub); }
     .product figcaption .t { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
@@ -569,6 +572,7 @@
 
     <div class="vtabs" role="tablist" aria-label="Rayons" hidden></div>
     <div class="vsubs" hidden></div>
+    <p class="vnote" hidden><strong>≈ = prix estimé.</strong> Le prix exact, livraison comprise, est souvent plus bas sur la fiche.</p>
     <ul class="products" id="vitrine">
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN015Kiipr1Xfbu0anri5_!!2221408952951-0-cib.jpg_300x300.jpg" alt="Robe chemise abaya unie moutarde à manches longues, portée avec un hijab" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Robe chemise Abaya unie manches longues</figcaption></figure></li>
       <li><figure class="product reveal"><div class="ph"><img src="https://cbu01.alicdn.com/img/ibank/O1CN01p9u4Qk1NOzOUUXP13_!!2211288331561-0-cib.jpg_300x300.jpg" alt="Abaya plissée longue à manches longues" width="300" height="300" loading="lazy" referrerpolicy="no-referrer"></div><figcaption>Abaya femme noire plissée manches longues élégante</figcaption></figure></li>
@@ -871,6 +875,8 @@ document.querySelectorAll('.products img').forEach(img => {
       const d = await getJson('/shop/products?' + q);
       if (reset) grid.replaceChildren();
       d.items.forEach(p => grid.appendChild(card(p)));
+      // ≈ prices are prudent estimates: the exact price on the sheet is lower for ~90 % of them (2026-11-28).
+      if (d.items.some(p => p.estimated)) document.querySelector('.vnote').hidden = false;
       more.hidden = !d.hasMore; page++;
     } catch (e) { more.hidden = true; }
     busy = false; moreBtn.disabled = false;

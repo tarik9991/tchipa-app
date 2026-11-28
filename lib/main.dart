@@ -2614,6 +2614,10 @@ class _ShopScreenState extends State<ShopScreen> {
                     ? _sectionTitle('Pour toi', 'Les plus achetés cette semaine')
                     : const SizedBox(height: 4),
               ),
+            // List prices marked ≈ are prudent estimates (no weight before the sheet): the exact price on the
+            // sheet is lower for ~90 % of them — say it, so the list doesn't look dearer than resellers (2026-11-28).
+            if (_items.any((p) => (p as Map)['estimated'] == true))
+              SliverToBoxAdapter(child: _estimateNote()),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
               sliver: SliverGrid(
@@ -3201,6 +3205,30 @@ class _ProductTileState extends State<_ProductTile> {
     );
   }
 }
+
+Widget _estimateNote() => Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+            color: const Color(0xFF16A34A).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          const Icon(Icons.trending_down_rounded, size: 18, color: Color(0xFF16A34A)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(text: '≈ = prix estimé. ', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w700)),
+                TextSpan(
+                    text: 'Le prix exact, livraison comprise, est souvent plus bas sur la fiche.',
+                    style: TextStyle(color: AppColors.sublabel)),
+              ]),
+              style: const TextStyle(fontSize: 12.5, height: 1.3),
+            ),
+          ),
+        ]),
+      ),
+    );
 
 class _TileSkeleton extends StatelessWidget {
   const _TileSkeleton();

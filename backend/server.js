@@ -2786,6 +2786,26 @@ const SHOP_FRET_USD_KG = 17.0;         // freight to Algeria, customs included (
 const SHOP_COMMISSION_AGENT = 0.10;
 const SHOP_MARGE = 0.25;
 const SHOP_POIDS_MIN_KG = 0.10;
+// Max believable package weight (kg) per "category/sub-category" (else per category). Some 1688 sellers
+// type 2-6 kg for a child's T-shirt set: at 17 $/kg that alone made a 46 $ "débardeur + short" (2026-11-28).
+// ~p97 of the 7 748 full sheets, rounded up; above it the weight is taken as a typo. Bags, accessories and
+// jewellery are not capped. Keep in sync with POIDS_MAX in ~/tchipa-boutique/echantillon.py.
+const SHOP_POIDS_MAX = {
+  'Enfants/Bébé': 0.6, 'Enfants/Fille': 0.9, 'Enfants/Garçon': 0.9, 'Enfants/Fille & garçon': 0.9,
+  'Enfants/Pyjamas': 0.7, 'Enfants/Chaussures': 1.0, 'Enfants/Vestes & manteaux': 1.3,
+  'Femme/Hauts & T-shirts': 0.5, 'Femme/Chemises & blouses': 0.5, 'Femme/Jupes': 0.7, 'Femme/Robes': 1.0,
+  'Femme/Robes de soirée & mariage': 1.5, 'Femme/Pulls & gilets': 1.0, 'Femme/Pantalons & jeans': 1.0,
+  'Femme/Ensembles': 1.2, 'Femme/Pyjamas': 1.0, 'Femme/Vestes & manteaux': 1.6, 'Femme/Chaussures': 1.3,
+  'Homme/T-shirts': 0.7, 'Homme/Polos': 0.7, 'Homme/Chemises': 0.7, 'Homme/Shorts': 0.7, 'Homme/Qamis': 1.0,
+  'Homme/Sweats & pulls': 1.0, 'Homme/Pantalons': 1.1, 'Homme/Jeans': 1.2, 'Homme/Ensembles': 1.3,
+  'Homme/Pyjamas': 1.1, 'Homme/Costumes': 1.5, 'Homme/Vestes & manteaux': 1.8, 'Homme/Chaussures': 1.6,
+  'Homme/Babouches & sandales': 1.0,
+  'Ados/T-shirts & chemises': 0.7, 'Ados/Robes & jupes': 0.9, 'Ados/Sweats & pulls': 1.0,
+  'Ados/Pantalons & jeans': 1.0, 'Ados/Ensembles': 1.2, 'Ados/Pyjamas': 0.9, 'Ados/Vestes & manteaux': 1.5,
+  'Ados/Chaussures': 1.3,
+  'Hijab/Hijabs': 0.35, 'Hijab/Bonnets sous-hijab': 0.25, 'Abaya/Abayas': 1.3,
+};
+const poidsMaxFor = (cat, sub) => SHOP_POIDS_MAX[`${cat}/${sub}`] ?? SHOP_POIDS_MAX[cat] ?? Infinity;
 const FICHE_MAX_AGE_DAYS = 30;         // older sheets are bought again on open (price/stock drift)
 const FICHE_DAILY_MAX = 1500;          // new sheets per day (x 20 credits) — caps a scraping bot
 const FICHE_IP_HOURLY = 120;           // new sheets per IP per hour (40 blocked a whole home wifi, 2026-11-09)
@@ -2872,6 +2892,41 @@ db.exec(`CREATE TABLE IF NOT EXISTS shop_meta (k TEXT PRIMARY KEY, v TEXT)`);
   console.log(`[shop] ${n} fiches 'indispo' oubliees (lots de 2)`);
 })();
 
+// SHOP_POIDS_MAX (2026-11-28): sheets bought before it keep a seller's absurd weight → cap the freight of each
+// variant once (fret_usd is stored, so no TMAPI call), same rule as sheetFromTmapi.
+(function capSheetWeights() {
+  const key = 'poids_plafonnes_v1';
+  if (!cat() || db.prepare('SELECT 1 FROM shop_meta WHERE k = ?').get(key)) return;
+  const r2 = x => Math.round(x * 100) / 100;
+  const rows = cat().prepare(`SELECT f.item_id, f.variantes_prix, f.poids_kg, p.categorie, p.sous_categorie
+                              FROM o.shop_fiches f JOIN produits p ON p.item_id = f.item_id WHERE f.status = 'ok'`).all();
+  const upd = db.prepare(`UPDATE shop_fiches SET variantes_prix = ?, prix_des_usd = ?, prix_max_usd = ?, poids_kg = ?
+                          WHERE item_id = ?`);
+  let n = 0;
+  db.transaction(() => {
+    for (const f of rows) {
+      const cap = poidsMaxFor(f.categorie, f.sous_categorie);
+      if (!Number.isFinite(cap)) continue;
+      let changed = false;
+      const vp = JSON.parse(f.variantes_prix || '[]').map(v => {
+        const maxFret = r2(Math.max(cap * (v.lot || 1), SHOP_POIDS_MIN_KG) * SHOP_FRET_USD_KG);
+        if (!(v.fret_usd > maxFret + 0.01)) return v;
+        changed = true;
+        const revient = r2(v.revient_usd - v.fret_usd + maxFret);
+        return { ...v, fret_usd: maxFret, revient_usd: revient, prix_client_usd: r2(revient * (1 + SHOP_MARGE)) };
+      });
+      if (!changed) continue;
+      const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
+      const ref = px[Math.floor(px.length / 2)];
+      upd.run(JSON.stringify(vp), Math.min(...px.filter(x => x >= ref / 3)), px[px.length - 1],
+              Math.min(f.poids_kg || 0, cap), f.item_id);
+      n++;
+    }
+    db.prepare('INSERT OR REPLACE INTO shop_meta (k, v) VALUES (?, ?)').run(key, new Date().toISOString());
+  })();
+  console.log(`[shop] poids plafonne sur ${n} fiches achetees`);
+})();
+
 function productRow(id) {
   if (SHOP_HIDDEN_ITEMS.includes(id)) return undefined;
   const p = cat() && cat().prepare('SELECT * FROM produits WHERE item_id = ?').get(id);
@@ -2926,6 +2981,7 @@ function sheetFromTmapi(d, fx, cat, sub) {
   const lot = Math.max(1, ...[d.moq, tp.begin_num, firstTier].map(x => parseInt(x, 10) || 1));
   const byUnit = lot <= SHOP_LOT_MAX;
   const skus = (d.skus || []).filter(s => s.stock && s.sale_price);
+  const cap = poidsMaxFor(cat, sub);
   const poidsMax = Math.max(0, ...skus.map(s => s.package_info?.weight || 0));
   const minW = SHEET_MIN_WEIGHT[cat] ?? SHEET_MIN_WEIGHT[sub] ?? SHEET_MIN_WEIGHT_DEFAULT;
   if (d.is_sold_out || !d.stock || !byUnit || !skus.length || poidsMax < minW) return { status: 'indispo' };
@@ -2933,7 +2989,7 @@ function sheetFromTmapi(d, fx, cat, sub) {
   // sku / ids = 1688 skuid + props_ids: identical in the Chinese sheet, so the China agent sees the exact variant.
   const vp = skus.map(s => ({ nom: s.props_names, stock: s.stock, sku: s.skuid || null, ids: s.props_ids || null,
     ...(lot > 1 ? { lot } : {}),
-    ...shopPrice(lot * parseFloat(s.sale_price), fraisCn, lot * (s.package_info?.weight || poidsMax), fx) }));
+    ...shopPrice(lot * parseFloat(s.sale_price), fraisCn, lot * Math.min(s.package_info?.weight || poidsMax, cap), fx) }));
   // A cheap "accessory" variant (5 ¥ crown on a 49 ¥ dress) stays buyable but is not the "from" price.
   const px = vp.map(v => v.prix_client_usd).sort((a, b) => a - b);
   const ref = px[Math.floor(px.length / 2)];
@@ -2941,7 +2997,7 @@ function sheetFromTmapi(d, fx, cat, sub) {
     status: 'ok', titre_en: d.title, images: JSON.stringify((d.main_imgs || []).slice(0, 5)),
     video: d.video_url || null,
     variantes: JSON.stringify(Object.fromEntries((d.sku_props || []).map(v => [v.prop_name, v.values.map(x => x.name)]))),
-    variantes_prix: JSON.stringify(vp), poids_kg: poidsMax, lot: lot > 1 ? lot : null,
+    variantes_prix: JSON.stringify(vp), poids_kg: Math.min(poidsMax, cap), lot: lot > 1 ? lot : null,
     prix_des_usd: Math.min(...px.filter(x => x >= ref / 3)), prix_max_usd: px[px.length - 1], stock: d.stock,
   };
 }
